@@ -104,7 +104,8 @@ export default function ProgressPage() {
             const isToday = isSameDay(day, today);
             const isPast = day < today && !isToday;
             const isFuture = day > today;
-            const hasSession = progress.lastSessionDate && isSameDay(day, new Date(progress.lastSessionDate));
+            const dayStr = format(day, 'yyyy-MM-dd');
+            const hasSession = progress.completedDates.includes(dayStr);
 
             return (
               <div
@@ -119,8 +120,6 @@ export default function ProgressPage() {
                   fontWeight: 600,
                   background: hasSession
                     ? 'var(--primary)'
-                    : isPast
-                    ? 'var(--muted)'
                     : isFuture
                     ? 'transparent'
                     : 'var(--border)',

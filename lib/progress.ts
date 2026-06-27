@@ -4,6 +4,8 @@ export interface ProgressData {
   completionStreak: number;
   treeStage: 'seed' | 'sapling' | 'young' | 'mature';
   lastSessionDate: string | null;
+  completedDates: string[]; // Full history of completed session dates
+  hasSeenOnboarding: boolean;
 }
 
 export interface DayStatus {
@@ -22,6 +24,8 @@ export function getProgress(): ProgressData {
       completionStreak: 0,
       treeStage: 'seed',
       lastSessionDate: null,
+      completedDates: [],
+      hasSeenOnboarding: false,
     };
   }
 
@@ -33,10 +37,19 @@ export function getProgress(): ProgressData {
       completionStreak: 0,
       treeStage: 'seed',
       lastSessionDate: null,
+      completedDates: [],
+      hasSeenOnboarding: false,
     };
   }
 
-  return JSON.parse(stored);
+  const parsed = JSON.parse(stored);
+
+  // Migration: add new fields if they don't exist
+  return {
+    ...parsed,
+    completedDates: parsed.completedDates || [],
+    hasSeenOnboarding: parsed.hasSeenOnboarding || false,
+  };
 }
 
 export function updateProgress(starsEarned: number): ProgressData {
@@ -44,6 +57,11 @@ export function updateProgress(starsEarned: number): ProgressData {
   const today = new Date().toISOString().split('T')[0];
 
   const newTotalStars = current.totalStars + starsEarned;
+
+  // Update completed dates array
+  const newCompletedDates = current.completedDates.includes(today)
+    ? current.completedDates
+    : [...current.completedDates, today];
 
   // Update streak
   let newStreak = current.completionStreak;
@@ -67,6 +85,8 @@ export function updateProgress(starsEarned: number): ProgressData {
     completionStreak: newStreak,
     treeStage: getTreeStage(newTotalStars),
     lastSessionDate: today,
+    completedDates: newCompletedDates,
+    hasSeenOnboarding: current.hasSeenOnboarding,
   };
 
   localStorage.setItem(STORAGE_KEY, JSON.stringify(updated));
@@ -81,6 +101,7 @@ export function getTreeStage(totalStars: number): 'seed' | 'sapling' | 'young' |
 }
 
 export function getDayStrip(): DayStatus[] {
+  const progress = getProgress();
   const days: DayStatus[] = [];
   const today = new Date();
 
@@ -91,10 +112,16 @@ export function getDayStrip(): DayStatus[] {
 
     days.push({
       date: dateStr,
-      completed: false, // TODO: track per-day completion
-      stars: 0,
+      completed: progress.completedDates.includes(dateStr),
+      stars: 0, // TODO: track stars per day if needed
     });
   }
 
   return days;
+}
+
+export function markOnboardingComplete(): void {
+  const current = getProgress();
+  const updated = { ...current, hasSeenOnboarding: true };
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(updated));
 }

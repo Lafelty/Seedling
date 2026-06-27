@@ -237,6 +237,7 @@ export default function SessionPage() {
         className="absolute inset-0 w-full h-full object-cover"
         playsInline
         muted
+        style={{ transform: 'scaleX(-1)' }}
       />
 
       {/* Skeleton overlay - actual pose keypoints */}
@@ -244,7 +245,7 @@ export default function SessionPage() {
         <svg
           className="absolute inset-0 pointer-events-none"
           viewBox={`0 0 ${videoRef.current.videoWidth} ${videoRef.current.videoHeight}`}
-          style={{ width: '100%', height: '100%' }}
+          style={{ width: '100%', height: '100%', transform: 'scaleX(-1)' }}
         >
           {detectedPose.keypoints
             .filter((kp) => (kp.score ?? 0) > 0.3)

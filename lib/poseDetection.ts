@@ -46,7 +46,7 @@ export async function initPoseDetector(): Promise<boolean> {
 
     const model = poseDetection.SupportedModels.MoveNet;
     detector = await poseDetection.createDetector(model, {
-      modelType: poseDetection.movenet.modelType.SINGLEPOSE_LIGHTNING,
+      modelType: poseDetection.movenet.modelType.SINGLEPOSE_THUNDER,
     });
 
     console.log('Pose detector initialized successfully');
@@ -97,7 +97,7 @@ export function analyzeShoulderRaise(pose: Pose | null): ShoulderRaiseAnalysis {
   const rightWrist = pose.keypoints.find((kp) => kp.name === 'right_wrist');
 
   // Check if keypoints are detected with sufficient confidence
-  const minConfidence = 0.3;
+  const minConfidence = 0.5;
   const hasLeftArm =
     leftShoulder && leftWrist &&
     (leftShoulder.score ?? 0) > minConfidence &&

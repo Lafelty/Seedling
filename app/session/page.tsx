@@ -40,7 +40,7 @@ export default function SessionPage() {
     async function setupCamera() {
       try {
         stream = await navigator.mediaDevices.getUserMedia({
-          video: { width: 640, height: 480, facingMode: 'user' },
+          video: { width: 1280, height: 720, facingMode: 'user' },
         })
 
         if (videoRef.current) {
@@ -248,7 +248,7 @@ export default function SessionPage() {
           style={{ width: '100%', height: '100%', transform: 'scaleX(-1)' }}
         >
           {detectedPose.keypoints
-            .filter((kp) => (kp.score ?? 0) > 0.3)
+            .filter((kp) => (kp.score ?? 0) > 0.5)
             .map((kp, i) => (
               <circle
                 key={i}
@@ -277,8 +277,8 @@ export default function SessionPage() {
               if (
                 startKp &&
                 endKp &&
-                (startKp.score ?? 0) > 0.3 &&
-                (endKp.score ?? 0) > 0.3
+                (startKp.score ?? 0) > 0.5 &&
+                (endKp.score ?? 0) > 0.5
               ) {
                 return (
                   <line

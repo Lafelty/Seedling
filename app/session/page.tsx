@@ -30,6 +30,7 @@ export default function SessionPage() {
   const [countdown, setCountdown] = useState(3)
   const [showExitPrompt, setShowExitPrompt] = useState(false)
   const [detectedPose, setDetectedPose] = useState<Pose | null>(null)
+  const [isDetecting, setIsDetecting] = useState(false)
 
   const TARGET_REPS = 10
 
@@ -56,6 +57,9 @@ export default function SessionPage() {
         const initialized = await initPoseDetector()
         if (!initialized) {
           console.warn('Pose detector failed to initialize, continuing without AI')
+        } else {
+          console.log('✅ Pose detector initialized successfully')
+          setIsDetecting(true)
         }
 
         // Start with countdown
@@ -102,6 +106,10 @@ export default function SessionPage() {
       const pose = await detectPose(videoRef.current)
       setDetectedPose(pose)
 
+      if (pose && pose.keypoints) {
+        console.log(`Detected ${pose.keypoints.length} keypoints, score: ${pose.score?.toFixed(2)}`)
+      }
+
       // Analyze shoulder raise
       const analysis = analyzeShoulderRaise(pose)
       setPostureFeedback(analysis.feedback)
@@ -110,6 +118,7 @@ export default function SessionPage() {
       // Count reps
       const { repCount: newCount, justCompleted } = repCounterRef.current.count(analysis)
       if (justCompleted) {
+        console.log(`✅ Rep ${newCount} completed!`)
         setRepCount(newCount)
         if (newCount >= TARGET_REPS) {
           completeSession()
@@ -353,10 +362,20 @@ export default function SessionPage() {
       <div className="relative z-10 h-full flex flex-col">
         {/* Top bar */}
         <div className="flex items-center justify-between p-6">
-          <div className="bg-session-surface/80 backdrop-blur-sm px-6 py-3 rounded-full">
-            <p className="font-display text-session-ink">
-              Reps: <span className="text-session-primary font-semibold">{repCount}</span> / {TARGET_REPS}
-            </p>
+          <div className="flex items-center gap-3">
+            <div className="bg-session-surface/80 backdrop-blur-sm px-6 py-3 rounded-full">
+              <p className="font-display text-session-ink">
+                Reps: <span className="text-session-primary font-semibold">{repCount}</span> / {TARGET_REPS}
+              </p>
+            </div>
+
+            {/* Detection status indicator */}
+            {isDetecting && (
+              <div className="bg-session-surface/80 backdrop-blur-sm px-4 py-3 rounded-full flex items-center gap-2">
+                <div className="w-2 h-2 rounded-full bg-green-500 animate-pulse" />
+                <span className="text-xs text-session-muted">AI Active</span>
+              </div>
+            )}
           </div>
 
           <div className="flex gap-3">

@@ -36,25 +36,9 @@ export default function ProgressPage() {
   ];
 
   return (
-    <main className="min-h-screen max-w-4xl mx-auto px-4 py-8">
+    <>
+    <main className="min-h-screen max-w-4xl mx-auto px-4 py-8 pb-24">
       <div className="mb-8">
-        <Link
-          href="/"
-          style={{
-            display: 'inline-flex',
-            alignItems: 'center',
-            gap: 'var(--space-2)',
-            color: 'var(--muted)',
-            fontSize: 'var(--text-sm)',
-            marginBottom: 'var(--space-4)',
-          }}
-        >
-          <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2">
-            <path d="M10 12L6 8l4-4" />
-          </svg>
-          Back to Dashboard
-        </Link>
-
         <h1 style={{ marginBottom: 'var(--space-2)' }}>Your Progress</h1>
         <p style={{ color: 'var(--muted)' }}>Track your journey and celebrate milestones</p>
       </div>
@@ -180,5 +164,24 @@ export default function ProgressPage() {
         </div>
       </div>
     </main>
+
+      {/* Bottom Navigation */}
+      <nav className="bottom-nav">
+        <Link href="/" className="nav-item">
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+            <path d="M12 2L2 7v7c0 5.55 3.84 10.74 9 12 5.16-1.26 9-6.45 9-12V7l-10-5z" />
+            <path d="M12 8v8M8 12h8" />
+          </svg>
+          <span>Garden</span>
+        </Link>
+        <Link href="/progress" className="nav-item active">
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+            <path d="M3 3v18h18" />
+            <path d="M7 16l4-8 4 4 4-12" />
+          </svg>
+          <span>Progress</span>
+        </Link>
+      </nav>
+    </>
   );
 }

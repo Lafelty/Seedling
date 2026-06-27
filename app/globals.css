@@ -48,7 +48,7 @@
     --radius-full: 9999px;
 
     /* Motion */
-    --ease-out: cubic-bezier(0.16, 1, 0.3, 1); /* ease-out-expo */
+    --ease-out: cubic-bezier(0.23, 1, 0.32, 1); /* stronger ease-out for UI */
     --ease-out-quart: cubic-bezier(0.25, 1, 0.5, 1); /* ease-out-quart */
     --ease-grow: cubic-bezier(0.34, 1.2, 0.64, 1); /* gentle overshoot */
 
@@ -150,7 +150,8 @@
     font-family: var(--font-body);
     font-weight: 600;
     font-size: var(--text-base);
-    transition: all var(--dur-fast) var(--ease-out);
+    transition: transform var(--dur-fast) var(--ease-out),
+                box-shadow var(--dur-fast) var(--ease-out);
     min-height: 56px;
     cursor: pointer;
     border: none;
@@ -161,9 +162,11 @@
     color: white;
   }
 
-  .btn-primary:hover {
-    transform: translateY(-1px);
-    box-shadow: 0 4px 12px rgba(74, 107, 90, 0.2);
+  @media (hover: hover) and (pointer: fine) {
+    .btn-primary:hover {
+      transform: translateY(-1px);
+      box-shadow: 0 4px 12px rgba(74, 107, 90, 0.2);
+    }
   }
 
   .btn-primary:active {
@@ -216,19 +219,26 @@
     color: var(--muted);
     font-size: var(--text-xs);
     font-weight: 500;
-    transition: color var(--dur-fast) var(--ease-out);
+    transition: color var(--dur-fast) var(--ease-out),
+                transform var(--dur-instant) var(--ease-out);
     cursor: pointer;
     text-decoration: none;
     min-width: 48px;
     min-height: 48px;
   }
 
+  .nav-item:active {
+    transform: scale(0.97);
+  }
+
   .nav-item.active {
     color: var(--primary);
   }
 
-  .nav-item:hover {
-    color: var(--ink);
+  @media (hover: hover) and (pointer: fine) {
+    .nav-item:hover {
+      color: var(--ink);
+    }
   }
 
   /* Animations */
@@ -354,11 +364,11 @@
   }
 
   /* Stagger utility */
-  .stagger-1 { animation-delay: 50ms; }
-  .stagger-2 { animation-delay: 100ms; }
-  .stagger-3 { animation-delay: 150ms; }
-  .stagger-4 { animation-delay: 200ms; }
-  .stagger-5 { animation-delay: 250ms; }
-  .stagger-6 { animation-delay: 300ms; }
-  .stagger-7 { animation-delay: 350ms; }
+  .stagger-1 { animation-delay: 30ms; }
+  .stagger-2 { animation-delay: 60ms; }
+  .stagger-3 { animation-delay: 90ms; }
+  .stagger-4 { animation-delay: 120ms; }
+  .stagger-5 { animation-delay: 150ms; }
+  .stagger-6 { animation-delay: 180ms; }
+  .stagger-7 { animation-delay: 210ms; }
 }

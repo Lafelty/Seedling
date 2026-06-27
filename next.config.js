@@ -1,4 +1,6 @@
 /** @type {import('next').NextConfig} */
-const nextConfig = {}
+const nextConfig = {
+  transpilePackages: ['@tensorflow/tfjs', '@tensorflow-models/pose-detection'],
+}
 
 module.exports = nextConfig

@@ -10,7 +10,7 @@
     --bg: #FAF9F7; /* warm off-white */
     --surface: #FFFFFF; /* white cards */
     --ink: #2D2D2D; /* dark gray text */
-    --muted: #8B8B8B; /* secondary text */
+    --muted: #6B6B6B; /* secondary text - darker for WCAG AA contrast */
     --primary: #4A6B5A; /* sage green */
     --accent: #C9B88A; /* warm beige/gold */
     --border: #E8E8E8; /* light borders */
@@ -167,7 +167,8 @@
   }
 
   .btn-primary:active {
-    transform: translateY(0);
+    transform: translateY(0) scale(0.98);
+    transition-duration: 100ms;
   }
 
   /* Star badge */
@@ -218,6 +219,8 @@
     transition: color var(--dur-fast) var(--ease-out);
     cursor: pointer;
     text-decoration: none;
+    min-width: 48px;
+    min-height: 48px;
   }
 
   .nav-item.active {
@@ -326,6 +329,28 @@
 
   .animate-starShine {
     animation: starShine 1.5s ease-in-out infinite;
+  }
+
+  /* Loading skeleton */
+  @keyframes shimmer {
+    0% {
+      background-position: -1000px 0;
+    }
+    100% {
+      background-position: 1000px 0;
+    }
+  }
+
+  .skeleton {
+    background: linear-gradient(
+      90deg,
+      var(--border) 0%,
+      rgba(232, 232, 232, 0.5) 50%,
+      var(--border) 100%
+    );
+    background-size: 1000px 100%;
+    animation: shimmer 2s infinite linear;
+    border-radius: var(--radius-md);
   }
 
   /* Stagger utility */

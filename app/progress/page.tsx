@@ -38,28 +38,28 @@ export default function ProgressPage() {
   return (
     <>
     <main className="min-h-screen max-w-4xl mx-auto px-4 py-8 pb-24">
-      <div className="mb-8">
+      <div className="mb-8 animate-fadeIn">
         <h1 style={{ marginBottom: 'var(--space-2)' }}>Your Progress</h1>
         <p style={{ color: 'var(--muted)' }}>Track your journey and celebrate milestones</p>
       </div>
 
       {/* Stats Grid */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 'var(--space-4)', marginBottom: 'var(--space-12)' }}>
-        <div className="card text-center">
+        <div className="card text-center animate-scaleIn stagger-1">
           <p style={{ color: 'var(--muted)', marginBottom: 'var(--space-2)' }}>Total Stars</p>
           <p style={{ fontSize: 'var(--text-3xl)', fontFamily: 'var(--font-display)', fontWeight: 700 }}>
             {progress.totalStars}
           </p>
         </div>
 
-        <div className="card text-center">
+        <div className="card text-center animate-scaleIn stagger-2">
           <p style={{ color: 'var(--muted)', marginBottom: 'var(--space-2)' }}>Current Streak</p>
           <p style={{ fontSize: 'var(--text-3xl)', fontFamily: 'var(--font-display)', fontWeight: 700 }}>
             {progress.completionStreak}
           </p>
         </div>
 
-        <div className="card text-center">
+        <div className="card text-center animate-scaleIn stagger-3">
           <p style={{ color: 'var(--muted)', marginBottom: 'var(--space-2)' }}>Tree Stage</p>
           <p style={{ fontSize: 'var(--text-xl)', fontFamily: 'var(--font-display)', fontWeight: 600, textTransform: 'capitalize' }}>
             {progress.treeStage}

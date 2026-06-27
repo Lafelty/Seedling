@@ -7,20 +7,57 @@ import { getProgress, getDayStrip, markOnboardingComplete, type ProgressData, ty
 export default function DashboardPage() {
   const [progress, setProgress] = useState<ProgressData | null>(null);
   const [dayStrip, setDayStrip] = useState<DayStatus[]>([]);
+  const [showEmptyState, setShowEmptyState] = useState(false);
 
   useEffect(() => {
     const data = getProgress();
     setProgress(data);
     setDayStrip(getDayStrip());
+
+    // Show empty state if no stars and no completed days
+    if (data.totalStars === 0 && data.completedDates.length === 0) {
+      setShowEmptyState(true);
+    }
   }, []);
 
   if (!progress) {
     return (
-      <div className="min-h-screen flex items-center justify-center">
-        <div className="text-center">
-          <div className="w-12 h-12 border-4 border-[var(--primary)] border-t-transparent rounded-full animate-spin mx-auto mb-4" />
-          <p style={{ color: 'var(--muted)' }}>Loading your garden...</p>
-        </div>
+      <div className="min-h-screen pb-24">
+        {/* Skeleton Header */}
+        <header className="px-6 pt-8 pb-4">
+          <div className="max-w-2xl mx-auto flex items-center justify-between">
+            <div>
+              <div className="skeleton" style={{ width: '100px', height: '14px', marginBottom: '8px' }} />
+              <div className="skeleton" style={{ width: '150px', height: '32px' }} />
+            </div>
+            <div className="skeleton" style={{ width: '80px', height: '40px', borderRadius: 'var(--radius-full)' }} />
+          </div>
+        </header>
+
+        {/* Skeleton Garden */}
+        <section className="px-6 py-12">
+          <div className="max-w-2xl mx-auto text-center">
+            <div className="skeleton mx-auto" style={{ width: '200px', height: '280px', marginBottom: '32px', borderRadius: 'var(--radius-lg)' }} />
+            <div className="skeleton mx-auto" style={{ width: '200px', height: '28px', marginBottom: '8px' }} />
+            <div className="skeleton mx-auto" style={{ width: '280px', height: '20px' }} />
+          </div>
+        </section>
+
+        {/* Skeleton Week Card */}
+        <section className="px-6 py-4">
+          <div className="max-w-2xl mx-auto">
+            <div className="bg-[var(--surface)] rounded-2xl p-6">
+              <div className="skeleton" style={{ width: '100px', height: '24px', marginBottom: '16px' }} />
+              <div className="flex gap-3 justify-between">
+                {[...Array(7)].map((_, i) => (
+                  <div key={i} className="flex-1">
+                    <div className="skeleton mx-auto" style={{ width: '48px', height: '48px', borderRadius: '50%' }} />
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        </section>
       </div>
     );
   }
@@ -56,12 +93,28 @@ export default function DashboardPage() {
               <SoilIllustration stage={progress.treeStage} />
             </div>
 
-            <h2 style={{ fontSize: 'var(--text-2xl)', fontWeight: 600, marginBottom: 'var(--space-2)' }}>
-              {getStageName(progress.treeStage)}
-            </h2>
-            <p style={{ color: 'var(--muted)', fontSize: 'var(--text-base)' }}>
-              {starsNeeded} more stars until "{getNextStageName(progress.treeStage)}"
-            </p>
+            {showEmptyState ? (
+              <>
+                <h2 style={{ fontSize: 'var(--text-2xl)', fontWeight: 600, marginBottom: 'var(--space-2)' }}>
+                  Your garden awaits 🌱
+                </h2>
+                <p style={{ color: 'var(--muted)', fontSize: 'var(--text-base)', marginBottom: 'var(--space-4)' }}>
+                  Complete your first session to plant your seed and begin your journey
+                </p>
+                <p style={{ color: 'var(--muted)', fontSize: 'var(--text-sm)' }}>
+                  Each session you complete earns a star and helps your tree grow stronger
+                </p>
+              </>
+            ) : (
+              <>
+                <h2 style={{ fontSize: 'var(--text-2xl)', fontWeight: 600, marginBottom: 'var(--space-2)' }}>
+                  {getStageName(progress.treeStage)}
+                </h2>
+                <p style={{ color: 'var(--muted)', fontSize: 'var(--text-base)' }}>
+                  {starsNeeded} more stars until "{getNextStageName(progress.treeStage)}"
+                </p>
+              </>
+            )}
           </div>
         </section>
 

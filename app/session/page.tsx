@@ -4,6 +4,8 @@ import Link from 'next/link'
 import { useEffect, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { updateProgress } from '@/lib/progress'
+import confetti from 'canvas-confetti'
+import { useToast } from '@/components/Toast'
 import {
   initPoseDetector,
   detectPose,
@@ -32,6 +34,9 @@ export default function SessionPage() {
   const [showExitPrompt, setShowExitPrompt] = useState(false)
   const [detectedPose, setDetectedPose] = useState<Pose | null>(null)
   const [isDetecting, setIsDetecting] = useState(false)
+  const [repJustCompleted, setRepJustCompleted] = useState(false)
+
+  const { showToast, ToastComponent } = useToast()
 
   const TARGET_REPS = 10
 
@@ -121,6 +126,8 @@ export default function SessionPage() {
       if (justCompleted) {
         console.log(`✅ Rep ${newCount} completed!`)
         setRepCount(newCount)
+        setRepJustCompleted(true)
+        setTimeout(() => setRepJustCompleted(false), 300)
         if (newCount >= TARGET_REPS) {
           completeSession()
           return
@@ -143,6 +150,35 @@ export default function SessionPage() {
   function completeSession() {
     setSessionState('completed')
     updateProgress(1) // Award 1 star
+
+    // Trigger confetti celebration
+    const duration = 3000;
+    const animationEnd = Date.now() + duration;
+    const defaults = { startVelocity: 30, spread: 360, ticks: 60, zIndex: 0, colors: ['#4A6B5A', '#C9B88A', '#FAF9F7'] };
+
+    function randomInRange(min: number, max: number) {
+      return Math.random() * (max - min) + min;
+    }
+
+    const interval: any = setInterval(function() {
+      const timeLeft = animationEnd - Date.now();
+
+      if (timeLeft <= 0) {
+        return clearInterval(interval);
+      }
+
+      const particleCount = 50 * (timeLeft / duration);
+      confetti({
+        ...defaults,
+        particleCount,
+        origin: { x: randomInRange(0.1, 0.3), y: Math.random() - 0.2 }
+      });
+      confetti({
+        ...defaults,
+        particleCount,
+        origin: { x: randomInRange(0.7, 0.9), y: Math.random() - 0.2 }
+      });
+    }, 250);
   }
 
   function handlePause() {
@@ -171,6 +207,7 @@ export default function SessionPage() {
       const partialStars = Math.floor((repCount / TARGET_REPS) * 1)
       if (partialStars > 0) {
         updateProgress(partialStars)
+        showToast('Progress saved', 'success')
       }
     }
     router.push('/')
@@ -263,6 +300,8 @@ export default function SessionPage() {
 
   return (
     <div className="fixed inset-0 overflow-hidden session">
+      {ToastComponent}
+
       {/* Camera feed */}
       <video
         ref={videoRef}
@@ -430,7 +469,13 @@ export default function SessionPage() {
               borderRadius: 'var(--radius-full)',
             }}>
               <p className="font-display" style={{ color: 'var(--ink)' }}>
-                Reps: <span style={{ color: 'var(--primary)', fontWeight: 600 }}>{repCount}</span> / {TARGET_REPS}
+                Reps: <span style={{
+                  color: 'var(--primary)',
+                  fontWeight: 600,
+                  display: 'inline-block',
+                  transition: 'transform 200ms cubic-bezier(0.34, 1.56, 0.64, 1)',
+                  transform: repJustCompleted ? 'scale(1.3)' : 'scale(1)'
+                }}>{repCount}</span> / {TARGET_REPS}
               </p>
             </div>
 

@@ -34,8 +34,14 @@ export async function initPoseDetector(): Promise<boolean> {
 
     // Dynamically import TensorFlow only in browser
     if (!poseDetection) {
-      poseDetection = await import('@tensorflow-models/pose-detection');
+      const tf = await import('@tensorflow/tfjs-core');
       await import('@tensorflow/tfjs-backend-webgl');
+
+      // Wait for backend to be ready
+      await tf.ready();
+      console.log('TensorFlow.js backend ready:', tf.getBackend());
+
+      poseDetection = await import('@tensorflow-models/pose-detection');
     }
 
     const model = poseDetection.SupportedModels.MoveNet;

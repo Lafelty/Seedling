@@ -1,5 +1,6 @@
 'use client'
 
+import Link from 'next/link'
 import { useEffect, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { updateProgress } from '@/lib/progress'
@@ -180,31 +181,37 @@ export default function SessionPage() {
   }
 
   const feedbackColor = {
-    good: 'var(--session-primary)',
-    adjust: 'var(--session-accent)',
-    analyzing: 'var(--session-muted)',
+    good: 'var(--primary)',
+    adjust: '#C9B88A',
+    analyzing: 'var(--muted)',
   }
 
   if (cameraError) {
     return (
-      <div className="fixed inset-0 flex items-center justify-center bg-session-bg text-session-ink">
+      <div className="fixed inset-0 flex items-center justify-center" style={{ background: 'var(--bg)' }}>
         <div className="text-center max-w-md px-8">
-          <p className="text-xl mb-6">{cameraError}</p>
+          <p className="text-xl mb-6" style={{ color: 'var(--ink)' }}>{cameraError}</p>
           <div className="flex flex-col gap-4">
             <button
               onClick={() => window.location.reload()}
-              className="px-8 py-3 bg-session-primary text-white rounded-full hover:opacity-90 transition-opacity"
+              className="btn btn-primary"
             >
               Reload and Try Again
             </button>
             <button
               onClick={() => router.push('/')}
-              className="px-8 py-3 bg-session-surface text-session-ink rounded-full hover:bg-session-surface/80 transition-colors"
+              style={{
+                padding: 'var(--space-3) var(--space-6)',
+                background: 'var(--surface)',
+                color: 'var(--ink)',
+                borderRadius: 'var(--radius-xl)',
+                border: '2px solid var(--border)',
+              }}
             >
               Return to Dashboard
             </button>
           </div>
-          <p className="text-sm text-session-muted mt-6">
+          <p className="text-sm mt-6" style={{ color: 'var(--muted)' }}>
             Chrome: Click 🔒 in address bar → Camera → Allow
           </p>
         </div>
@@ -214,23 +221,48 @@ export default function SessionPage() {
 
   if (sessionState === 'completed') {
     return (
-      <div className="fixed inset-0 flex items-center justify-center bg-session-bg text-session-ink">
-        <div className="text-center max-w-md px-8">
-          <h1 className="text-4xl font-display mb-4">Session Complete! 🌱</h1>
-          <p className="text-session-muted text-lg mb-8">You earned 1 star</p>
-          <button
-            onClick={() => router.push('/')}
-            className="px-10 py-4 bg-session-primary text-white rounded-full hover:opacity-90 transition-opacity font-display text-lg"
-          >
-            View My Tree
-          </button>
+      <>
+        <div className="fixed inset-0 flex items-center justify-center pb-24" style={{ background: 'var(--bg)' }}>
+          <div className="text-center max-w-md px-8">
+            <div className="text-6xl mb-6">🌱</div>
+            <h1 className="text-4xl font-display mb-4" style={{ color: 'var(--ink)', fontWeight: 700 }}>
+              Session Complete!
+            </h1>
+            <p style={{ color: 'var(--muted)', fontSize: 'var(--text-lg)' }} className="mb-8">
+              You earned 1 star
+            </p>
+            <button
+              onClick={() => router.push('/')}
+              className="btn btn-primary"
+            >
+              View My Garden
+            </button>
+          </div>
         </div>
-      </div>
+
+        {/* Bottom Navigation */}
+        <nav className="bottom-nav">
+          <Link href="/" className="nav-item active">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <path d="M12 2L2 7v7c0 5.55 3.84 10.74 9 12 5.16-1.26 9-6.45 9-12V7l-10-5z" />
+              <path d="M12 8v8M8 12h8" />
+            </svg>
+            <span>Garden</span>
+          </Link>
+          <Link href="/progress" className="nav-item">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <path d="M3 3v18h18" />
+              <path d="M7 16l4-8 4 4 4-12" />
+            </svg>
+            <span>Progress</span>
+          </Link>
+        </nav>
+      </>
     )
   }
 
   return (
-    <div className="fixed inset-0 bg-session-bg text-session-ink overflow-hidden">
+    <div className="fixed inset-0 overflow-hidden session">
       {/* Camera feed */}
       <video
         ref={videoRef}
@@ -301,31 +333,52 @@ export default function SessionPage() {
 
       {/* Countdown overlay */}
       {sessionState === 'countdown' && countdown > 0 && (
-        <div className="absolute inset-0 bg-session-bg/80 backdrop-blur-sm flex items-center justify-center z-20">
+        <div className="absolute inset-0 flex items-center justify-center z-20" style={{ background: 'rgba(0,0,0,0.7)', backdropFilter: 'blur(8px)' }}>
           <div className="text-center">
-            <p className="text-session-muted text-lg mb-4 font-display">Starting in</p>
-            <p className="text-8xl font-display font-bold text-session-primary">{countdown}</p>
+            <p style={{ color: 'var(--muted)', fontSize: 'var(--text-lg)' }} className="mb-4 font-display">
+              Starting in
+            </p>
+            <p className="text-8xl font-display font-bold" style={{ color: 'var(--primary)' }}>
+              {countdown}
+            </p>
           </div>
         </div>
       )}
 
       {/* Exit confirmation prompt */}
       {showExitPrompt && (
-        <div className="absolute inset-0 bg-session-bg/90 backdrop-blur-md flex items-center justify-center z-30">
-          <div className="bg-session-surface p-8 rounded-2xl max-w-md mx-4 text-center">
-            <h3 className="font-display text-2xl mb-4">End session?</h3>
-            <p className="text-session-muted mb-2">You've completed {repCount} of {TARGET_REPS} reps</p>
-            <p className="text-sm text-session-muted mb-6">Your progress will be saved</p>
+        <div className="absolute inset-0 flex items-center justify-center z-30" style={{ background: 'rgba(0,0,0,0.85)', backdropFilter: 'blur(12px)' }}>
+          <div className="bg-[var(--surface)] p-8 rounded-2xl max-w-md mx-4 text-center">
+            <h3 className="font-display text-2xl mb-4" style={{ color: 'var(--ink)', fontWeight: 600 }}>
+              End session?
+            </h3>
+            <p style={{ color: 'var(--muted)' }} className="mb-2">
+              You've completed {repCount} of {TARGET_REPS} reps
+            </p>
+            <p className="text-sm mb-6" style={{ color: 'var(--muted)' }}>
+              Your progress will be saved
+            </p>
             <div className="flex flex-col gap-3">
               <button
                 onClick={handleExitWithSave}
-                className="px-6 py-3 bg-session-primary text-white rounded-full hover:opacity-90 transition-opacity font-display"
+                className="btn btn-primary"
               >
                 Save & Exit
               </button>
               <button
                 onClick={() => setShowExitPrompt(false)}
-                className="px-6 py-3 bg-session-surface border-2 border-session-primary text-session-ink rounded-full hover:bg-session-bg transition-colors font-display"
+                style={{
+                  padding: 'var(--space-3) var(--space-6)',
+                  background: 'transparent',
+                  color: 'var(--primary)',
+                  border: '2px solid var(--primary)',
+                  borderRadius: 'var(--radius-xl)',
+                  fontFamily: 'var(--font-body)',
+                  fontWeight: 600,
+                  fontSize: 'var(--text-base)',
+                  minHeight: '56px',
+                  cursor: 'pointer',
+                }}
               >
                 Keep Going
               </button>
@@ -336,21 +389,27 @@ export default function SessionPage() {
 
       {/* Paused overlay */}
       {sessionState === 'paused' && (
-        <div className="absolute inset-0 bg-session-bg/80 backdrop-blur-md flex items-center justify-center z-20">
+        <div className="absolute inset-0 flex items-center justify-center z-20" style={{ background: 'rgba(0,0,0,0.8)', backdropFilter: 'blur(12px)' }}>
           <div className="text-center max-w-md px-8">
-            <h2 className="font-display text-3xl mb-4">Paused</h2>
-            <p className="text-session-muted mb-2">{repCount} / {TARGET_REPS} reps completed</p>
-            <p className="text-sm text-session-muted mb-8">Take your time</p>
+            <h2 className="font-display text-3xl mb-4" style={{ color: 'white', fontWeight: 600 }}>
+              Paused
+            </h2>
+            <p style={{ color: 'var(--muted)' }} className="mb-2">
+              {repCount} / {TARGET_REPS} reps completed
+            </p>
+            <p className="text-sm mb-8" style={{ color: 'var(--muted)' }}>
+              Take your time
+            </p>
             <div className="flex flex-col gap-3">
               <button
                 onClick={handleResume}
-                className="px-8 py-4 bg-session-primary text-white rounded-full hover:opacity-90 transition-opacity font-display text-lg"
+                className="btn btn-primary text-lg"
               >
                 Resume Session
               </button>
               <button
                 onClick={handleExit}
-                className="px-6 py-3 text-session-muted hover:text-session-ink transition-colors"
+                style={{ color: 'var(--muted)', padding: 'var(--space-3)', fontSize: 'var(--text-base)' }}
               >
                 End Session
               </button>
@@ -364,17 +423,36 @@ export default function SessionPage() {
         {/* Top bar */}
         <div className="flex items-center justify-between p-6">
           <div className="flex items-center gap-3">
-            <div className="bg-session-surface/80 backdrop-blur-sm px-6 py-3 rounded-full">
-              <p className="font-display text-session-ink">
-                Reps: <span className="text-session-primary font-semibold">{repCount}</span> / {TARGET_REPS}
+            <div style={{
+              background: 'rgba(255, 255, 255, 0.9)',
+              backdropFilter: 'blur(8px)',
+              padding: 'var(--space-3) var(--space-6)',
+              borderRadius: 'var(--radius-full)',
+            }}>
+              <p className="font-display" style={{ color: 'var(--ink)' }}>
+                Reps: <span style={{ color: 'var(--primary)', fontWeight: 600 }}>{repCount}</span> / {TARGET_REPS}
               </p>
             </div>
 
             {/* Detection status indicator */}
             {isDetecting && (
-              <div className="bg-session-surface/80 backdrop-blur-sm px-4 py-3 rounded-full flex items-center gap-2">
-                <div className="w-2 h-2 rounded-full bg-green-500 animate-pulse" />
-                <span className="text-xs text-session-muted">AI Active</span>
+              <div style={{
+                background: 'rgba(255, 255, 255, 0.9)',
+                backdropFilter: 'blur(8px)',
+                padding: 'var(--space-2) var(--space-4)',
+                borderRadius: 'var(--radius-full)',
+                display: 'flex',
+                alignItems: 'center',
+                gap: 'var(--space-2)',
+              }}>
+                <div style={{
+                  width: '8px',
+                  height: '8px',
+                  borderRadius: '50%',
+                  background: '#10b981',
+                  animation: 'pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite',
+                }} />
+                <span className="text-xs" style={{ color: 'var(--muted)' }}>AI Active</span>
               </div>
             )}
           </div>
@@ -383,10 +461,21 @@ export default function SessionPage() {
             {sessionState === 'active' && (
               <button
                 onClick={handlePause}
-                className="w-12 h-12 flex items-center justify-center bg-session-surface/80 backdrop-blur-sm rounded-full hover:bg-session-surface transition-colors"
+                style={{
+                  width: '48px',
+                  height: '48px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  background: 'rgba(255, 255, 255, 0.9)',
+                  backdropFilter: 'blur(8px)',
+                  borderRadius: '50%',
+                  border: 'none',
+                  cursor: 'pointer',
+                }}
                 aria-label="Pause session"
               >
-                <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 24 24">
+                <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 24 24" style={{ color: 'var(--ink)' }}>
                   <path d="M6 4h4v16H6V4zm8 0h4v16h-4V4z" />
                 </svg>
               </button>
@@ -394,10 +483,21 @@ export default function SessionPage() {
 
             <button
               onClick={handleExit}
-              className="w-12 h-12 flex items-center justify-center bg-session-surface/80 backdrop-blur-sm rounded-full hover:bg-session-surface transition-colors"
+              style={{
+                width: '48px',
+                height: '48px',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                background: 'rgba(255, 255, 255, 0.9)',
+                backdropFilter: 'blur(8px)',
+                borderRadius: '50%',
+                border: 'none',
+                cursor: 'pointer',
+              }}
               aria-label="Exit session"
             >
-              <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24" style={{ color: 'var(--ink)' }}>
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
               </svg>
             </button>
@@ -407,22 +507,35 @@ export default function SessionPage() {
         {/* Center guidance (loading only) */}
         <div className="flex-1 flex items-center justify-center">
           {sessionState === 'loading' && (
-            <div className="bg-session-surface/80 backdrop-blur-sm px-8 py-4 rounded-2xl">
-              <p className="font-display text-xl">Loading camera...</p>
+            <div style={{
+              background: 'rgba(255, 255, 255, 0.9)',
+              backdropFilter: 'blur(8px)',
+              padding: 'var(--space-6) var(--space-8)',
+              borderRadius: 'var(--radius-xl)',
+            }}>
+              <p className="font-display text-xl" style={{ color: 'var(--ink)' }}>Loading camera...</p>
             </div>
           )}
         </div>
 
         {/* Bottom instruction */}
         <div className="p-6 pb-safe">
-          <div className="bg-session-surface/80 backdrop-blur-sm px-6 py-4 rounded-2xl text-center max-w-md mx-auto">
+          <div style={{
+            background: 'rgba(255, 255, 255, 0.9)',
+            backdropFilter: 'blur(8px)',
+            padding: 'var(--space-4) var(--space-6)',
+            borderRadius: 'var(--radius-xl)',
+            textAlign: 'center',
+            maxWidth: '28rem',
+            margin: '0 auto',
+          }}>
             <p
               className="font-display text-lg transition-colors mb-2"
-              style={{ color: feedbackColor[postureFeedback] }}
+              style={{ color: feedbackColor[postureFeedback], fontWeight: 600 }}
             >
               {feedbackMessage}
             </p>
-            <p className="text-session-muted text-sm">
+            <p style={{ color: 'var(--muted)', fontSize: 'var(--text-sm)' }}>
               Raise both arms above your shoulders, then lower them to complete a rep
             </p>
           </div>
@@ -430,6 +543,15 @@ export default function SessionPage() {
       </div>
 
       <style jsx>{`
+        @keyframes pulse {
+          0%, 100% {
+            opacity: 1;
+          }
+          50% {
+            opacity: 0.5;
+          }
+        }
+
         @media (prefers-reduced-motion: reduce) {
           * {
             animation-duration: 0.01ms !important;

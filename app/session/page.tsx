@@ -3,9 +3,14 @@
 import { useEffect, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { updateProgress } from '@/lib/progress'
-
-// TODO: Re-add TensorFlow pose detection after fixing MediaPipe bundling issue
-// For now, using mock camera + simulated pose detection for demo
+import {
+  initPoseDetector,
+  detectPose,
+  analyzeShoulderRaise,
+  RepCounter,
+  disposePoseDetector,
+  type Pose,
+} from '@/lib/poseDetection'
 
 type SessionState = 'loading' | 'countdown' | 'active' | 'paused' | 'completed'
 type PostureFeedback = 'good' | 'adjust' | 'analyzing'
@@ -13,12 +18,18 @@ type PostureFeedback = 'good' | 'adjust' | 'analyzing'
 export default function SessionPage() {
   const router = useRouter()
   const videoRef = useRef<HTMLVideoElement>(null)
+  const canvasRef = useRef<HTMLCanvasElement>(null)
+  const repCounterRef = useRef<RepCounter>(new RepCounter())
+  const animationFrameRef = useRef<number | undefined>(undefined)
+
   const [repCount, setRepCount] = useState(0)
   const [sessionState, setSessionState] = useState<SessionState>('loading')
   const [cameraError, setCameraError] = useState<string | null>(null)
   const [postureFeedback, setPostureFeedback] = useState<PostureFeedback>('analyzing')
+  const [feedbackMessage, setFeedbackMessage] = useState('Reading your movement...')
   const [countdown, setCountdown] = useState(3)
   const [showExitPrompt, setShowExitPrompt] = useState(false)
+  const [detectedPose, setDetectedPose] = useState<Pose | null>(null)
 
   const TARGET_REPS = 10
 
@@ -41,6 +52,12 @@ export default function SessionPage() {
           await videoRef.current.play()
         }
 
+        // Initialize pose detector
+        const initialized = await initPoseDetector()
+        if (!initialized) {
+          console.warn('Pose detector failed to initialize, continuing without AI')
+        }
+
         // Start with countdown
         setSessionState('countdown')
       } catch (err) {
@@ -55,6 +72,10 @@ export default function SessionPage() {
       if (stream) {
         stream.getTracks().forEach((track) => track.stop())
       }
+      if (animationFrameRef.current) {
+        cancelAnimationFrame(animationFrameRef.current)
+      }
+      disposePoseDetector()
     }
   }, [])
 
@@ -70,33 +91,42 @@ export default function SessionPage() {
     }
   }, [sessionState, countdown])
 
-  // Mock pose detection and rep counting (only when active)
+  // Real-time pose detection loop (only when active)
   useEffect(() => {
-    if (sessionState !== 'active') return
+    if (sessionState !== 'active' || !videoRef.current) return
 
-    // Mock posture feedback - cycles through states
-    const postureInterval = setInterval(() => {
-      const states: PostureFeedback[] = ['analyzing', 'adjust', 'good']
-      setPostureFeedback((prev) => {
-        const currentIndex = states.indexOf(prev)
-        return states[(currentIndex + 1) % states.length]
-      })
-    }, 2000)
+    async function detectAndAnalyze() {
+      if (!videoRef.current || sessionState !== 'active') return
 
-    // Mock rep counting - complete 1 rep every 4 seconds
-    const repInterval = setInterval(() => {
-      setRepCount((prev) => {
-        const newCount = prev + 1
+      // Detect pose
+      const pose = await detectPose(videoRef.current)
+      setDetectedPose(pose)
+
+      // Analyze shoulder raise
+      const analysis = analyzeShoulderRaise(pose)
+      setPostureFeedback(analysis.feedback)
+      setFeedbackMessage(analysis.message)
+
+      // Count reps
+      const { repCount: newCount, justCompleted } = repCounterRef.current.count(analysis)
+      if (justCompleted) {
+        setRepCount(newCount)
         if (newCount >= TARGET_REPS) {
           completeSession()
+          return
         }
-        return newCount
-      })
-    }, 4000)
+      }
+
+      // Continue loop
+      animationFrameRef.current = requestAnimationFrame(detectAndAnalyze)
+    }
+
+    detectAndAnalyze()
 
     return () => {
-      clearInterval(postureInterval)
-      clearInterval(repInterval)
+      if (animationFrameRef.current) {
+        cancelAnimationFrame(animationFrameRef.current)
+      }
     }
   }, [sessionState])
 
@@ -106,6 +136,9 @@ export default function SessionPage() {
   }
 
   function handlePause() {
+    if (animationFrameRef.current) {
+      cancelAnimationFrame(animationFrameRef.current)
+    }
     setSessionState('paused')
   }
 
@@ -135,12 +168,6 @@ export default function SessionPage() {
 
   function handleExitWithoutSave() {
     router.push('/')
-  }
-
-  const feedbackText = {
-    good: '✓ Good posture',
-    adjust: 'Raise arms slightly higher',
-    analyzing: 'Reading your movement...',
   }
 
   const feedbackColor = {
@@ -203,63 +230,63 @@ export default function SessionPage() {
         muted
       />
 
-      {/* Skeleton overlay - simple dots for mock mode */}
-      {sessionState === 'active' && (
-        <div className="absolute inset-0 pointer-events-none flex items-center justify-center">
-          <div className="relative w-64 h-96">
-            {/* Shoulder dots */}
-            <div
-              className="absolute w-3 h-3 rounded-full bg-session-primary"
-              style={{
-                left: '30%',
-                top: '20%',
-                animation: 'pulse 2s ease-in-out infinite',
-              }}
-            />
-            <div
-              className="absolute w-3 h-3 rounded-full bg-session-primary"
-              style={{
-                right: '30%',
-                top: '20%',
-                animation: 'pulse 2s ease-in-out infinite 0.2s',
-              }}
-            />
-            {/* Elbow dots */}
-            <div
-              className="absolute w-3 h-3 rounded-full bg-session-primary"
-              style={{
-                left: '25%',
-                top: '45%',
-                animation: 'pulse 2s ease-in-out infinite 0.4s',
-              }}
-            />
-            <div
-              className="absolute w-3 h-3 rounded-full bg-session-primary"
-              style={{
-                right: '25%',
-                top: '45%',
-                animation: 'pulse 2s ease-in-out infinite 0.6s',
-              }}
-            />
-            {/* Wrist dots */}
-            <div
-              className="absolute w-3 h-3 rounded-full bg-session-primary"
-              style={{
-                left: '20%',
-                top: '65%',
-                animation: 'pulse 2s ease-in-out infinite 0.8s',
-              }}
-            />
-            <div
-              className="absolute w-3 h-3 rounded-full bg-session-primary"
-              style={{
-                right: '20%',
-                top: '65%',
-                animation: 'pulse 2s ease-in-out infinite 1s',
-              }}
-            />
-          </div>
-        </div>
+      {/* Skeleton overlay - actual pose keypoints */}
+      {sessionState === 'active' && detectedPose && videoRef.current && (
+        <svg
+          className="absolute inset-0 pointer-events-none"
+          viewBox={`0 0 ${videoRef.current.videoWidth} ${videoRef.current.videoHeight}`}
+          style={{ width: '100%', height: '100%' }}
+        >
+          {detectedPose.keypoints
+            .filter((kp) => (kp.score ?? 0) > 0.3)
+            .map((kp, i) => (
+              <circle
+                key={i}
+                cx={kp.x}
+                cy={kp.y}
+                r="6"
+                fill="var(--session-primary)"
+                opacity="0.8"
+              />
+            ))}
+
+          {/* Draw skeleton connections */}
+          {(() => {
+            const connections = [
+              ['left_shoulder', 'right_shoulder'],
+              ['left_shoulder', 'left_elbow'],
+              ['left_elbow', 'left_wrist'],
+              ['right_shoulder', 'right_elbow'],
+              ['right_elbow', 'right_wrist'],
+            ];
+
+            return connections.map(([start, end], i) => {
+              const startKp = detectedPose.keypoints.find((kp) => kp.name === start);
+              const endKp = detectedPose.keypoints.find((kp) => kp.name === end);
+
+              if (
+                startKp &&
+                endKp &&
+                (startKp.score ?? 0) > 0.3 &&
+                (endKp.score ?? 0) > 0.3
+              ) {
+                return (
+                  <line
+                    key={i}
+                    x1={startKp.x}
+                    y1={startKp.y}
+                    x2={endKp.x}
+                    y2={endKp.y}
+                    stroke="var(--session-primary)"
+                    strokeWidth="3"
+                    opacity="0.6"
+                  />
+                );
+              }
+              return null;
+            });
+          })()}
+        </svg>
       )}
 
       {/* Countdown overlay */}
@@ -373,7 +400,7 @@ export default function SessionPage() {
               className="font-display text-lg transition-colors mb-2"
               style={{ color: feedbackColor[postureFeedback] }}
             >
-              {feedbackText[postureFeedback]}
+              {feedbackMessage}
             </p>
             <p className="text-session-muted text-sm">
               Raise both arms above your shoulders, then lower them to complete a rep
@@ -383,17 +410,6 @@ export default function SessionPage() {
       </div>
 
       <style jsx>{`
-        @keyframes pulse {
-          0%, 100% {
-            opacity: 1;
-            transform: scale(1);
-          }
-          50% {
-            opacity: 0.6;
-            transform: scale(1.2);
-          }
-        }
-
         @media (prefers-reduced-motion: reduce) {
           * {
             animation-duration: 0.01ms !important;

@@ -1,0 +1,57 @@
+[
+  {
+    "route": "/progress",
+    "firstLoadUncompressedJsBytes": 545233,
+    "firstLoadChunkPaths": [
+      ".next\\static\\chunks\\05-c3ty_6dwfk.js",
+      ".next\\static\\chunks\\0urjeer3uj875.js",
+      ".next\\static\\chunks\\1h5tv_sij32z-.js",
+      ".next\\static\\chunks\\261y1hxfsqgcm.js",
+      ".next\\static\\chunks\\27jktro2p5rq9.js",
+      ".next\\static\\chunks\\2nykiepra7i1k.js",
+      ".next\\static\\chunks\\0f3-h6mimpj11.js",
+      ".next\\static\\chunks\\turbopack-0y6xfzb7iixnw.js"
+    ]
+  },
+  {
+    "route": "/",
+    "firstLoadUncompressedJsBytes": 527396,
+    "firstLoadChunkPaths": [
+      ".next\\static\\chunks\\05-c3ty_6dwfk.js",
+      ".next\\static\\chunks\\0urjeer3uj875.js",
+      ".next\\static\\chunks\\0-_2a2aw9o4x6.js",
+      ".next\\static\\chunks\\261y1hxfsqgcm.js",
+      ".next\\static\\chunks\\27jktro2p5rq9.js",
+      ".next\\static\\chunks\\2nykiepra7i1k.js",
+      ".next\\static\\chunks\\0f3-h6mimpj11.js",
+      ".next\\static\\chunks\\turbopack-0y6xfzb7iixnw.js"
+    ]
+  },
+  {
+    "route": "/session",
+    "firstLoadUncompressedJsBytes": 519476,
+    "firstLoadChunkPaths": [
+      ".next\\static\\chunks\\05-c3ty_6dwfk.js",
+      ".next\\static\\chunks\\0urjeer3uj875.js",
+      ".next\\static\\chunks\\1_kk5tdyukhs-.js",
+      ".next\\static\\chunks\\261y1hxfsqgcm.js",
+      ".next\\static\\chunks\\27jktro2p5rq9.js",
+      ".next\\static\\chunks\\2nykiepra7i1k.js",
+      ".next\\static\\chunks\\0f3-h6mimpj11.js",
+      ".next\\static\\chunks\\turbopack-0y6xfzb7iixnw.js"
+    ]
+  },
+  {
+    "route": "/_not-found",
+    "firstLoadUncompressedJsBytes": 514649,
+    "firstLoadChunkPaths": [
+      ".next\\static\\chunks\\05-c3ty_6dwfk.js",
+      ".next\\static\\chunks\\0urjeer3uj875.js",
+      ".next\\static\\chunks\\261y1hxfsqgcm.js",
+      ".next\\static\\chunks\\27jktro2p5rq9.js",
+      ".next\\static\\chunks\\2nykiepra7i1k.js",
+      ".next\\static\\chunks\\0f3-h6mimpj11.js",
+      ".next\\static\\chunks\\turbopack-0y6xfzb7iixnw.js"
+    ]
+  }
+]

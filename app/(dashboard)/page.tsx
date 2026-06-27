@@ -31,7 +31,7 @@ export default function DashboardPage() {
     <>
       <main className="min-h-screen pb-24">
         {/* Header */}
-        <header className="px-6 pt-8 pb-4">
+        <header className="px-6 pt-8 pb-4 animate-fadeIn">
           <div className="max-w-2xl mx-auto flex items-center justify-between">
             <div>
               <p style={{ color: 'var(--muted)', fontSize: 'var(--text-sm)', marginBottom: 'var(--space-1)' }}>
@@ -39,8 +39,8 @@ export default function DashboardPage() {
               </p>
               <h1 style={{ fontSize: 'var(--text-3xl)', fontWeight: 700 }}>Your garden</h1>
             </div>
-            <div className="star-badge">
-              <svg width="20" height="20" viewBox="0 0 20 20" fill="currentColor">
+            <div className="star-badge animate-scaleIn" style={{ animationDelay: '100ms' }}>
+              <svg width="20" height="20" viewBox="0 0 20 20" fill="currentColor" className="animate-starShine">
                 <path d="M10 0l2.5 6.5H19l-5.5 4 2 6.5L10 13l-5.5 4 2-6.5-5.5-4h6.5z" />
               </svg>
               <span>{progress.totalStars}</span>
@@ -49,10 +49,10 @@ export default function DashboardPage() {
         </header>
 
         {/* Garden State */}
-        <section className="px-6 py-12">
+        <section className="px-6 py-12 animate-fadeInUp" style={{ animationDelay: '150ms' }}>
           <div className="max-w-2xl mx-auto text-center">
             {/* Soil/Garden Illustration */}
-            <div className="mb-8">
+            <div className="mb-8 animate-treeGrow" style={{ animationDelay: '200ms' }}>
               <SoilIllustration stage={progress.treeStage} />
             </div>
 
@@ -66,7 +66,7 @@ export default function DashboardPage() {
         </section>
 
         {/* This Week */}
-        <section className="px-6 py-4">
+        <section className="px-6 py-4 animate-fadeInUp" style={{ animationDelay: '300ms' }}>
           <div className="max-w-2xl mx-auto">
             <div className="bg-[var(--surface)] rounded-2xl p-6">
               <div className="flex items-center justify-between mb-4">
@@ -82,7 +82,7 @@ export default function DashboardPage() {
 
               {/* Week Strip */}
               <div className="flex gap-3 justify-between">
-                {dayStrip.map((day) => {
+                {dayStrip.map((day, index) => {
                   const date = new Date(day.date);
                   const dayLetter = date.toLocaleDateString('en-US', { weekday: 'short' }).charAt(0);
                   const today = new Date().toISOString().split('T')[0];
@@ -92,7 +92,7 @@ export default function DashboardPage() {
                   return (
                     <div
                       key={day.date}
-                      className="flex flex-col items-center gap-2 flex-1"
+                      className={`flex flex-col items-center gap-2 flex-1 animate-scaleIn stagger-${index + 1}`}
                     >
                       <span style={{ fontSize: 'var(--text-sm)', color: 'var(--muted)', fontWeight: 500 }}>
                         {dayLetter}
@@ -113,7 +113,7 @@ export default function DashboardPage() {
                         }}
                       >
                         {day.completed ? (
-                          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3">
+                          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" className="animate-checkPop">
                             <path d="M5 12l5 5L19 7" />
                           </svg>
                         ) : (
@@ -129,7 +129,7 @@ export default function DashboardPage() {
         </section>
 
         {/* Begin Session Button */}
-        <section className="px-6 py-8">
+        <section className="px-6 py-8 animate-fadeInUp" style={{ animationDelay: '400ms' }}>
           <div className="max-w-2xl mx-auto">
             <Link href="/session" className="btn btn-primary w-full text-center flex items-center justify-center gap-2">
               Begin today's session

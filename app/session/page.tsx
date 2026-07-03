@@ -6,10 +6,12 @@ import { useRouter } from 'next/navigation'
 import { updateProgress } from '@/lib/progress'
 import confetti from 'canvas-confetti'
 import { useToast } from '@/components/Toast'
+import ReferenceModel3D from '@/components/ReferenceModel3D'
 import {
   initPoseDetector,
   detectPose,
   analyzeShoulderRaise,
+  shouldersInFrame,
   RepCounter,
   disposePoseDetector,
   type Pose,
@@ -35,10 +37,56 @@ export default function SessionPage() {
   const [detectedPose, setDetectedPose] = useState<Pose | null>(null)
   const [isDetecting, setIsDetecting] = useState(false)
   const [repJustCompleted, setRepJustCompleted] = useState(false)
+  const [holdProgress, setHoldProgress] = useState(0)
+  const [holdMissed, setHoldMissed] = useState(false)
+  const [shouldersVisible, setShouldersVisible] = useState(true)
+  const [hasSpoken, setHasSpoken] = useState(false)
+  const [instructionBoxPos, setInstructionBoxPos] = useState({ x: 0, y: 0 })
+  const [isDraggingBox, setIsDraggingBox] = useState(false)
+  const [boxDragStart, setBoxDragStart] = useState({ x: 0, y: 0 })
+  const [isSpeaking, setIsSpeaking] = useState(false)
 
   const { showToast, ToastComponent } = useToast()
 
   const TARGET_REPS = 10
+
+  // Text-to-speech helper
+  const speak = (text: string) => {
+    if ('speechSynthesis' in window) {
+      window.speechSynthesis.cancel() // Cancel any ongoing speech
+      const utterance = new SpeechSynthesisUtterance(text)
+      utterance.rate = 0.9
+      utterance.pitch = 1.0
+      utterance.volume = 1.0
+      utterance.onend = () => setIsSpeaking(false)
+      setIsSpeaking(true)
+      window.speechSynthesis.speak(utterance)
+    }
+  }
+
+  // Handle instruction box dragging
+  useEffect(() => {
+    if (!isDraggingBox) return
+
+    const handleMouseMove = (e: MouseEvent) => {
+      const dx = e.clientX - boxDragStart.x
+      const dy = e.clientY - boxDragStart.y
+      setInstructionBoxPos({ x: instructionBoxPos.x + dx, y: instructionBoxPos.y + dy })
+      setBoxDragStart({ x: e.clientX, y: e.clientY })
+    }
+
+    const handleMouseUp = () => {
+      setIsDraggingBox(false)
+    }
+
+    document.addEventListener('mousemove', handleMouseMove)
+    document.addEventListener('mouseup', handleMouseUp)
+
+    return () => {
+      document.removeEventListener('mousemove', handleMouseMove)
+      document.removeEventListener('mouseup', handleMouseUp)
+    }
+  }, [isDraggingBox, boxDragStart, instructionBoxPos])
 
   useEffect(() => {
     let stream: MediaStream | null = null
@@ -98,8 +146,15 @@ export default function SessionPage() {
       return () => clearTimeout(timer)
     } else if (sessionState === 'countdown' && countdown === 0) {
       setSessionState('active')
+      // Speak initial instructions when session becomes active
+      if (!hasSpoken) {
+        setTimeout(() => {
+          speak('Position yourself in frame. Raise both arms above your shoulders, then lower them to complete a rep.')
+          setHasSpoken(true)
+        }, 500)
+      }
     }
-  }, [sessionState, countdown])
+  }, [sessionState, countdown, hasSpoken])
 
   // Real-time pose detection loop (only when active)
   useEffect(() => {
@@ -121,12 +176,22 @@ export default function SessionPage() {
       setPostureFeedback(analysis.feedback)
       setFeedbackMessage(analysis.message)
 
-      // Count reps
-      const { repCount: newCount, justCompleted } = repCounterRef.current.count(analysis)
+      // Track shoulder visibility for the "step back" warning
+      setShouldersVisible(shouldersInFrame(pose))
+
+      // Count reps (with hold-lock enforcement)
+      const { repCount: newCount, justCompleted, holdProgress: hp, holdMissed: hm } =
+        repCounterRef.current.count(analysis)
+      setHoldProgress(hp)
+      if (hm) {
+        setHoldMissed(true)
+        setTimeout(() => setHoldMissed(false), 1200)
+      }
       if (justCompleted) {
         console.log(`✅ Rep ${newCount} completed!`)
         setRepCount(newCount)
         setRepJustCompleted(true)
+        speak(`Rep ${newCount} completed! ${TARGET_REPS - newCount} more to go.`)
         setTimeout(() => setRepJustCompleted(false), 300)
         if (newCount >= TARGET_REPS) {
           completeSession()
@@ -150,6 +215,7 @@ export default function SessionPage() {
   function completeSession() {
     setSessionState('completed')
     updateProgress(1) // Award 1 star
+    speak('Session complete! Great job!')
 
     // Trigger confetti celebration
     const duration = 3000;
@@ -218,9 +284,9 @@ export default function SessionPage() {
   }
 
   const feedbackColor = {
-    good: 'var(--primary)',
-    adjust: '#C9B88A',
-    analyzing: 'var(--muted)',
+    good: '#22c55e',    // correct
+    adjust: '#f97316',  // almost correct
+    analyzing: '#ef4444', // incorrect / not yet confirmed
   }
 
   if (cameraError) {
@@ -311,56 +377,44 @@ export default function SessionPage() {
         style={{ transform: 'scaleX(-1)' }}
       />
 
-      {/* Skeleton overlay - actual pose keypoints */}
+      {/* Skeleton overlay — live skeleton */}
       {sessionState === 'active' && detectedPose && videoRef.current && (
         <svg
           className="absolute inset-0 pointer-events-none"
           viewBox={`0 0 ${videoRef.current.videoWidth} ${videoRef.current.videoHeight}`}
           style={{ width: '100%', height: '100%', transform: 'scaleX(-1)' }}
         >
-          {detectedPose.keypoints
-            .filter((kp) => (kp.score ?? 0) > 0.5)
-            .map((kp, i) => (
-              <circle
-                key={i}
-                cx={kp.x}
-                cy={kp.y}
-                r="6"
-                fill="var(--session-primary)"
-                opacity="0.8"
-              />
-            ))}
 
-          {/* Draw skeleton connections */}
+          {/* Live skeleton — solid colored lines reflecting posture feedback */}
           {(() => {
             const connections = [
-              ['left_shoulder', 'right_shoulder'],
-              ['left_shoulder', 'left_elbow'],
-              ['left_elbow', 'left_wrist'],
+              ['left_shoulder',  'right_shoulder'],
+              ['left_shoulder',  'left_elbow'],
+              ['left_elbow',     'left_wrist'],
               ['right_shoulder', 'right_elbow'],
-              ['right_elbow', 'right_wrist'],
+              ['right_elbow',    'right_wrist'],
             ];
+
+            const lineColor = feedbackColor[postureFeedback];
 
             return connections.map(([start, end], i) => {
               const startKp = detectedPose.keypoints.find((kp) => kp.name === start);
-              const endKp = detectedPose.keypoints.find((kp) => kp.name === end);
+              const endKp   = detectedPose.keypoints.find((kp) => kp.name === end);
 
               if (
-                startKp &&
-                endKp &&
+                startKp && endKp &&
                 (startKp.score ?? 0) > 0.5 &&
-                (endKp.score ?? 0) > 0.5
+                (endKp.score   ?? 0) > 0.5
               ) {
                 return (
                   <line
                     key={i}
-                    x1={startKp.x}
-                    y1={startKp.y}
-                    x2={endKp.x}
-                    y2={endKp.y}
-                    stroke="var(--session-primary)"
-                    strokeWidth="3"
-                    opacity="0.6"
+                    x1={startKp.x} y1={startKp.y}
+                    x2={endKp.x}   y2={endKp.y}
+                    stroke={lineColor}
+                    strokeWidth="8"
+                    strokeLinecap="round"
+                    opacity="0.85"
                   />
                 );
               }
@@ -373,13 +427,52 @@ export default function SessionPage() {
       {/* Countdown overlay */}
       {sessionState === 'countdown' && countdown > 0 && (
         <div className="absolute inset-0 flex items-center justify-center z-20" style={{ background: 'rgba(0,0,0,0.7)', backdropFilter: 'blur(8px)' }}>
-          <div className="text-center">
+          <div className="text-center px-8">
             <p style={{ color: 'var(--muted)', fontSize: 'var(--text-lg)' }} className="mb-4 font-display">
               Starting in
             </p>
-            <p className="text-8xl font-display font-bold" style={{ color: 'var(--primary)' }}>
+            <p className="text-8xl font-display font-bold mb-8" style={{ color: 'var(--primary)' }}>
               {countdown}
             </p>
+            <div style={{
+              background: 'rgba(255,255,255,0.08)',
+              border: '1px solid rgba(255,255,255,0.15)',
+              borderRadius: 'var(--radius-xl)',
+              padding: 'var(--space-4) var(--space-6)',
+              maxWidth: '280px',
+              margin: '0 auto',
+            }}>
+              <p style={{ color: 'rgba(255,255,255,0.75)', fontSize: 'var(--text-sm)', lineHeight: 1.5 }}>
+                Hold each raise for <strong style={{ color: 'white' }}>0.5 seconds</strong> to count a rep
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Shoulders-out-of-frame warning */}
+      {sessionState === 'active' && !shouldersVisible && (
+        <div
+          className="absolute top-24 left-0 right-0 flex justify-center z-10 pointer-events-none"
+          style={{ padding: '0 var(--space-6)' }}
+        >
+          <div style={{
+            background: 'rgba(0,0,0,0.75)',
+            backdropFilter: 'blur(8px)',
+            borderRadius: 'var(--radius-full)',
+            padding: 'var(--space-3) var(--space-5)',
+            display: 'flex',
+            alignItems: 'center',
+            gap: 'var(--space-2)',
+          }}>
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#f97316" strokeWidth="2.5">
+              <circle cx="12" cy="12" r="10" />
+              <line x1="12" y1="8" x2="12" y2="12" />
+              <line x1="12" y1="16" x2="12.01" y2="16" />
+            </svg>
+            <span style={{ color: 'white', fontSize: 'var(--text-sm)', fontWeight: 500 }}>
+              Step back so your shoulders are visible
+            </span>
           </div>
         </div>
       )}
@@ -454,6 +547,19 @@ export default function SessionPage() {
               </button>
             </div>
           </div>
+        </div>
+      )}
+
+      {/* 3D Reference Model - floating, movable widget */}
+      {sessionState === 'active' && (
+        <div
+          className="fixed bottom-32 right-6 z-20 pointer-events-auto"
+          style={{
+            width: '200px',
+            height: '280px',
+          }}
+        >
+          <ReferenceModel3D />
         </div>
       )}
 
@@ -573,13 +679,114 @@ export default function SessionPage() {
             textAlign: 'center',
             maxWidth: '28rem',
             margin: '0 auto',
+            position: 'relative',
+            transform: `translate(${instructionBoxPos.x}px, ${instructionBoxPos.y}px)`,
+            cursor: isDraggingBox ? 'grabbing' : 'auto',
+            userSelect: 'none',
+            border: '2px solid var(--border)',
           }}>
+            {/* Drag handle + speaker button */}
+            <div style={{
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              marginBottom: 'var(--space-3)',
+              paddingBottom: 'var(--space-2)',
+              borderBottom: '1px solid var(--border)',
+            }}>
+              <div
+                onMouseDown={(e) => {
+                  setIsDraggingBox(true)
+                  setBoxDragStart({ x: e.clientX, y: e.clientY })
+                }}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 'var(--space-2)',
+                  cursor: 'grab',
+                  flex: 1,
+                }}
+              >
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--muted)" strokeWidth="2">
+                  <circle cx="9" cy="6" r="1" fill="var(--muted)" />
+                  <circle cx="15" cy="6" r="1" fill="var(--muted)" />
+                  <circle cx="9" cy="12" r="1" fill="var(--muted)" />
+                  <circle cx="15" cy="12" r="1" fill="var(--muted)" />
+                  <circle cx="9" cy="18" r="1" fill="var(--muted)" />
+                  <circle cx="15" cy="18" r="1" fill="var(--muted)" />
+                </svg>
+                <span style={{ fontSize: 'var(--text-xs)', color: 'var(--muted)' }}>
+                  Drag to move
+                </span>
+              </div>
+
+              {/* Speaker button */}
+              <button
+                onClick={() => {
+                  speak(`${holdMissed ? 'Hold a little longer next time' : feedbackMessage}. Raise both arms above your shoulders, then lower them to complete a rep`)
+                }}
+                style={{
+                  background: isSpeaking ? 'var(--primary)' : 'transparent',
+                  border: 'none',
+                  cursor: 'pointer',
+                  padding: 'var(--space-2)',
+                  borderRadius: 'var(--radius-full)',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  transition: 'background 200ms ease',
+                }}
+                aria-label="Read instructions aloud"
+              >
+                <svg
+                  width="20"
+                  height="20"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke={isSpeaking ? 'white' : 'var(--primary)'}
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                >
+                  <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5" />
+                  {isSpeaking ? (
+                    <>
+                      <path d="M15.54 8.46a5 5 0 0 1 0 7.07" />
+                      <path d="M19.07 4.93a10 10 0 0 1 0 14.14" />
+                    </>
+                  ) : (
+                    <path d="M15 9l6 3-6 3V9z" />
+                  )}
+                </svg>
+              </button>
+            </div>
+
             <p
               className="font-display text-lg transition-colors mb-2"
-              style={{ color: feedbackColor[postureFeedback], fontWeight: 600 }}
+              style={{ color: holdMissed ? '#f97316' : feedbackColor[postureFeedback], fontWeight: 600 }}
             >
-              {feedbackMessage}
+              {holdMissed ? 'Hold a little longer next time' : feedbackMessage}
             </p>
+
+            {/* Hold progress bar — visible while arms are raised */}
+            {holdProgress > 0 && (
+              <div style={{
+                height: '4px',
+                background: 'var(--border)',
+                borderRadius: 'var(--radius-full)',
+                overflow: 'hidden',
+                marginBottom: 'var(--space-3)',
+              }}>
+                <div style={{
+                  height: '100%',
+                  width: `${holdProgress * 100}%`,
+                  background: holdProgress >= 1 ? '#22c55e' : '#f97316',
+                  borderRadius: 'var(--radius-full)',
+                  transition: 'width 80ms linear, background 200ms ease',
+                }} />
+              </div>
+            )}
+
             <p style={{ color: 'var(--muted)', fontSize: 'var(--text-sm)' }}>
               Raise both arms above your shoulders, then lower them to complete a rep
             </p>

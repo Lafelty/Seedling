@@ -7,6 +7,7 @@ import { updateProgress } from '@/lib/progress'
 import confetti from 'canvas-confetti'
 import { useToast } from '@/components/Toast'
 import ReferenceModel3D from '@/components/ReferenceModel3D'
+import { createClient } from '@/lib/supabase/client'
 import {
   initPoseDetector,
   detectPose,
@@ -20,12 +21,28 @@ import {
 type SessionState = 'loading' | 'countdown' | 'active' | 'paused' | 'completed'
 type PostureFeedback = 'good' | 'adjust' | 'analyzing'
 
+interface RepData {
+  repNumber: number
+  holdDuration: number
+  formScore: number
+  timestamp: Date
+}
+
 export default function SessionPage() {
   const router = useRouter()
   const videoRef = useRef<HTMLVideoElement>(null)
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const repCounterRef = useRef<RepCounter>(new RepCounter())
   const animationFrameRef = useRef<number | undefined>(undefined)
+  const supabase = createClient()
+
+  // Session tracking state
+  const [sessionId, setSessionId] = useState<string | null>(null)
+  const [sessionStartTime, setSessionStartTime] = useState<Date | null>(null)
+  const [repDataList, setRepDataList] = useState<RepData[]>([])
+  const [goodPostureTime, setGoodPostureTime] = useState(0) // milliseconds in "good" posture
+  const [totalActiveTime, setTotalActiveTime] = useState(0) // milliseconds in active state
+  const lastFrameTime = useRef<number>(Date.now())
 
   const [repCount, setRepCount] = useState(0)
   const [sessionState, setSessionState] = useState<SessionState>('loading')
@@ -146,6 +163,8 @@ export default function SessionPage() {
       return () => clearTimeout(timer)
     } else if (sessionState === 'countdown' && countdown === 0) {
       setSessionState('active')
+      setSessionStartTime(new Date())
+      createSessionRecord()
       // Speak initial instructions when session becomes active
       if (!hasSpoken) {
         setTimeout(() => {
@@ -156,12 +175,44 @@ export default function SessionPage() {
     }
   }, [sessionState, countdown, hasSpoken])
 
+  // Create session record in database
+  async function createSessionRecord() {
+    const { data: { user } } = await supabase.auth.getUser()
+    if (!user) {
+      console.error('No user logged in')
+      return
+    }
+
+    const { data, error } = await supabase
+      .from('therapy_sessions')
+      .insert({
+        user_id: user.id,
+        exercise_type: 'shoulder-raise',
+        started_at: new Date().toISOString(),
+        target_reps: TARGET_REPS,
+      })
+      .select()
+      .single()
+
+    if (error) {
+      console.error('Error creating session:', error)
+    } else if (data) {
+      setSessionId(data.id)
+      console.log('✅ Session created:', data.id)
+    }
+  }
+
   // Real-time pose detection loop (only when active)
   useEffect(() => {
     if (sessionState !== 'active' || !videoRef.current) return
 
     async function detectAndAnalyze() {
       if (!videoRef.current || sessionState !== 'active') return
+
+      // Track time for form quality calculation
+      const now = Date.now()
+      const deltaTime = now - lastFrameTime.current
+      lastFrameTime.current = now
 
       // Detect pose
       const pose = await detectPose(videoRef.current)
@@ -176,6 +227,12 @@ export default function SessionPage() {
       setPostureFeedback(analysis.feedback)
       setFeedbackMessage(analysis.message)
 
+      // Track form quality time
+      if (analysis.feedback === 'good') {
+        setGoodPostureTime(prev => prev + deltaTime)
+      }
+      setTotalActiveTime(prev => prev + deltaTime)
+
       // Track shoulder visibility for the "step back" warning
       setShouldersVisible(shouldersInFrame(pose))
 
@@ -183,16 +240,30 @@ export default function SessionPage() {
       const { repCount: newCount, justCompleted, holdProgress: hp, holdMissed: hm } =
         repCounterRef.current.count(analysis)
       setHoldProgress(hp)
+
       if (hm) {
         setHoldMissed(true)
         setTimeout(() => setHoldMissed(false), 1200)
       }
+
       if (justCompleted) {
         console.log(`✅ Rep ${newCount} completed!`)
+        const formScore = analysis.feedback === 'good' ? 100 : analysis.feedback === 'adjust' ? 50 : 0
+
+        // Save rep data
+        const repData: RepData = {
+          repNumber: newCount,
+          holdDuration: 500, // From RepCounter.holdThreshold
+          formScore,
+          timestamp: new Date(),
+        }
+        setRepDataList(prev => [...prev, repData])
+
         setRepCount(newCount)
         setRepJustCompleted(true)
         speak(`Rep ${newCount} completed! ${TARGET_REPS - newCount} more to go.`)
         setTimeout(() => setRepJustCompleted(false), 300)
+
         if (newCount >= TARGET_REPS) {
           completeSession()
           return
@@ -212,10 +283,59 @@ export default function SessionPage() {
     }
   }, [sessionState])
 
-  function completeSession() {
+  async function completeSession() {
     setSessionState('completed')
     updateProgress(1) // Award 1 star
     speak('Session complete! Great job!')
+
+    // Calculate session stats
+    const endTime = new Date()
+    const durationSeconds = sessionStartTime
+      ? Math.floor((endTime.getTime() - sessionStartTime.getTime()) / 1000)
+      : 0
+    const formQualityScore = totalActiveTime > 0
+      ? Math.round((goodPostureTime / totalActiveTime) * 100)
+      : 0
+
+    // Save session completion to database
+    if (sessionId) {
+      const { error: sessionError } = await supabase
+        .from('therapy_sessions')
+        .update({
+          completed_at: endTime.toISOString(),
+          duration_seconds: durationSeconds,
+          completed_reps: repCount,
+          form_quality_score: formQualityScore,
+        })
+        .eq('id', sessionId)
+
+      if (sessionError) {
+        console.error('Error updating session:', sessionError)
+      } else {
+        console.log('✅ Session updated:', { durationSeconds, formQualityScore })
+      }
+
+      // Save rep data
+      if (repDataList.length > 0) {
+        const repInserts = repDataList.map(rep => ({
+          session_id: sessionId,
+          rep_number: rep.repNumber,
+          hold_duration_ms: rep.holdDuration,
+          form_score: rep.formScore,
+          timestamp: rep.timestamp.toISOString(),
+        }))
+
+        const { error: repsError } = await supabase
+          .from('rep_data')
+          .insert(repInserts)
+
+        if (repsError) {
+          console.error('Error saving rep data:', repsError)
+        } else {
+          console.log(`✅ Saved ${repDataList.length} reps`)
+        }
+      }
+    }
 
     // Trigger confetti celebration
     const duration = 3000;

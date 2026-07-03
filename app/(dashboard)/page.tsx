@@ -2,14 +2,24 @@
 
 import Link from 'next/link';
 import { useEffect, useState } from 'react';
+import { useRouter } from 'next/navigation';
+import { createClient } from '@/lib/supabase/client';
 import { getProgress, getDayStrip, markOnboardingComplete, type ProgressData, type DayStatus } from '@/lib/progress';
 
 export default function DashboardPage() {
   const [progress, setProgress] = useState<ProgressData | null>(null);
   const [dayStrip, setDayStrip] = useState<DayStatus[]>([]);
   const [showEmptyState, setShowEmptyState] = useState(false);
+  const [user, setUser] = useState<any>(null);
+  const router = useRouter();
+  const supabase = createClient();
 
   useEffect(() => {
+    // Check if user is logged in
+    supabase.auth.getUser().then(({ data: { user } }) => {
+      setUser(user);
+    });
+
     const data = getProgress();
     setProgress(data);
     setDayStrip(getDayStrip());
@@ -76,11 +86,86 @@ export default function DashboardPage() {
               </p>
               <h1 style={{ fontSize: 'var(--text-3xl)', fontWeight: 700 }}>Your garden</h1>
             </div>
-            <div className="star-badge animate-scaleIn" style={{ animationDelay: '100ms' }}>
-              <svg width="20" height="20" viewBox="0 0 20 20" fill="currentColor" className="animate-starShine">
-                <path d="M10 0l2.5 6.5H19l-5.5 4 2 6.5L10 13l-5.5 4 2-6.5-5.5-4h6.5z" />
-              </svg>
-              <span>{progress.totalStars}</span>
+            <div style={{ display: 'flex', gap: 'var(--space-3)', alignItems: 'center' }}>
+              {user ? (
+                <>
+                  <Link
+                    href="/dashboard"
+                    style={{
+                      padding: 'var(--space-2) var(--space-4)',
+                      fontSize: 'var(--text-sm)',
+                      fontWeight: 600,
+                      color: 'var(--ink)',
+                      background: 'var(--surface)',
+                      border: '1px solid var(--border)',
+                      borderRadius: 'var(--radius-full)',
+                      textDecoration: 'none',
+                      display: 'inline-block',
+                    }}
+                  >
+                    Dashboard
+                  </Link>
+                  <button
+                    onClick={async () => {
+                      await supabase.auth.signOut();
+                      router.refresh();
+                    }}
+                    style={{
+                      padding: 'var(--space-2) var(--space-4)',
+                      fontSize: 'var(--text-sm)',
+                      fontWeight: 600,
+                      color: 'var(--muted)',
+                      background: 'transparent',
+                      border: 'none',
+                      borderRadius: 'var(--radius-full)',
+                      cursor: 'pointer',
+                    }}
+                  >
+                    Sign Out
+                  </button>
+                </>
+              ) : (
+                <>
+                  <Link
+                    href="/login"
+                    style={{
+                      padding: 'var(--space-2) var(--space-4)',
+                      fontSize: 'var(--text-sm)',
+                      fontWeight: 600,
+                      color: 'var(--ink)',
+                      background: 'transparent',
+                      border: 'none',
+                      borderRadius: 'var(--radius-full)',
+                      textDecoration: 'none',
+                      display: 'inline-block',
+                    }}
+                  >
+                    Sign In
+                  </Link>
+                  <Link
+                    href="/signup"
+                    style={{
+                      padding: 'var(--space-2) var(--space-4)',
+                      fontSize: 'var(--text-sm)',
+                      fontWeight: 600,
+                      color: 'white',
+                      background: 'var(--primary)',
+                      border: 'none',
+                      borderRadius: 'var(--radius-full)',
+                      textDecoration: 'none',
+                      display: 'inline-block',
+                    }}
+                  >
+                    Sign Up
+                  </Link>
+                </>
+              )}
+              <div className="star-badge animate-scaleIn" style={{ animationDelay: '100ms' }}>
+                <svg width="20" height="20" viewBox="0 0 20 20" fill="currentColor" className="animate-starShine">
+                  <path d="M10 0l2.5 6.5H19l-5.5 4 2 6.5L10 13l-5.5 4 2-6.5-5.5-4h6.5z" />
+                </svg>
+                <span>{progress.totalStars}</span>
+              </div>
             </div>
           </div>
         </header>

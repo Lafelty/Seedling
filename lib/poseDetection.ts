@@ -150,38 +150,73 @@ export function analyzeShoulderRaise(pose: Pose | null): ShoulderRaiseAnalysis {
 }
 
 /**
- * Count shoulder raise reps based on arm position transitions
+ * Returns true when both shoulders are detected with sufficient confidence.
+ * Used to show a "step back" warning when the patient is too close to the camera.
+ * @param pose - The detected pose from MoveNet
+ * @returns boolean indicating if shoulders are visible
+ */
+export function shouldersInFrame(pose: Pose | null): boolean {
+  if (!pose?.keypoints) return false;
+  const left = pose.keypoints.find((kp) => kp.name === 'left_shoulder');
+  const right = pose.keypoints.find((kp) => kp.name === 'right_shoulder');
+  return !!(
+    left && right &&
+    (left.score ?? 0) > 0.5 &&
+    (right.score ?? 0) > 0.5
+  );
+}
+
+/**
+ * Count shoulder raise reps based on arm position transitions.
+ * A rep is only counted if the patient holds the raised position for
+ * at least HOLD_THRESHOLD ms — prevents fast "cheat reps".
  */
 export class RepCounter {
   private wasRaised = false;
+  private raisedSince = 0;
   private repCount = 0;
   private lastTransitionTime = 0;
-  private readonly minRepDuration = 1000; // Minimum 1 second between reps
+  private readonly minRepInterval = 1000; // ms cooldown between reps
+  private readonly holdThreshold = 500;   // ms patient must hold the raised position
 
-  count(analysis: ShoulderRaiseAnalysis): { repCount: number; justCompleted: boolean } {
+  count(analysis: ShoulderRaiseAnalysis): {
+    repCount: number;
+    justCompleted: boolean;
+    holdProgress: number; // 0.0–1.0 fill toward the hold threshold
+    holdMissed: boolean;  // true when arms lowered before threshold was reached
+  } {
     const now = Date.now();
     const isRaised = analysis.bothArmsRaised;
     let justCompleted = false;
+    let holdMissed = false;
 
-    // Detect down -> up -> down transition (one rep)
     if (isRaised && !this.wasRaised) {
-      // Arms just went up
       this.wasRaised = true;
+      this.raisedSince = now;
     } else if (!isRaised && this.wasRaised) {
-      // Arms just came down - complete rep
-      if (now - this.lastTransitionTime >= this.minRepDuration) {
+      const heldFor = this.raisedSince > 0 ? now - this.raisedSince : 0;
+      if (heldFor >= this.holdThreshold && now - this.lastTransitionTime >= this.minRepInterval) {
         this.repCount++;
         justCompleted = true;
         this.lastTransitionTime = now;
+      } else if (heldFor < this.holdThreshold) {
+        holdMissed = true;
       }
       this.wasRaised = false;
+      this.raisedSince = 0;
     }
 
-    return { repCount: this.repCount, justCompleted };
+    const holdProgress =
+      this.wasRaised && this.raisedSince > 0
+        ? Math.min(1, (now - this.raisedSince) / this.holdThreshold)
+        : 0;
+
+    return { repCount: this.repCount, justCompleted, holdProgress, holdMissed };
   }
 
   reset() {
     this.wasRaised = false;
+    this.raisedSince = 0;
     this.repCount = 0;
     this.lastTransitionTime = 0;
   }

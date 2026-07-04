@@ -12,11 +12,13 @@ import {
   disposePoseDetector,
   analyzeExercise,
   GenericRepCounter,
+  CycleRepCounter,
   ANATOMICAL_REFERENCES,
   VALID_KEYPOINT_NAMES,
   type Pose,
   type PoseCriteria,
   type ExerciseAnalysis,
+  type CyclePhase,
 } from '@/lib/poseDetection'
 
 interface RecordedFrame {
@@ -50,6 +52,7 @@ interface AngleCriterion {
   minAngle: number
   maxAngle: number
   targetAngle: number
+  restAngle?: number
   relativeTo: string[]
 }
 
@@ -86,7 +89,7 @@ export default function EditExercisePage({ params }: { params: Promise<{ id: str
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const testVideoRef = useRef<HTMLVideoElement>(null)
   const testCanvasRef = useRef<HTMLCanvasElement>(null)
-  const testRepCounterRef = useRef<GenericRepCounter | null>(null)
+  const testRepCounterRef = useRef<GenericRepCounter | CycleRepCounter | null>(null)
 
   const [loading, setLoading] = useState(true)
   const [exercise, setExercise] = useState<Exercise | null>(null)
@@ -104,6 +107,7 @@ export default function EditExercisePage({ params }: { params: Promise<{ id: str
   const [testFeedback, setTestFeedback] = useState<ExerciseAnalysis | null>(null)
   const [testReps, setTestReps] = useState(0)
   const [testHoldProgress, setTestHoldProgress] = useState(0)
+  const [testPhase, setTestPhase] = useState<CyclePhase | null>(null)
   const [testCameraError, setTestCameraError] = useState<string | null>(null)
   const [targetBodyParts, setTargetBodyParts] = useState<string[]>([])
   const [feedbackMessages, setFeedbackMessages] = useState<Record<string, string>>({
@@ -111,6 +115,8 @@ export default function EditExercisePage({ params }: { params: Promise<{ id: str
     tooLow: 'Raise higher',
     tooHigh: 'Lower slightly',
     notLevel: 'Keep level',
+    hold: 'Hold it…',
+    return: 'Good — now return to start slowly',
   })
   const [targetReps, setTargetReps] = useState(10)
   const [holdDuration, setHoldDuration] = useState(500)
@@ -191,17 +197,33 @@ export default function EditExercisePage({ params }: { params: Promise<{ id: str
           setTestCameraError('Failed to load pose detection model')
           return
         }
-        testRepCounterRef.current = new GenericRepCounter(holdDuration)
+        // Same counter selection the patient session makes
+        const cyclic =
+          exercise?.exercise_type === 'dynamic' &&
+          testCriteriaRef.current.criteria.some((c) => typeof c.restAngle === 'number')
+        testRepCounterRef.current = cyclic
+          ? new CycleRepCounter(holdDuration)
+          : new GenericRepCounter(holdDuration)
 
         const loop = async () => {
           if (!running || !testVideoRef.current) return
           const pose = await detectPose(testVideoRef.current)
           const analysis = analyzeExercise(pose, testCriteriaRef.current, testMessagesRef.current)
           const rep = testRepCounterRef.current!.count(analysis)
-          setTestFeedback(analysis)
+          const phase = 'phase' in rep ? (rep.phase as CyclePhase) : null
+          let feedback = analysis.feedback
+          let message = analysis.message
+          if (phase === 'holding') {
+            message = testMessagesRef.current?.hold || 'Hold it…'
+          } else if (phase === 'lowering') {
+            feedback = 'good'
+            message = testMessagesRef.current?.return || 'Good — now return to start slowly'
+          }
+          setTestFeedback({ ...analysis, feedback, message })
+          setTestPhase(phase)
           setTestReps(rep.repCount)
           setTestHoldProgress(rep.holdProgress)
-          drawTestSkeleton(pose, analysis.feedback)
+          drawTestSkeleton(pose, feedback)
           raf = requestAnimationFrame(loop)
         }
         loop()
@@ -456,6 +478,7 @@ export default function EditExercisePage({ params }: { params: Promise<{ id: str
     setTestMode(false)
     setTestFeedback(null)
     setTestHoldProgress(0)
+    setTestPhase(null)
   }
 
   // ---- Live readouts for the currently displayed frame ----
@@ -794,6 +817,15 @@ export default function EditExercisePage({ params }: { params: Promise<{ id: str
                     <span className="text-sm font-medium text-[#1F2421]">
                       Reps: {testReps}
                     </span>
+                    {testPhase && (
+                      <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-[#F2E3D6] text-[#C4612F]">
+                        {
+                          { rest: 'Ready', lifting: 'Move', holding: 'Hold', lowering: 'Return' }[
+                            testPhase
+                          ]
+                        }
+                      </span>
+                    )}
                     <div className="flex-1 h-2 bg-[#E7E1D7] rounded-full overflow-hidden">
                       <div
                         className="h-full bg-[#10b981] transition-[width]"
@@ -879,9 +911,9 @@ export default function EditExercisePage({ params }: { params: Promise<{ id: str
                       </div>
 
                       <p className="text-xs italic text-[#5C635D]">
-                        {formatJointName(criterion.joint)} at about {criterion.targetAngle}°,
-                        accepted between {criterion.minAngle}° and {criterion.maxAngle}° — shown
-                        as the orange arc on the skeleton.
+                        {typeof criterion.restAngle === 'number'
+                          ? `${formatJointName(criterion.joint)} starts near ${criterion.restAngle}°, moves to about ${criterion.targetAngle}° (accepted ${criterion.minAngle}°–${criterion.maxAngle}°), holds, then returns to finish the rep.`
+                          : `${formatJointName(criterion.joint)} at about ${criterion.targetAngle}°, accepted between ${criterion.minAngle}° and ${criterion.maxAngle}° — shown as the orange arc on the skeleton.`}
                       </p>
 
                       <div>
@@ -944,7 +976,20 @@ export default function EditExercisePage({ params }: { params: Promise<{ id: str
                         </p>
                       </div>
 
-                      <div className="grid grid-cols-3 gap-3">
+                      <div className="grid grid-cols-4 gap-3">
+                        <div>
+                          <label className="block text-xs text-[#5C635D] mb-1">Rest (°)</label>
+                          <input
+                            type="number"
+                            value={criterion.restAngle ?? ''}
+                            placeholder="—"
+                            onChange={(e) => {
+                              const v = parseInt(e.target.value, 10)
+                              updateAngleCriterion(i, 'restAngle', Number.isNaN(v) ? undefined : v)
+                            }}
+                            className="w-full px-2 py-1 text-sm border border-[#E7E1D7] rounded focus:outline-none focus:ring-1 focus:ring-[#C4612F]"
+                          />
+                        </div>
                         <div>
                           <label className="block text-xs text-[#5C635D] mb-1">Target (°)</label>
                           <input

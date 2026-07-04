@@ -13,6 +13,7 @@ import {
   analyzeExercise,
   shouldersInFrame,
   GenericRepCounter,
+  CycleRepCounter,
   disposePoseDetector,
   type Pose,
   type PoseCriteria,
@@ -44,7 +45,7 @@ export default function SessionPage() {
   const router = useRouter()
   const videoRef = useRef<HTMLVideoElement>(null)
   const canvasRef = useRef<HTMLCanvasElement>(null)
-  const repCounterRef = useRef<GenericRepCounter | null>(null)
+  const repCounterRef = useRef<GenericRepCounter | CycleRepCounter | null>(null)
   const animationFrameRef = useRef<number | undefined>(undefined)
 
   // Exercise state
@@ -112,8 +113,16 @@ export default function SessionPage() {
 
         if (data) {
           setExercise(data as Exercise)
-          // Initialize rep counter with exercise-specific hold duration
-          repCounterRef.current = new GenericRepCounter(data.hold_duration_ms)
+          // Dynamic exercises with a known rest pose count full movement cycles
+          // (rest → target → hold → back to rest); everything else counts holds.
+          const cyclic =
+            data.exercise_type === 'dynamic' &&
+            (data.pose_criteria?.criteria ?? []).some(
+              (c: { restAngle?: number }) => typeof c.restAngle === 'number'
+            )
+          repCounterRef.current = cyclic
+            ? new CycleRepCounter(data.hold_duration_ms)
+            : new GenericRepCounter(data.hold_duration_ms)
           console.log('✅ Loaded exercise:', data.name)
         }
       } catch (err) {
@@ -319,11 +328,26 @@ export default function SessionPage() {
 
       // Analyze using generic exercise validation
       const analysis = analyzeExercise(pose, exercise.pose_criteria, exercise.feedback_messages)
-      setPostureFeedback(analysis.feedback)
-      setFeedbackMessage(analysis.message)
+
+      // Count reps first so cycle-phase coaching can override the raw feedback
+      const rep = repCounterRef.current.count(analysis)
+      const phase = 'phase' in rep ? rep.phase : null
+      setHoldProgress(rep.holdProgress)
+
+      let displayFeedback = analysis.feedback
+      let displayMessage = analysis.message
+      if (phase === 'holding') {
+        displayMessage = exercise.feedback_messages?.hold || 'Hold it…'
+      } else if (phase === 'lowering') {
+        // Out of the target band on purpose — coach the return, don't scold
+        displayFeedback = 'good'
+        displayMessage = exercise.feedback_messages?.return || 'Good — now return to start slowly'
+      }
+      setPostureFeedback(displayFeedback)
+      setFeedbackMessage(displayMessage)
 
       // Track form quality time (refs — read later by saveSessionToDb)
-      if (analysis.feedback === 'good') {
+      if (displayFeedback === 'good') {
         goodPostureTimeRef.current += deltaTime
       }
       totalActiveTimeRef.current += deltaTime
@@ -331,19 +355,19 @@ export default function SessionPage() {
       // Track shoulder visibility for the "step back" warning
       setShouldersVisible(shouldersInFrame(pose))
 
-      // Count reps using generic rep counter
-      const { repCount: newCount, justCompleted, holdProgress: hp, holdMissed: hm } =
-        repCounterRef.current.count(analysis)
-      setHoldProgress(hp)
-
-      if (hm) {
+      if (rep.holdMissed) {
         setHoldMissed(true)
         setTimeout(() => setHoldMissed(false), 1200)
       }
 
-      if (justCompleted) {
+      if (rep.justCompleted) {
+        const newCount = rep.repCount
         console.log(`✅ Rep ${newCount} completed!`)
-        const formScore = analysis.feedback === 'good' ? 100 : analysis.feedback === 'adjust' ? 50 : 0
+        // A completed cycle is good form by definition; hold-only reps keep
+        // scoring by the form at the moment the hold ended.
+        const formScore = phase
+          ? 100
+          : analysis.feedback === 'good' ? 100 : analysis.feedback === 'adjust' ? 50 : 0
 
         // Save rep data
         const repData: RepData = {

@@ -245,6 +245,9 @@ export interface AngleCriterion {
   minAngle: number;
   maxAngle: number;
   targetAngle: number;
+  // Angle at the rest pose (start of the movement). When present on a dynamic
+  // exercise, reps count full cycles: rest → target (hold) → back to rest.
+  restAngle?: number;
   relativeTo: [string, string]; // Two other keypoints to calculate the angle
 }
 
@@ -262,6 +265,9 @@ export interface PoseCriteria {
 
 export interface ExerciseAnalysis {
   meetsAllCriteria: boolean;
+  // True when every criterion that defines a restAngle is back in its rest zone
+  // (and all of their keypoints are visible). Always false if none define one.
+  atRest: boolean;
   feedback: 'good' | 'adjust' | 'analyzing';
   message: string;
   failedCriteria: string[];
@@ -312,6 +318,7 @@ export function analyzeExercise(
   if (!pose || !pose.keypoints) {
     return {
       meetsAllCriteria: false,
+      atRest: false,
       feedback: 'analyzing',
       message: fm.analyzing || 'Reading your movement...',
       failedCriteria: [],
@@ -323,6 +330,7 @@ export function analyzeExercise(
   if (criteria.length === 0 && levelingRules.length === 0) {
     return {
       meetsAllCriteria: false,
+      atRest: false,
       feedback: 'analyzing',
       message: fm.notConfigured || 'This exercise is not set up yet. Please contact your therapist.',
       failedCriteria: ['notConfigured'],
@@ -339,19 +347,25 @@ export function analyzeExercise(
   if (missingParts.length > 0) {
     return {
       meetsAllCriteria: false,
+      atRest: false,
       feedback: 'analyzing',
       message: fm.notInFrame || 'Position yourself in frame',
       failedCriteria: ['visibility'],
     };
   }
 
-  // Check angle criteria
+  // Check angle criteria, tracking the rest zone alongside the target band
+  let restEligible = 0;
+  let restMet = 0;
   for (const criterion of criteria) {
     const joint = getKeypoint(pose, criterion.joint);
     const pointA = getKeypoint(pose, criterion.relativeTo[0]);
     const pointB = getKeypoint(pose, criterion.relativeTo[1]);
+    const hasRest = typeof criterion.restAngle === 'number';
+    if (hasRest) restEligible++;
 
     if (!joint || !pointA || !pointB) {
+      // Invisible joint: can't confirm the rest pose either
       failedCriteria.push(criterion.joint);
       continue;
     }
@@ -363,7 +377,20 @@ export function analyzeExercise(
     } else if (angle > criterion.maxAngle) {
       failedCriteria.push(`${criterion.joint}_tooHigh`);
     }
+
+    if (hasRest) {
+      // "Back at rest" = within the first 35% of the excursion from rest toward
+      // target — generous on purpose; it only has to detect the return, and the
+      // derivation guarantees the target band sits well outside it.
+      const rest = criterion.restAngle as number;
+      const restLimit = rest + 0.35 * (criterion.targetAngle - rest);
+      const inRestZone =
+        criterion.targetAngle >= rest ? angle <= restLimit : angle >= restLimit;
+      if (inRestZone) restMet++;
+    }
   }
+
+  const atRest = restEligible > 0 && restMet === restEligible;
 
   // Check leveling rules (symmetry)
   for (const rule of levelingRules) {
@@ -409,6 +436,7 @@ export function analyzeExercise(
 
   return {
     meetsAllCriteria,
+    atRest,
     feedback,
     message,
     failedCriteria,
@@ -513,11 +541,18 @@ function collectJointStats(
 
   const smoothed = smoothSeries(series);
   const startWindow = smoothed.slice(0, Math.max(3, Math.round(smoothed.length * 0.1)));
+  const p5 = percentile(smoothed, 0.05);
+  const p95 = percentile(smoothed, 0.95);
+  // The rest pose is whichever movement extreme the recording starts nearest to
+  // — snapping there keeps restAngle honest even when the demo starts slightly
+  // into the movement instead of fully at rest.
+  const startRaw = percentile(startWindow, 0.5);
+  const start = Math.abs(p5 - startRaw) <= Math.abs(p95 - startRaw) ? p5 : p95;
   return {
     count: smoothed.length,
-    start: percentile(startWindow, 0.5),
-    p5: percentile(smoothed, 0.05),
-    p95: percentile(smoothed, 0.95),
+    start,
+    p5,
+    p95,
     median: percentile(smoothed, 0.5),
   };
 }
@@ -606,6 +641,7 @@ export function deriveCriteriaFromRecordings(demos: RecordedDemoFrames[]): PoseC
         targetAngle: Math.round(target),
         minAngle: Math.max(0, Math.round(target - halfBand)),
         maxAngle: Math.min(180, Math.round(target + halfBand)),
+        restAngle: Math.round(s.start),
         relativeTo: [...ANATOMICAL_REFERENCES[joint]] as [string, string],
       });
     }
@@ -695,6 +731,120 @@ export class GenericRepCounter {
     this.positionHeldSince = 0;
     this.repCount = 0;
     this.lastTransitionTime = 0;
+  }
+
+  getCount() {
+    return this.repCount;
+  }
+}
+
+export type CyclePhase = 'rest' | 'lifting' | 'holding' | 'lowering';
+
+/**
+ * Full-cycle rep counter for dynamic exercises with a known rest pose.
+ * A rep = rest → target (held long enough) → back to rest, so partial reps and
+ * "pumping" near the target without returning don't count. Requires criteria
+ * with restAngle (analyzeExercise reports atRest); exercises without one should
+ * use GenericRepCounter instead.
+ */
+export class CycleRepCounter {
+  private phase: CyclePhase = 'rest';
+  private holdStart = 0;
+  private holdSatisfied = false;
+  private repCount = 0;
+  private lastRepTime = 0;
+  private readonly minRepInterval = 1000; // ms cooldown between reps
+  private holdThreshold: number;
+
+  constructor(holdThresholdMs: number = 500) {
+    this.holdThreshold = holdThresholdMs;
+  }
+
+  count(analysis: ExerciseAnalysis): {
+    repCount: number;
+    justCompleted: boolean;
+    holdProgress: number;
+    holdMissed: boolean;
+    phase: CyclePhase;
+  } {
+    const now = Date.now();
+    const atTarget = analysis.meetsAllCriteria;
+    const atRest = analysis.atRest;
+    let justCompleted = false;
+    let holdMissed = false;
+
+    const completeIfEarned = () => {
+      if (this.holdSatisfied && now - this.lastRepTime >= this.minRepInterval) {
+        this.repCount++;
+        justCompleted = true;
+        this.lastRepTime = now;
+      }
+      this.holdSatisfied = false;
+    };
+
+    switch (this.phase) {
+      case 'rest':
+        if (atTarget) {
+          this.phase = 'holding';
+          this.holdStart = now;
+          this.holdSatisfied = false;
+        } else if (!atRest) {
+          this.phase = 'lifting';
+        }
+        break;
+
+      case 'lifting':
+        if (atTarget) {
+          this.phase = 'holding';
+          this.holdStart = now;
+          this.holdSatisfied = false;
+        } else if (atRest) {
+          this.phase = 'rest'; // returned without reaching the target
+        }
+        break;
+
+      case 'holding':
+        if (atTarget) {
+          if (now - this.holdStart >= this.holdThreshold) this.holdSatisfied = true;
+        } else {
+          if (!this.holdSatisfied) holdMissed = true;
+          if (atRest) {
+            completeIfEarned();
+            this.phase = 'rest';
+          } else {
+            this.phase = 'lowering';
+          }
+        }
+        break;
+
+      case 'lowering':
+        if (atTarget) {
+          // Came back up — resume the hold (an already-earned hold stays earned)
+          this.phase = 'holding';
+          this.holdStart = now;
+        } else if (atRest) {
+          completeIfEarned();
+          this.phase = 'rest';
+        }
+        break;
+    }
+
+    const holdProgress =
+      this.phase === 'holding'
+        ? Math.min(1, (now - this.holdStart) / this.holdThreshold)
+        : this.phase === 'lowering' && this.holdSatisfied
+          ? 1
+          : 0;
+
+    return { repCount: this.repCount, justCompleted, holdProgress, holdMissed, phase: this.phase };
+  }
+
+  reset() {
+    this.phase = 'rest';
+    this.holdStart = 0;
+    this.holdSatisfied = false;
+    this.repCount = 0;
+    this.lastRepTime = 0;
   }
 
   getCount() {

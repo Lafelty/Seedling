@@ -6,6 +6,8 @@ import { useRouter } from 'next/navigation';
 import { createClient } from '@/lib/supabase/client';
 import { getProgress, getDayStrip, markOnboardingComplete, type ProgressData, type DayStatus } from '@/lib/progress';
 
+export const dynamic = 'force-dynamic';
+
 export default function DashboardPage() {
   const [progress, setProgress] = useState<ProgressData | null>(null);
   const [dayStrip, setDayStrip] = useState<DayStatus[]>([]);

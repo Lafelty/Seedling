@@ -6,7 +6,6 @@ import { useRouter } from 'next/navigation'
 import { updateProgress } from '@/lib/progress'
 import confetti from 'canvas-confetti'
 import { useToast } from '@/components/Toast'
-import ReferenceModel3D from '@/components/ReferenceModel3D'
 import { createClient } from '@/lib/supabase/client'
 import {
   initPoseDetector,
@@ -146,16 +145,33 @@ export default function SessionPage() {
       setBoxDragStart({ x: e.clientX, y: e.clientY })
     }
 
+    const handleTouchMove = (e: TouchEvent) => {
+      e.preventDefault()
+      const touch = e.touches[0]
+      const dx = touch.clientX - boxDragStart.x
+      const dy = touch.clientY - boxDragStart.y
+      setInstructionBoxPos({ x: instructionBoxPos.x + dx, y: instructionBoxPos.y + dy })
+      setBoxDragStart({ x: touch.clientX, y: touch.clientY })
+    }
+
     const handleMouseUp = () => {
+      setIsDraggingBox(false)
+    }
+
+    const handleTouchEnd = () => {
       setIsDraggingBox(false)
     }
 
     document.addEventListener('mousemove', handleMouseMove)
     document.addEventListener('mouseup', handleMouseUp)
+    document.addEventListener('touchmove', handleTouchMove, { passive: false })
+    document.addEventListener('touchend', handleTouchEnd)
 
     return () => {
       document.removeEventListener('mousemove', handleMouseMove)
       document.removeEventListener('mouseup', handleMouseUp)
+      document.removeEventListener('touchmove', handleTouchMove)
+      document.removeEventListener('touchend', handleTouchEnd)
     }
   }, [isDraggingBox, boxDragStart, instructionBoxPos])
 
@@ -758,19 +774,6 @@ export default function SessionPage() {
         </div>
       )}
 
-      {/* 3D Reference Model - floating, movable widget */}
-      {sessionState === 'active' && (
-        <div
-          className="fixed bottom-32 right-6 z-20 pointer-events-auto"
-          style={{
-            width: '200px',
-            height: '280px',
-          }}
-        >
-          <ReferenceModel3D />
-        </div>
-      )}
-
       {/* UI Overlay */}
       <div className="relative z-10 h-full flex flex-col">
         {/* Top bar */}
@@ -906,6 +909,11 @@ export default function SessionPage() {
                 onMouseDown={(e) => {
                   setIsDraggingBox(true)
                   setBoxDragStart({ x: e.clientX, y: e.clientY })
+                }}
+                onTouchStart={(e) => {
+                  const touch = e.touches[0]
+                  setIsDraggingBox(true)
+                  setBoxDragStart({ x: touch.clientX, y: touch.clientY })
                 }}
                 style={{
                   display: 'flex',

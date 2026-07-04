@@ -34,7 +34,6 @@ export default function SessionPage() {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const repCounterRef = useRef<RepCounter>(new RepCounter())
   const animationFrameRef = useRef<number | undefined>(undefined)
-  const supabase = createClient()
 
   // Session tracking state
   const [sessionId, setSessionId] = useState<string | null>(null)
@@ -177,6 +176,7 @@ export default function SessionPage() {
 
   // Create session record in database
   async function createSessionRecord() {
+    const supabase = createClient()
     const { data: { user } } = await supabase.auth.getUser()
     if (!user) {
       console.error('No user logged in')
@@ -299,6 +299,7 @@ export default function SessionPage() {
 
     // Save session completion to database
     if (sessionId) {
+      const supabase = createClient()
       const { error: sessionError } = await supabase
         .from('therapy_sessions')
         .update({

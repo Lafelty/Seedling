@@ -14,13 +14,15 @@ export default function DashboardPage() {
   const [showEmptyState, setShowEmptyState] = useState(false);
   const [user, setUser] = useState<any>(null);
   const router = useRouter();
-  const supabase = createClient();
 
   useEffect(() => {
-    // Check if user is logged in
-    supabase.auth.getUser().then(({ data: { user } }) => {
-      setUser(user);
-    });
+    // Check if user is logged in (only in browser)
+    if (typeof window !== 'undefined') {
+      const supabase = createClient();
+      supabase.auth.getUser().then(({ data: { user } }) => {
+        setUser(user);
+      });
+    }
 
     const data = getProgress();
     setProgress(data);
@@ -109,6 +111,7 @@ export default function DashboardPage() {
                   </Link>
                   <button
                     onClick={async () => {
+                      const supabase = createClient();
                       await supabase.auth.signOut();
                       router.refresh();
                     }}

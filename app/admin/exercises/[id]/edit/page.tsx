@@ -7,9 +7,16 @@ import { createClient } from '@/lib/supabase/client'
 import {
   calculateAngle,
   deriveCriteriaFromRecordings,
+  initPoseDetector,
+  detectPose,
+  disposePoseDetector,
+  analyzeExercise,
+  GenericRepCounter,
   ANATOMICAL_REFERENCES,
   VALID_KEYPOINT_NAMES,
   type Pose,
+  type PoseCriteria,
+  type ExerciseAnalysis,
 } from '@/lib/poseDetection'
 
 interface RecordedFrame {
@@ -58,10 +65,28 @@ const formatJointName = (name: string) =>
     .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
     .join(' ')
 
+const SKELETON_CONNECTIONS = [
+  ['left_shoulder', 'right_shoulder'],
+  ['left_shoulder', 'left_elbow'],
+  ['left_elbow', 'left_wrist'],
+  ['right_shoulder', 'right_elbow'],
+  ['right_elbow', 'right_wrist'],
+  ['left_shoulder', 'left_hip'],
+  ['right_shoulder', 'right_hip'],
+  ['left_hip', 'right_hip'],
+  ['left_hip', 'left_knee'],
+  ['left_knee', 'left_ankle'],
+  ['right_hip', 'right_knee'],
+  ['right_knee', 'right_ankle'],
+]
+
 export default function EditExercisePage({ params }: { params: Promise<{ id: string }> }) {
   const resolvedParams = use(params)
   const router = useRouter()
   const canvasRef = useRef<HTMLCanvasElement>(null)
+  const testVideoRef = useRef<HTMLVideoElement>(null)
+  const testCanvasRef = useRef<HTMLCanvasElement>(null)
+  const testRepCounterRef = useRef<GenericRepCounter | null>(null)
 
   const [loading, setLoading] = useState(true)
   const [exercise, setExercise] = useState<Exercise | null>(null)
@@ -73,6 +98,13 @@ export default function EditExercisePage({ params }: { params: Promise<{ id: str
   const [angleCriteria, setAngleCriteria] = useState<AngleCriterion[]>([])
   const [levelingRules, setLevelingRules] = useState<LevelingRule[]>([])
   const [autoFilled, setAutoFilled] = useState(false)
+
+  // Test mode: therapist performs the exercise against the current (unsaved) criteria
+  const [testMode, setTestMode] = useState(false)
+  const [testFeedback, setTestFeedback] = useState<ExerciseAnalysis | null>(null)
+  const [testReps, setTestReps] = useState(0)
+  const [testHoldProgress, setTestHoldProgress] = useState(0)
+  const [testCameraError, setTestCameraError] = useState<string | null>(null)
   const [targetBodyParts, setTargetBodyParts] = useState<string[]>([])
   const [feedbackMessages, setFeedbackMessages] = useState<Record<string, string>>({
     perfect: 'Perfect form!',
@@ -82,6 +114,27 @@ export default function EditExercisePage({ params }: { params: Promise<{ id: str
   })
   const [targetReps, setTargetReps] = useState(10)
   const [holdDuration, setHoldDuration] = useState(500)
+
+  // Live mirrors so the test loop always validates against the latest edits
+  // without restarting the camera on every keystroke.
+  const testCriteriaRef = useRef<PoseCriteria>({
+    targetBodyParts: [],
+    criteria: [],
+    levelingRules: [],
+  })
+  testCriteriaRef.current = {
+    targetBodyParts,
+    criteria: angleCriteria.map((c) => ({
+      ...c,
+      relativeTo: [c.relativeTo[0], c.relativeTo[1]] as [string, string],
+    })),
+    levelingRules: levelingRules.map((r) => ({
+      ...r,
+      joints: [r.joints[0], r.joints[1]] as [string, string],
+    })),
+  }
+  const testMessagesRef = useRef(feedbackMessages)
+  testMessagesRef.current = feedbackMessages
 
   useEffect(() => {
     loadExercise()
@@ -113,7 +166,60 @@ export default function EditExercisePage({ params }: { params: Promise<{ id: str
         drawSkeleton(demo.frames[currentFrame].pose)
       }
     }
-  }, [currentFrame, exercise, selectedDemo])
+  }, [currentFrame, exercise, selectedDemo, angleCriteria])
+
+  // Test loop: camera + the exact validation engine the patient session runs.
+  useEffect(() => {
+    if (!testMode) return
+
+    let stream: MediaStream | null = null
+    let running = true
+    let raf = 0
+
+    const start = async () => {
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({
+          video: { width: 640, height: 480, facingMode: 'user' },
+        })
+        const video = testVideoRef.current
+        if (!video) return
+        video.srcObject = stream
+        await video.play()
+
+        const ok = await initPoseDetector()
+        if (!ok) {
+          setTestCameraError('Failed to load pose detection model')
+          return
+        }
+        testRepCounterRef.current = new GenericRepCounter(holdDuration)
+
+        const loop = async () => {
+          if (!running || !testVideoRef.current) return
+          const pose = await detectPose(testVideoRef.current)
+          const analysis = analyzeExercise(pose, testCriteriaRef.current, testMessagesRef.current)
+          const rep = testRepCounterRef.current!.count(analysis)
+          setTestFeedback(analysis)
+          setTestReps(rep.repCount)
+          setTestHoldProgress(rep.holdProgress)
+          drawTestSkeleton(pose, analysis.feedback)
+          raf = requestAnimationFrame(loop)
+        }
+        loop()
+      } catch (err) {
+        console.error('Test camera error:', err)
+        setTestCameraError('Camera access denied')
+      }
+    }
+
+    start()
+
+    return () => {
+      running = false
+      cancelAnimationFrame(raf)
+      if (stream) stream.getTracks().forEach((t) => t.stop())
+      disposePoseDetector()
+    }
+  }, [testMode, holdDuration])
 
   async function loadExercise() {
     const supabase = createClient()
@@ -230,22 +336,7 @@ export default function EditExercisePage({ params }: { params: Promise<{ id: str
     })
 
     // Draw skeleton connections
-    const connections = [
-      ['left_shoulder', 'right_shoulder'],
-      ['left_shoulder', 'left_elbow'],
-      ['left_elbow', 'left_wrist'],
-      ['right_shoulder', 'right_elbow'],
-      ['right_elbow', 'right_wrist'],
-      ['left_shoulder', 'left_hip'],
-      ['right_shoulder', 'right_hip'],
-      ['left_hip', 'right_hip'],
-      ['left_hip', 'left_knee'],
-      ['left_knee', 'left_ankle'],
-      ['right_hip', 'right_knee'],
-      ['right_knee', 'right_ankle'],
-    ]
-
-    connections.forEach(([startName, endName]) => {
+    SKELETON_CONNECTIONS.forEach(([startName, endName]) => {
       const start = pose.keypoints.find((kp) => kp.name === startName)
       const end = pose.keypoints.find((kp) => kp.name === endName)
 
@@ -265,6 +356,106 @@ export default function EditExercisePage({ params }: { params: Promise<{ id: str
         ctx.stroke()
       }
     })
+
+    // Overlay each angle criterion: dashed lines to its reference points and
+    // an arc with the measured angle, so the numbers below have a visual form.
+    angleCriteria.forEach((criterion) => {
+      const joint = pose.keypoints.find((kp) => kp.name === criterion.joint)
+      const refA = pose.keypoints.find((kp) => kp.name === criterion.relativeTo[0])
+      const refB = pose.keypoints.find((kp) => kp.name === criterion.relativeTo[1])
+      if (!joint || !refA || !refB) return
+      if ((joint.score ?? 0) <= 0.3 || (refA.score ?? 0) <= 0.3 || (refB.score ?? 0) <= 0.3)
+        return
+
+      const jx = joint.x * scaleX
+      const jy = joint.y * scaleY
+
+      ctx.strokeStyle = '#C4612F'
+      ctx.lineWidth = 1.5
+      ctx.setLineDash([4, 4])
+      ;[refA, refB].forEach((ref) => {
+        ctx.beginPath()
+        ctx.moveTo(jx, jy)
+        ctx.lineTo(ref.x * scaleX, ref.y * scaleY)
+        ctx.stroke()
+      })
+      ctx.setLineDash([])
+
+      const a1 = Math.atan2(refA.y * scaleY - jy, refA.x * scaleX - jx)
+      const a2 = Math.atan2(refB.y * scaleY - jy, refB.x * scaleX - jx)
+      let sweep = a2 - a1
+      while (sweep > Math.PI) sweep -= 2 * Math.PI
+      while (sweep < -Math.PI) sweep += 2 * Math.PI
+      ctx.beginPath()
+      ctx.arc(jx, jy, 26, a1, a1 + sweep, sweep < 0)
+      ctx.stroke()
+
+      // Label along the arc bisector. The canvas is CSS-mirrored, so counter-flip
+      // the text or it renders backwards.
+      const mid = a1 + sweep / 2
+      const lx = jx + Math.cos(mid) * 44
+      const ly = jy + Math.sin(mid) * 44
+      ctx.save()
+      ctx.scale(-1, 1)
+      ctx.fillStyle = '#C4612F'
+      ctx.font = 'bold 13px sans-serif'
+      ctx.textAlign = 'center'
+      ctx.fillText(`${Math.round(Math.abs(sweep) * (180 / Math.PI))}°`, -lx, ly)
+      ctx.restore()
+    })
+  }
+
+  // Skeleton for the live test camera, tinted by validation result.
+  const drawTestSkeleton = (pose: Pose | null, feedback: 'good' | 'adjust' | 'analyzing') => {
+    const canvas = testCanvasRef.current
+    const video = testVideoRef.current
+    if (!canvas || !video) return
+    const ctx = canvas.getContext('2d')
+    if (!ctx) return
+
+    canvas.width = video.videoWidth || 640
+    canvas.height = video.videoHeight || 480
+    ctx.clearRect(0, 0, canvas.width, canvas.height)
+    if (!pose) return
+
+    const color =
+      feedback === 'good' ? '#10b981' : feedback === 'adjust' ? '#ef4444' : '#9ca3af'
+
+    pose.keypoints.forEach((kp) => {
+      if (kp.score && kp.score > 0.3) {
+        ctx.beginPath()
+        ctx.arc(kp.x, kp.y, 5, 0, 2 * Math.PI)
+        ctx.fillStyle = color
+        ctx.fill()
+      }
+    })
+
+    SKELETON_CONNECTIONS.forEach(([startName, endName]) => {
+      const start = pose.keypoints.find((kp) => kp.name === startName)
+      const end = pose.keypoints.find((kp) => kp.name === endName)
+      if (start && end && start.score && start.score > 0.3 && end.score && end.score > 0.3) {
+        ctx.beginPath()
+        ctx.moveTo(start.x, start.y)
+        ctx.lineTo(end.x, end.y)
+        ctx.strokeStyle = color
+        ctx.lineWidth = 2
+        ctx.stroke()
+      }
+    })
+  }
+
+  const startTest = () => {
+    setTestCameraError(null)
+    setTestFeedback(null)
+    setTestReps(0)
+    setTestHoldProgress(0)
+    setTestMode(true)
+  }
+
+  const stopTest = () => {
+    setTestMode(false)
+    setTestFeedback(null)
+    setTestHoldProgress(0)
   }
 
   // ---- Live readouts for the currently displayed frame ----
@@ -548,6 +739,72 @@ export default function EditExercisePage({ params }: { params: Promise<{ id: str
               </div>
             </div>
 
+            {/* Test mode: run the real session validation against current edits */}
+            <div className="bg-white rounded-2xl p-6 border border-[#E7E1D7]">
+              <div className="flex items-center justify-between mb-2">
+                <h3 className="text-lg font-serif text-[#1F2421]">Test This Exercise</h3>
+                <button
+                  onClick={() => (testMode ? stopTest() : startTest())}
+                  className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors text-white ${
+                    testMode
+                      ? 'bg-red-600 hover:bg-red-700'
+                      : 'bg-[#C4612F] hover:bg-[#A94E22]'
+                  }`}
+                >
+                  {testMode ? 'Stop Test' : 'Start Test'}
+                </button>
+              </div>
+              <p className="text-xs text-[#5C635D] mb-3">
+                Do the exercise in front of the camera. This runs exactly the validation
+                patients get, using the criteria as currently edited — no save needed.
+              </p>
+
+              {testCameraError && (
+                <p className="text-sm text-red-600 mb-3">{testCameraError}</p>
+              )}
+
+              {testMode && (
+                <div className="space-y-3">
+                  <div className="relative aspect-video bg-[#1F2421] rounded-xl overflow-hidden">
+                    <video
+                      ref={testVideoRef}
+                      className="absolute inset-0 w-full h-full object-cover scale-x-[-1]"
+                      playsInline
+                      muted
+                    />
+                    <canvas
+                      ref={testCanvasRef}
+                      className="absolute inset-0 w-full h-full scale-x-[-1]"
+                    />
+                    {testFeedback && (
+                      <div
+                        className={`absolute top-3 left-3 right-3 px-3 py-2 rounded-lg text-sm font-medium text-white ${
+                          testFeedback.feedback === 'good'
+                            ? 'bg-[#10b981]/90'
+                            : testFeedback.feedback === 'adjust'
+                              ? 'bg-red-600/90'
+                              : 'bg-black/60'
+                        }`}
+                      >
+                        {testFeedback.message}
+                      </div>
+                    )}
+                  </div>
+                  <div className="flex items-center gap-3">
+                    <span className="text-sm font-medium text-[#1F2421]">
+                      Reps: {testReps}
+                    </span>
+                    <div className="flex-1 h-2 bg-[#E7E1D7] rounded-full overflow-hidden">
+                      <div
+                        className="h-full bg-[#10b981] transition-[width]"
+                        style={{ width: `${Math.round(testHoldProgress * 100)}%` }}
+                      />
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+
             {/* Detected Moving Parts */}
             <div className="bg-white rounded-2xl p-6 border border-[#E7E1D7]">
               <h3 className="text-lg font-serif text-[#1F2421] mb-3">Target Body Parts</h3>
@@ -620,6 +877,12 @@ export default function EditExercisePage({ params }: { params: Promise<{ id: str
                           Remove
                         </button>
                       </div>
+
+                      <p className="text-xs italic text-[#5C635D]">
+                        {formatJointName(criterion.joint)} at about {criterion.targetAngle}°,
+                        accepted between {criterion.minAngle}° and {criterion.maxAngle}° — shown
+                        as the orange arc on the skeleton.
+                      </p>
 
                       <div>
                         <label className="block text-xs text-[#5C635D] mb-1">

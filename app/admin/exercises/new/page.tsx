@@ -276,15 +276,14 @@ export default function NewExercisePage() {
         },
         is_active: false, // Draft until reviewed and published in the editor
       })
+        .select('id')
+        .single()
 
       if (error) throw error
 
-      alert(
-        derivedCriteria.criteria.length > 0
-          ? 'Exercise saved as draft! Validation criteria were auto-derived from your recording — review them in the editor, then publish.'
-          : 'Exercise saved as draft! Criteria could not be auto-derived (joints not visible enough) — set them in the editor.'
-      )
-      router.push('/admin')
+      // Straight into the editor: criteria are already auto-filled there, so the
+      // therapist reviews, tests, and publishes without hunting through the admin list.
+      router.push(`/admin/exercises/${data.id}/edit`)
     } catch (error) {
       console.error('Save error:', error)
       alert('Failed to save exercise')

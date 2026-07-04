@@ -11,11 +11,13 @@ import { createClient } from '@/lib/supabase/client'
 import {
   initPoseDetector,
   detectPose,
-  analyzeShoulderRaise,
+  analyzeExercise,
   shouldersInFrame,
-  RepCounter,
+  GenericRepCounter,
   disposePoseDetector,
   type Pose,
+  type PoseCriteria,
+  type ExerciseAnalysis,
 } from '@/lib/poseDetection'
 
 type SessionState = 'loading' | 'countdown' | 'active' | 'paused' | 'completed'
@@ -28,12 +30,27 @@ interface RepData {
   timestamp: Date
 }
 
+interface Exercise {
+  id: string
+  name: string
+  description: string
+  exercise_type: 'static' | 'dynamic'
+  pose_criteria: PoseCriteria
+  target_reps: number
+  hold_duration_ms: number
+  feedback_messages: Record<string, string>
+}
+
 export default function SessionPage() {
   const router = useRouter()
   const videoRef = useRef<HTMLVideoElement>(null)
   const canvasRef = useRef<HTMLCanvasElement>(null)
-  const repCounterRef = useRef<RepCounter>(new RepCounter())
+  const repCounterRef = useRef<GenericRepCounter | null>(null)
   const animationFrameRef = useRef<number | undefined>(undefined)
+
+  // Exercise state
+  const [exercise, setExercise] = useState<Exercise | null>(null)
+  const [exerciseLoading, setExerciseLoading] = useState(true)
 
   // Session tracking state
   const [sessionId, setSessionId] = useState<string | null>(null)
@@ -64,7 +81,45 @@ export default function SessionPage() {
 
   const { showToast, ToastComponent } = useToast()
 
-  const TARGET_REPS = 10
+  const TARGET_REPS = exercise?.target_reps ?? 10
+
+  // Load exercise from database
+  useEffect(() => {
+    async function loadExercise() {
+      try {
+        const supabase = createClient()
+
+        // Fetch the first active exercise (or a specific exercise_id from query params)
+        const { data, error } = await supabase
+          .from('exercises')
+          .select('id, name, description, exercise_type, pose_criteria, target_reps, hold_duration_ms, feedback_messages')
+          .eq('is_active', true)
+          .order('created_at', { ascending: false })
+          .limit(1)
+          .single()
+
+        if (error) {
+          console.error('Error loading exercise:', error)
+          setCameraError('No active exercises found. Please contact your therapist.')
+          return
+        }
+
+        if (data) {
+          setExercise(data as Exercise)
+          // Initialize rep counter with exercise-specific hold duration
+          repCounterRef.current = new GenericRepCounter(data.hold_duration_ms)
+          console.log('✅ Loaded exercise:', data.name)
+        }
+      } catch (err) {
+        console.error('Failed to load exercise:', err)
+        setCameraError('Failed to load exercise. Please try again.')
+      } finally {
+        setExerciseLoading(false)
+      }
+    }
+
+    loadExercise()
+  }, [])
 
   // Text-to-speech helper
   const speak = (text: string) => {
@@ -104,7 +159,11 @@ export default function SessionPage() {
     }
   }, [isDraggingBox, boxDragStart, instructionBoxPos])
 
+  // Setup camera and pose detector
   useEffect(() => {
+    // Wait for exercise to load before setting up camera
+    if (exerciseLoading || !exercise) return
+
     let stream: MediaStream | null = null
 
     async function setupCamera() {
@@ -151,7 +210,7 @@ export default function SessionPage() {
       }
       disposePoseDetector()
     }
-  }, [])
+  }, [exerciseLoading, exercise])
 
   // Countdown effect
   useEffect(() => {
@@ -167,15 +226,18 @@ export default function SessionPage() {
       // Speak initial instructions when session becomes active
       if (!hasSpoken) {
         setTimeout(() => {
-          speak('Position yourself in frame. Raise both arms above your shoulders, then lower them to complete a rep.')
+          const description = exercise?.description || 'Follow the instructions on screen'
+          speak(`Position yourself in frame. ${description}`)
           setHasSpoken(true)
         }, 500)
       }
     }
-  }, [sessionState, countdown, hasSpoken])
+  }, [sessionState, countdown, hasSpoken, exercise])
 
   // Create session record in database
   async function createSessionRecord() {
+    if (!exercise) return
+
     const supabase = createClient()
     const { data: { user } } = await supabase.auth.getUser()
     if (!user) {
@@ -187,7 +249,7 @@ export default function SessionPage() {
       .from('therapy_sessions')
       .insert({
         user_id: user.id,
-        exercise_type: 'shoulder-raise',
+        exercise_id: exercise.id,
         started_at: new Date().toISOString(),
         target_reps: TARGET_REPS,
       })
@@ -204,10 +266,10 @@ export default function SessionPage() {
 
   // Real-time pose detection loop (only when active)
   useEffect(() => {
-    if (sessionState !== 'active' || !videoRef.current) return
+    if (sessionState !== 'active' || !videoRef.current || !exercise || !repCounterRef.current) return
 
     async function detectAndAnalyze() {
-      if (!videoRef.current || sessionState !== 'active') return
+      if (!videoRef.current || sessionState !== 'active' || !exercise || !repCounterRef.current) return
 
       // Track time for form quality calculation
       const now = Date.now()
@@ -222,8 +284,8 @@ export default function SessionPage() {
         console.log(`Detected ${pose.keypoints.length} keypoints, score: ${pose.score?.toFixed(2)}`)
       }
 
-      // Analyze shoulder raise
-      const analysis = analyzeShoulderRaise(pose)
+      // Analyze using generic exercise validation
+      const analysis = analyzeExercise(pose, exercise.pose_criteria, exercise.feedback_messages)
       setPostureFeedback(analysis.feedback)
       setFeedbackMessage(analysis.message)
 
@@ -236,7 +298,7 @@ export default function SessionPage() {
       // Track shoulder visibility for the "step back" warning
       setShouldersVisible(shouldersInFrame(pose))
 
-      // Count reps (with hold-lock enforcement)
+      // Count reps using generic rep counter
       const { repCount: newCount, justCompleted, holdProgress: hp, holdMissed: hm } =
         repCounterRef.current.count(analysis)
       setHoldProgress(hp)
@@ -253,7 +315,7 @@ export default function SessionPage() {
         // Save rep data
         const repData: RepData = {
           repNumber: newCount,
-          holdDuration: 500, // From RepCounter.holdThreshold
+          holdDuration: exercise.hold_duration_ms,
           formScore,
           timestamp: new Date(),
         }
@@ -281,7 +343,7 @@ export default function SessionPage() {
         cancelAnimationFrame(animationFrameRef.current)
       }
     }
-  }, [sessionState])
+  }, [sessionState, exercise])
 
   async function completeSession() {
     setSessionState('completed')
@@ -443,6 +505,31 @@ export default function SessionPage() {
     )
   }
 
+  if (exerciseLoading) {
+    return (
+      <div className="fixed inset-0 flex items-center justify-center" style={{ background: 'var(--bg)' }}>
+        <div className="text-center max-w-md px-8">
+          <div className="text-6xl mb-6">🌱</div>
+          <p className="text-xl mb-4" style={{ color: 'var(--ink)' }}>Loading your exercise...</p>
+          <div style={{
+            width: '48px',
+            height: '48px',
+            margin: '0 auto',
+            border: '4px solid var(--border)',
+            borderTop: '4px solid var(--primary)',
+            borderRadius: '50%',
+            animation: 'spin 1s linear infinite'
+          }} />
+          <style jsx>{`
+            @keyframes spin {
+              to { transform: rotate(360deg); }
+            }
+          `}</style>
+        </div>
+      </div>
+    )
+  }
+
   if (sessionState === 'completed') {
     return (
       <>
@@ -564,7 +651,7 @@ export default function SessionPage() {
               margin: '0 auto',
             }}>
               <p style={{ color: 'rgba(255,255,255,0.75)', fontSize: 'var(--text-sm)', lineHeight: 1.5 }}>
-                Hold each raise for <strong style={{ color: 'white' }}>0.5 seconds</strong> to count a rep
+                Hold each position for <strong style={{ color: 'white' }}>{((exercise?.hold_duration_ms ?? 500) / 1000).toFixed(1)} seconds</strong> to count a rep
               </p>
             </div>
           </div>
@@ -844,7 +931,8 @@ export default function SessionPage() {
               {/* Speaker button */}
               <button
                 onClick={() => {
-                  speak(`${holdMissed ? 'Hold a little longer next time' : feedbackMessage}. Raise both arms above your shoulders, then lower them to complete a rep`)
+                  const instruction = exercise?.description || 'Follow the instructions on screen'
+                  speak(`${holdMissed ? 'Hold a little longer next time' : feedbackMessage}. ${instruction}`)
                 }}
                 style={{
                   background: isSpeaking ? 'var(--primary)' : 'transparent',
@@ -909,7 +997,7 @@ export default function SessionPage() {
             )}
 
             <p style={{ color: 'var(--muted)', fontSize: 'var(--text-sm)' }}>
-              Raise both arms above your shoulders, then lower them to complete a rep
+              {exercise?.description || 'Follow the instructions on screen'}
             </p>
           </div>
         </div>

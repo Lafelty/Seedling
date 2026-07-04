@@ -22,6 +22,11 @@ export default function DashboardPage() {
       try {
         const supabase = createClient();
         supabase.auth.getUser().then(async ({ data: { user } }) => {
+          if (!user) {
+            router.push('/login');
+            return;
+          }
+
           setUser(user);
 
           if (user) {

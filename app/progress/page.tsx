@@ -2,14 +2,20 @@
 
 import Link from 'next/link';
 import { useEffect, useState } from 'react';
-import { getProgress, type ProgressData } from '@/lib/progress';
+import { getProgress, setProgressUid, type ProgressData } from '@/lib/progress';
+import { createClient } from '@/lib/supabase/client';
 import { startOfMonth, endOfMonth, eachDayOfInterval, format, isSameDay } from 'date-fns';
 
 export default function ProgressPage() {
   const [progress, setProgress] = useState<ProgressData | null>(null);
 
   useEffect(() => {
-    setProgress(getProgress());
+    (async () => {
+      const supabase = createClient();
+      const { data: { user } } = await supabase.auth.getUser();
+      if (user) setProgressUid(user.id);
+      setProgress(getProgress());
+    })();
   }, []);
 
   if (!progress) {
@@ -28,10 +34,11 @@ export default function ProgressPage() {
   const monthEnd = endOfMonth(today);
   const daysInMonth = eachDayOfInterval({ start: monthStart, end: monthEnd });
 
+  // Thresholds match getTreeStage() in lib/progress.ts (sapling 6, young 16, mature 31).
   const milestones = [
-    { stars: 5, label: 'First week complete', reached: progress.totalStars >= 5 },
-    { stars: 10, label: 'Sapling unlocked', reached: progress.totalStars >= 10 },
-    { stars: 25, label: 'Consistency champion', reached: progress.totalStars >= 25 },
+    { stars: 6, label: 'Sapling unlocked', reached: progress.totalStars >= 6 },
+    { stars: 16, label: 'Growing tree', reached: progress.totalStars >= 16 },
+    { stars: 31, label: 'Mature tree', reached: progress.totalStars >= 31 },
     { stars: 50, label: 'Real tree planted! 🌳', reached: progress.totalStars >= 50 },
   ];
 

@@ -4,9 +4,9 @@
 
 UPDATE profiles
 SET is_admin = TRUE
-WHERE email = 'adminNeena@gmail.com';
+WHERE lower(email) = lower('adminNeena@gmail.com');
 
 -- Verify the change
 SELECT id, email, is_admin, created_at
 FROM profiles
-WHERE email = 'adminNeena@gmail.com';
+WHERE lower(email) = lower('adminNeena@gmail.com');

@@ -15,6 +15,31 @@ export interface DayStatus {
 }
 
 const STORAGE_KEY = 'medproj_progress';
+const UID_KEY = 'medproj_current_uid';
+
+/**
+ * Bind garden progress to a specific signed-in user so two accounts sharing a
+ * browser never see each other's stars. Call once the auth user resolves.
+ */
+export function setProgressUid(uid: string): void {
+  if (typeof window === 'undefined') return;
+  const prev = localStorage.getItem(UID_KEY);
+  localStorage.setItem(UID_KEY, uid);
+
+  // One-time migration: the first user to sign in on a browser that has legacy
+  // (pre-namespacing) progress inherits it. Later users start fresh.
+  const userKey = `${STORAGE_KEY}_${uid}`;
+  if (!localStorage.getItem(userKey) && (!prev || prev === uid)) {
+    const legacy = localStorage.getItem(STORAGE_KEY);
+    if (legacy) localStorage.setItem(userKey, legacy);
+  }
+}
+
+function storageKey(): string {
+  if (typeof window === 'undefined') return STORAGE_KEY;
+  const uid = localStorage.getItem(UID_KEY);
+  return uid ? `${STORAGE_KEY}_${uid}` : STORAGE_KEY;
+}
 
 export function getProgress(): ProgressData {
   if (typeof window === 'undefined') {
@@ -29,7 +54,7 @@ export function getProgress(): ProgressData {
     };
   }
 
-  const stored = localStorage.getItem(STORAGE_KEY);
+  const stored = localStorage.getItem(storageKey());
   if (!stored) {
     return {
       totalStars: 0,
@@ -89,7 +114,7 @@ export function updateProgress(starsEarned: number): ProgressData {
     hasSeenOnboarding: current.hasSeenOnboarding,
   };
 
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(updated));
+  localStorage.setItem(storageKey(), JSON.stringify(updated));
   return updated;
 }
 
@@ -123,5 +148,5 @@ export function getDayStrip(): DayStatus[] {
 export function markOnboardingComplete(): void {
   const current = getProgress();
   const updated = { ...current, hasSeenOnboarding: true };
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(updated));
+  localStorage.setItem(storageKey(), JSON.stringify(updated));
 }

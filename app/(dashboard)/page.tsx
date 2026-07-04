@@ -4,7 +4,7 @@ import Link from 'next/link';
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { createClient } from '@/lib/supabase/client';
-import { getProgress, getDayStrip, markOnboardingComplete, type ProgressData, type DayStatus } from '@/lib/progress';
+import { getProgress, getDayStrip, markOnboardingComplete, setProgressUid, type ProgressData, type DayStatus } from '@/lib/progress';
 
 export const dynamic = 'force-dynamic';
 
@@ -28,6 +28,12 @@ export default function DashboardPage() {
           }
 
           setUser(user);
+
+          // Re-read garden progress under this user's namespace (the initial
+          // synchronous read below may have used a stale/anon key).
+          setProgressUid(user.id);
+          setProgress(getProgress());
+          setDayStrip(getDayStrip());
 
           if (user) {
             const { data: profile } = await supabase

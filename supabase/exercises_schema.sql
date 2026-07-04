@@ -59,7 +59,7 @@ CREATE POLICY "Admins can manage exercises"
 CREATE POLICY "Users can view active exercises"
   ON exercises
   FOR SELECT
-  USING (is_active = TRUE);
+  USING (is_active = TRUE AND auth.uid() IS NOT NULL);
 
 -- Insert default shoulder raise exercise (migrating existing)
 INSERT INTO exercises (
@@ -77,26 +77,26 @@ INSERT INTO exercises (
   'static',
   'beginner',
   '{
-    "targetBodyParts": ["leftShoulder", "rightShoulder", "leftElbow", "rightElbow"],
+    "targetBodyParts": ["left_shoulder", "right_shoulder", "left_elbow", "right_elbow"],
     "criteria": [
       {
-        "joint": "leftShoulder",
+        "joint": "left_shoulder",
         "minAngle": 80,
         "maxAngle": 100,
         "targetAngle": 90,
-        "relativeTo": ["leftElbow", "leftHip"]
+        "relativeTo": ["left_elbow", "left_hip"]
       },
       {
-        "joint": "rightShoulder",
+        "joint": "right_shoulder",
         "minAngle": 80,
         "maxAngle": 100,
         "targetAngle": 90,
-        "relativeTo": ["rightElbow", "rightHip"]
+        "relativeTo": ["right_elbow", "right_hip"]
       }
     ],
     "levelingRules": [
       {
-        "joints": ["leftShoulder", "rightShoulder"],
+        "joints": ["left_shoulder", "right_shoulder"],
         "maxDifference": 10,
         "message": "Keep shoulders level"
       }

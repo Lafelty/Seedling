@@ -8,6 +8,7 @@
   :root {
     /* Colors - Light mode matching garden design */
     --bg: #FAF9F7; /* warm off-white */
+    --background: #FAF9F7; /* alias — several pages reference var(--background) */
     --surface: #FFFFFF; /* white cards */
     --ink: #2D2D2D; /* dark gray text */
     --muted: #6B6B6B; /* secondary text - darker for WCAG AA contrast */
@@ -362,6 +363,9 @@
     animation: shimmer 2s infinite linear;
     border-radius: var(--radius-md);
   }
+
+  /* Safe-area padding for the session bottom bar on notched devices */
+  .pb-safe { padding-bottom: env(safe-area-inset-bottom, 0px); }
 
   /* Stagger utility */
   .stagger-1 { animation-delay: 30ms; }

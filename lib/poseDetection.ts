@@ -300,22 +300,38 @@ function getKeypoint(pose: Pose | null, name: string, minConfidence = 0.5) {
  */
 export function analyzeExercise(
   pose: Pose | null,
-  poseCriteria: PoseCriteria,
-  feedbackMessages: Record<string, string>
+  poseCriteria: PoseCriteria | null | undefined,
+  feedbackMessages: Record<string, string> | null | undefined
 ): ExerciseAnalysis {
+  const fm = feedbackMessages || {};
+  const targetBodyParts = poseCriteria?.targetBodyParts ?? [];
+  const criteria = poseCriteria?.criteria ?? [];
+  const levelingRules = poseCriteria?.levelingRules ?? [];
+
   if (!pose || !pose.keypoints) {
     return {
       meetsAllCriteria: false,
       feedback: 'analyzing',
-      message: feedbackMessages.analyzing || 'Reading your movement...',
+      message: fm.analyzing || 'Reading your movement...',
       failedCriteria: [],
+    };
+  }
+
+  // Guard: exercise published without real criteria (e.g. an unrefined draft).
+  // Never phantom-count reps against an empty ruleset.
+  if (criteria.length === 0 && levelingRules.length === 0) {
+    return {
+      meetsAllCriteria: false,
+      feedback: 'analyzing',
+      message: fm.notConfigured || 'This exercise is not set up yet. Please contact your therapist.',
+      failedCriteria: ['notConfigured'],
     };
   }
 
   const failedCriteria: string[] = [];
 
   // Check if all target body parts are visible
-  const missingParts = poseCriteria.targetBodyParts.filter(
+  const missingParts = targetBodyParts.filter(
     (part) => !getKeypoint(pose, part)
   );
 
@@ -323,13 +339,13 @@ export function analyzeExercise(
     return {
       meetsAllCriteria: false,
       feedback: 'analyzing',
-      message: feedbackMessages.notInFrame || 'Position yourself in frame',
+      message: fm.notInFrame || 'Position yourself in frame',
       failedCriteria: ['visibility'],
     };
   }
 
   // Check angle criteria
-  for (const criterion of poseCriteria.criteria) {
+  for (const criterion of criteria) {
     const joint = getKeypoint(pose, criterion.joint);
     const pointA = getKeypoint(pose, criterion.relativeTo[0]);
     const pointB = getKeypoint(pose, criterion.relativeTo[1]);
@@ -349,7 +365,7 @@ export function analyzeExercise(
   }
 
   // Check leveling rules (symmetry)
-  for (const rule of poseCriteria.levelingRules) {
+  for (const rule of levelingRules) {
     const joint1 = getKeypoint(pose, rule.joints[0]);
     const joint2 = getKeypoint(pose, rule.joints[1]);
 
@@ -364,11 +380,11 @@ export function analyzeExercise(
   // Generate feedback
   const meetsAllCriteria = failedCriteria.length === 0;
   let feedback: 'good' | 'adjust' | 'analyzing' = 'analyzing';
-  let message = feedbackMessages.analyzing || 'Reading your movement...';
+  let message = fm.analyzing || 'Reading your movement...';
 
   if (meetsAllCriteria) {
     feedback = 'good';
-    message = feedbackMessages.perfect || '✓ Perfect form!';
+    message = fm.perfect || '✓ Perfect form!';
   } else {
     feedback = 'adjust';
 
@@ -376,17 +392,17 @@ export function analyzeExercise(
     const firstFail = failedCriteria[0];
 
     if (firstFail === 'visibility') {
-      message = feedbackMessages.notInFrame || 'Position yourself in frame';
+      message = fm.notInFrame || 'Position yourself in frame';
     } else if (firstFail.includes('tooLow')) {
       const joint = firstFail.replace('_tooLow', '');
-      message = feedbackMessages.tooLow || `Raise your ${joint} higher`;
+      message = fm.tooLow || `Raise your ${joint} higher`;
     } else if (firstFail.includes('tooHigh')) {
       const joint = firstFail.replace('_tooHigh', '');
-      message = feedbackMessages.tooHigh || `Lower your ${joint} slightly`;
+      message = fm.tooHigh || `Lower your ${joint} slightly`;
     } else if (firstFail.includes('leveling')) {
-      message = feedbackMessages.notLevel || 'Keep your joints level';
+      message = fm.notLevel || 'Keep your joints level';
     } else {
-      message = feedbackMessages.adjust || 'Adjust your form';
+      message = fm.adjust || 'Adjust your form';
     }
   }
 

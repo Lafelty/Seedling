@@ -13,6 +13,7 @@ export default function SignupPage() {
   const [password, setPassword] = useState('')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [notice, setNotice] = useState<string | null>(null)
   const router = useRouter()
 
   const handleSignup = async (e: React.FormEvent) => {
@@ -21,7 +22,7 @@ export default function SignupPage() {
     setError(null)
 
     const supabase = createClient()
-    const { error } = await supabase.auth.signUp({
+    const { data, error } = await supabase.auth.signUp({
       email,
       password,
       options: {
@@ -34,6 +35,11 @@ export default function SignupPage() {
     if (error) {
       setError(error.message)
       setLoading(false)
+    } else if (!data.session) {
+      // Email confirmation is enabled — no session yet. Tell the user instead of
+      // bouncing them to '/', which would just redirect back to /login.
+      setLoading(false)
+      setNotice('Account created. Check your email to confirm your address, then sign in.')
     } else {
       router.push('/')
       router.refresh()
@@ -174,6 +180,20 @@ export default function SignupPage() {
               placeholder="At least 6 characters"
             />
           </div>
+
+          {notice && (
+            <div style={{
+              padding: 'var(--space-3)',
+              marginBottom: 'var(--space-4)',
+              background: '#DCFCE7',
+              border: '1px solid #86EFAC',
+              borderRadius: 'var(--radius-md)',
+              color: '#166534',
+              fontSize: 'var(--text-sm)',
+            }}>
+              {notice}
+            </div>
+          )}
 
           {error && (
             <div style={{

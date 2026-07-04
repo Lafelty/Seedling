@@ -3,7 +3,7 @@
 import Link from 'next/link'
 import { useEffect, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { updateProgress } from '@/lib/progress'
+import { updateProgress, setProgressUid } from '@/lib/progress'
 import confetti from 'canvas-confetti'
 import { useToast } from '@/components/Toast'
 import { createClient } from '@/lib/supabase/client'
@@ -55,9 +55,16 @@ export default function SessionPage() {
   const [sessionId, setSessionId] = useState<string | null>(null)
   const [sessionStartTime, setSessionStartTime] = useState<Date | null>(null)
   const [repDataList, setRepDataList] = useState<RepData[]>([])
-  const [goodPostureTime, setGoodPostureTime] = useState(0) // milliseconds in "good" posture
-  const [totalActiveTime, setTotalActiveTime] = useState(0) // milliseconds in active state
   const lastFrameTime = useRef<number>(Date.now())
+
+  // Refs mirror session values so the detection loop and completeSession never
+  // read stale state captured in the (rarely re-run) effect closure.
+  const sessionIdRef = useRef<string | null>(null)
+  const sessionStartTimeRef = useRef<Date | null>(null)
+  const repCountRef = useRef(0)
+  const repDataListRef = useRef<RepData[]>([])
+  const goodPostureTimeRef = useRef(0) // ms in "good" posture
+  const totalActiveTimeRef = useRef(0) // ms in active state
 
   const [repCount, setRepCount] = useState(0)
   const [sessionState, setSessionState] = useState<SessionState>('loading')
@@ -237,7 +244,12 @@ export default function SessionPage() {
       return () => clearTimeout(timer)
     } else if (sessionState === 'countdown' && countdown === 0) {
       setSessionState('active')
-      setSessionStartTime(new Date())
+      // Only stamp start time once — resuming after a pause must not reset it.
+      if (!sessionStartTimeRef.current) {
+        const now = new Date()
+        sessionStartTimeRef.current = now
+        setSessionStartTime(now)
+      }
       createSessionRecord()
       // Speak initial instructions when session becomes active
       if (!hasSpoken) {
@@ -253,6 +265,7 @@ export default function SessionPage() {
   // Create session record in database
   async function createSessionRecord() {
     if (!exercise) return
+    if (sessionIdRef.current) return // already created — guards pause/resume re-entry
 
     const supabase = createClient()
     const { data: { user } } = await supabase.auth.getUser()
@@ -261,12 +274,15 @@ export default function SessionPage() {
       return
     }
 
+    // Bind garden progress to this user
+    setProgressUid(user.id)
+
     const { data, error } = await supabase
       .from('therapy_sessions')
       .insert({
         user_id: user.id,
         exercise_id: exercise.id,
-        started_at: new Date().toISOString(),
+        started_at: (sessionStartTimeRef.current ?? new Date()).toISOString(),
         target_reps: TARGET_REPS,
       })
       .select()
@@ -275,6 +291,7 @@ export default function SessionPage() {
     if (error) {
       console.error('Error creating session:', error)
     } else if (data) {
+      sessionIdRef.current = data.id
       setSessionId(data.id)
       console.log('✅ Session created:', data.id)
     }
@@ -305,11 +322,11 @@ export default function SessionPage() {
       setPostureFeedback(analysis.feedback)
       setFeedbackMessage(analysis.message)
 
-      // Track form quality time
+      // Track form quality time (refs — read later by saveSessionToDb)
       if (analysis.feedback === 'good') {
-        setGoodPostureTime(prev => prev + deltaTime)
+        goodPostureTimeRef.current += deltaTime
       }
-      setTotalActiveTime(prev => prev + deltaTime)
+      totalActiveTimeRef.current += deltaTime
 
       // Track shoulder visibility for the "step back" warning
       setShouldersVisible(shouldersInFrame(pose))
@@ -335,8 +352,10 @@ export default function SessionPage() {
           formScore,
           timestamp: new Date(),
         }
+        repDataListRef.current = [...repDataListRef.current, repData]
         setRepDataList(prev => [...prev, repData])
 
+        repCountRef.current = newCount
         setRepCount(newCount)
         setRepJustCompleted(true)
         speak(`Rep ${newCount} completed! ${TARGET_REPS - newCount} more to go.`)
@@ -352,6 +371,8 @@ export default function SessionPage() {
       animationFrameRef.current = requestAnimationFrame(detectAndAnalyze)
     }
 
+    // Reset frame clock so the first delta (and any pause gap) isn't counted.
+    lastFrameTime.current = Date.now()
     detectAndAnalyze()
 
     return () => {
@@ -361,60 +382,66 @@ export default function SessionPage() {
     }
   }, [sessionState, exercise])
 
+  // Persist the session (and its reps) to the database. Reads refs so it never
+  // sees stale state. `completed` marks a full finish vs. an early save-and-exit.
+  async function saveSessionToDb(completed: boolean) {
+    if (!sessionIdRef.current) {
+      console.error('No session id — nothing to save')
+      return
+    }
+
+    const endTime = new Date()
+    const durationSeconds = sessionStartTimeRef.current
+      ? Math.floor((endTime.getTime() - sessionStartTimeRef.current.getTime()) / 1000)
+      : 0
+    const formQualityScore = totalActiveTimeRef.current > 0
+      ? Math.round((goodPostureTimeRef.current / totalActiveTimeRef.current) * 100)
+      : 0
+
+    const supabase = createClient()
+    const { error: sessionError } = await supabase
+      .from('therapy_sessions')
+      .update({
+        completed_at: completed ? endTime.toISOString() : null,
+        duration_seconds: durationSeconds,
+        completed_reps: repCountRef.current,
+        form_quality_score: formQualityScore,
+      })
+      .eq('id', sessionIdRef.current)
+
+    if (sessionError) {
+      console.error('Error updating session:', sessionError)
+    } else {
+      console.log('✅ Session updated:', { durationSeconds, formQualityScore, completed })
+    }
+
+    if (repDataListRef.current.length > 0) {
+      const repInserts = repDataListRef.current.map(rep => ({
+        session_id: sessionIdRef.current,
+        rep_number: rep.repNumber,
+        hold_duration_ms: rep.holdDuration,
+        form_score: rep.formScore,
+        timestamp: rep.timestamp.toISOString(),
+      }))
+
+      const { error: repsError } = await supabase
+        .from('rep_data')
+        .insert(repInserts)
+
+      if (repsError) {
+        console.error('Error saving rep data:', repsError)
+      } else {
+        console.log(`✅ Saved ${repDataListRef.current.length} reps`)
+      }
+    }
+  }
+
   async function completeSession() {
     setSessionState('completed')
     updateProgress(1) // Award 1 star
     speak('Session complete! Great job!')
 
-    // Calculate session stats
-    const endTime = new Date()
-    const durationSeconds = sessionStartTime
-      ? Math.floor((endTime.getTime() - sessionStartTime.getTime()) / 1000)
-      : 0
-    const formQualityScore = totalActiveTime > 0
-      ? Math.round((goodPostureTime / totalActiveTime) * 100)
-      : 0
-
-    // Save session completion to database
-    if (sessionId) {
-      const supabase = createClient()
-      const { error: sessionError } = await supabase
-        .from('therapy_sessions')
-        .update({
-          completed_at: endTime.toISOString(),
-          duration_seconds: durationSeconds,
-          completed_reps: repCount,
-          form_quality_score: formQualityScore,
-        })
-        .eq('id', sessionId)
-
-      if (sessionError) {
-        console.error('Error updating session:', sessionError)
-      } else {
-        console.log('✅ Session updated:', { durationSeconds, formQualityScore })
-      }
-
-      // Save rep data
-      if (repDataList.length > 0) {
-        const repInserts = repDataList.map(rep => ({
-          session_id: sessionId,
-          rep_number: rep.repNumber,
-          hold_duration_ms: rep.holdDuration,
-          form_score: rep.formScore,
-          timestamp: rep.timestamp.toISOString(),
-        }))
-
-        const { error: repsError } = await supabase
-          .from('rep_data')
-          .insert(repInserts)
-
-        if (repsError) {
-          console.error('Error saving rep data:', repsError)
-        } else {
-          console.log(`✅ Saved ${repDataList.length} reps`)
-        }
-      }
-    }
+    await saveSessionToDb(true)
 
     // Trigger confetti celebration
     const duration = 3000;
@@ -466,14 +493,12 @@ export default function SessionPage() {
     }
   }
 
-  function handleExitWithSave() {
-    // Save partial progress (proportional stars)
-    if (repCount > 0) {
-      const partialStars = Math.floor((repCount / TARGET_REPS) * 1)
-      if (partialStars > 0) {
-        updateProgress(partialStars)
-        showToast('Progress saved', 'success')
-      }
+  async function handleExitWithSave() {
+    // Persist whatever was completed so far (data, not a garden star — stars are
+    // awarded only for a full session).
+    if (repCountRef.current > 0) {
+      await saveSessionToDb(false)
+      showToast('Progress saved', 'success')
     }
     router.push('/')
   }

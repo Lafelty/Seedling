@@ -298,10 +298,23 @@ export default function EditExercisePage({ params }: { params: Promise<{ id: str
   const publishExercise = async () => {
     if (!exercise) return
 
+    // Never publish an unconfigured exercise — the session engine can't validate
+    // reps without at least one angle criterion or leveling rule.
+    if (angleCriteria.length === 0 && levelingRules.length === 0) {
+      alert('Add at least one angle criterion or leveling rule before publishing.')
+      return
+    }
+
     const supabase = createClient()
+    // Commit the current refinements alongside the publish so what appears in
+    // sessions matches what's shown here (not a stale earlier save).
     const { error } = await supabase
       .from('exercises')
       .update({
+        pose_criteria: { targetBodyParts, criteria: angleCriteria, levelingRules },
+        feedback_messages: feedbackMessages,
+        target_reps: targetReps,
+        hold_duration_ms: holdDuration,
         is_active: true,
         updated_at: new Date().toISOString(),
       })

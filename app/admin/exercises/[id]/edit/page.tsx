@@ -4,7 +4,13 @@ import { use, useEffect, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { createClient } from '@/lib/supabase/client'
-import type { Pose } from '@/lib/poseDetection'
+import {
+  calculateAngle,
+  deriveCriteriaFromRecordings,
+  ANATOMICAL_REFERENCES,
+  VALID_KEYPOINT_NAMES,
+  type Pose,
+} from '@/lib/poseDetection'
 
 interface RecordedFrame {
   timestamp: number
@@ -46,6 +52,12 @@ interface LevelingRule {
   message: string
 }
 
+const formatJointName = (name: string) =>
+  name
+    .split('_')
+    .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
+    .join(' ')
+
 export default function EditExercisePage({ params }: { params: Promise<{ id: string }> }) {
   const resolvedParams = use(params)
   const router = useRouter()
@@ -60,6 +72,7 @@ export default function EditExercisePage({ params }: { params: Promise<{ id: str
   // Refinement state
   const [angleCriteria, setAngleCriteria] = useState<AngleCriterion[]>([])
   const [levelingRules, setLevelingRules] = useState<LevelingRule[]>([])
+  const [autoFilled, setAutoFilled] = useState(false)
   const [targetBodyParts, setTargetBodyParts] = useState<string[]>([])
   const [feedbackMessages, setFeedbackMessages] = useState<Record<string, string>>({
     perfect: 'Perfect form!',
@@ -118,14 +131,45 @@ export default function EditExercisePage({ params }: { params: Promise<{ id: str
 
     setExercise(data as Exercise)
 
-    // Initialize refinement state from existing criteria or auto-detected
-    if (data.pose_criteria?.criteria) {
-      setAngleCriteria(data.pose_criteria.criteria)
+    // Initialize refinement state from saved criteria — or, when none were ever
+    // saved, derive a working set straight from the recording so the therapist
+    // starts from real numbers instead of a blank form.
+    const savedCriteria = data.pose_criteria?.criteria
+    let derivedParts: string[] | null = null
+    if (Array.isArray(savedCriteria) && savedCriteria.length > 0) {
+      // Older rows may lack relativeTo (the editor never exposed it) — fill in
+      // anatomical defaults so angles are computed against real points.
+      setAngleCriteria(
+        (savedCriteria as AngleCriterion[]).map((c) => ({
+          ...c,
+          relativeTo:
+            Array.isArray(c.relativeTo) && c.relativeTo.length === 2
+              ? c.relativeTo
+              : [...(ANATOMICAL_REFERENCES[c.joint] ?? ['left_elbow', 'left_hip'])],
+        }))
+      )
+    } else if (Array.isArray(data.recorded_paths) && data.recorded_paths.length > 0) {
+      const derived = deriveCriteriaFromRecordings(data.recorded_paths)
+      if (derived.criteria.length > 0) {
+        setAngleCriteria(derived.criteria)
+        derivedParts = derived.targetBodyParts
+        setAutoFilled(true)
+      }
     }
     if (data.pose_criteria?.levelingRules) {
-      setLevelingRules(data.pose_criteria.levelingRules)
+      setLevelingRules(
+        (data.pose_criteria.levelingRules as LevelingRule[]).map((r) => ({
+          ...r,
+          joints:
+            Array.isArray(r.joints) && r.joints.length === 2
+              ? r.joints
+              : ['left_shoulder', 'right_shoulder'],
+        }))
+      )
     }
-    if (data.pose_criteria?.targetBodyParts) {
+    if (derivedParts) {
+      setTargetBodyParts(derivedParts)
+    } else if (data.pose_criteria?.targetBodyParts) {
       setTargetBodyParts(data.pose_criteria.targetBodyParts)
     } else if (data.pose_criteria?.detectedMovingParts) {
       setTargetBodyParts(data.pose_criteria.detectedMovingParts)
@@ -223,15 +267,62 @@ export default function EditExercisePage({ params }: { params: Promise<{ id: str
     })
   }
 
+  // ---- Live readouts for the currently displayed frame ----
+
+  const currentFramePose =
+    exercise?.recorded_paths[selectedDemo]?.frames[currentFrame]?.pose ?? null
+
+  const getFrameKeypoint = (pose: Pose, name: string) => {
+    const kp = pose.keypoints.find((k) => k.name === name)
+    // Same 0.5 confidence gate the session engine uses
+    return kp && (kp.score ?? 0) >= 0.5 ? kp : null
+  }
+
+  const getFrameAngle = (criterion: AngleCriterion): number | null => {
+    if (!currentFramePose) return null
+    const joint = getFrameKeypoint(currentFramePose, criterion.joint)
+    const pointA = getFrameKeypoint(currentFramePose, criterion.relativeTo[0])
+    const pointB = getFrameKeypoint(currentFramePose, criterion.relativeTo[1])
+    if (!joint || !pointA || !pointB) return null
+    return Math.round(calculateAngle(pointA, joint, pointB))
+  }
+
+  const getFrameLevelDiff = (rule: LevelingRule): number | null => {
+    if (!currentFramePose) return null
+    const joint1 = getFrameKeypoint(currentFramePose, rule.joints[0])
+    const joint2 = getFrameKeypoint(currentFramePose, rule.joints[1])
+    if (!joint1 || !joint2) return null
+    return Math.round(Math.abs(joint1.y - joint2.y))
+  }
+
+  const autoFillFromRecording = () => {
+    if (!exercise || exercise.recorded_paths.length === 0) return
+    if (
+      angleCriteria.length > 0 &&
+      !confirm('Replace the current angle criteria with values derived from the recording?')
+    ) {
+      return
+    }
+    const derived = deriveCriteriaFromRecordings(exercise.recorded_paths)
+    if (derived.criteria.length === 0) {
+      alert('No joints were visible reliably enough in the recording to derive criteria.')
+      return
+    }
+    setAngleCriteria(derived.criteria)
+    setTargetBodyParts(derived.targetBodyParts)
+    setAutoFilled(true)
+  }
+
   const addAngleCriterion = () => {
+    const joint = 'left_shoulder'
     setAngleCriteria([
       ...angleCriteria,
       {
-        joint: 'left_shoulder',
+        joint,
         minAngle: 80,
         maxAngle: 100,
         targetAngle: 90,
-        relativeTo: ['left_elbow', 'left_hip'],
+        relativeTo: [...ANATOMICAL_REFERENCES[joint]],
       },
     ])
   }
@@ -239,6 +330,11 @@ export default function EditExercisePage({ params }: { params: Promise<{ id: str
   const updateAngleCriterion = (index: number, field: keyof AngleCriterion, value: any) => {
     const updated = [...angleCriteria]
     updated[index] = { ...updated[index], [field]: value }
+    // A new joint makes the old reference points meaningless — swap in the
+    // anatomical defaults for that joint (still editable afterwards).
+    if (field === 'joint' && ANATOMICAL_REFERENCES[value]) {
+      updated[index] = { ...updated[index], relativeTo: [...ANATOMICAL_REFERENCES[value]] }
+    }
     setAngleCriteria(updated)
   }
 
@@ -481,77 +577,172 @@ export default function EditExercisePage({ params }: { params: Promise<{ id: str
             <div className="bg-white rounded-2xl p-6 border border-[#E7E1D7]">
               <div className="flex items-center justify-between mb-4">
                 <h3 className="text-lg font-serif text-[#1F2421]">Angle Criteria</h3>
-                <button
-                  onClick={addAngleCriterion}
-                  className="text-sm text-[#C4612F] hover:text-[#A94E22] font-medium"
-                >
-                  + Add Angle
-                </button>
+                <div className="flex items-center gap-4">
+                  <button
+                    onClick={autoFillFromRecording}
+                    className="text-sm text-[#C4612F] hover:text-[#A94E22] font-medium"
+                    title="Compute target angles and tolerances from the recorded demo"
+                  >
+                    ↻ Auto-fill from recording
+                  </button>
+                  <button
+                    onClick={addAngleCriterion}
+                    className="text-sm text-[#C4612F] hover:text-[#A94E22] font-medium"
+                  >
+                    + Add Angle
+                  </button>
+                </div>
               </div>
 
-              <div className="space-y-4">
-                {angleCriteria.map((criterion, i) => (
-                  <div key={i} className="p-4 bg-[#F7F4EF] rounded-lg space-y-3">
-                    <div className="flex items-center justify-between">
-                      <span className="text-sm font-medium text-[#1F2421]">Angle {i + 1}</span>
-                      <button
-                        onClick={() => removeAngleCriterion(i)}
-                        className="text-xs text-red-600 hover:text-red-700"
-                      >
-                        Remove
-                      </button>
-                    </div>
+              {autoFilled && (
+                <div className="mb-4 px-3 py-2 bg-[#F2E3D6] text-[#8A4A1F] text-xs rounded-lg">
+                  Criteria were auto-derived from the recording — review the values, adjust if
+                  needed, then save.
+                </div>
+              )}
 
-                    <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-4">
+                {angleCriteria.map((criterion, i) => {
+                  const frameAngle = getFrameAngle(criterion)
+                  const inRange =
+                    frameAngle !== null &&
+                    frameAngle >= criterion.minAngle &&
+                    frameAngle <= criterion.maxAngle
+
+                  return (
+                    <div key={i} className="p-4 bg-[#F7F4EF] rounded-lg space-y-3">
+                      <div className="flex items-center justify-between">
+                        <span className="text-sm font-medium text-[#1F2421]">Angle {i + 1}</span>
+                        <button
+                          onClick={() => removeAngleCriterion(i)}
+                          className="text-xs text-red-600 hover:text-red-700"
+                        >
+                          Remove
+                        </button>
+                      </div>
+
                       <div>
-                        <label className="block text-xs text-[#5C635D] mb-1">Joint</label>
-                        <input
-                          type="text"
+                        <label className="block text-xs text-[#5C635D] mb-1">
+                          Joint (angle is measured here)
+                        </label>
+                        <select
                           value={criterion.joint}
                           onChange={(e) => updateAngleCriterion(i, 'joint', e.target.value)}
-                          className="w-full px-2 py-1 text-sm border border-[#E7E1D7] rounded focus:outline-none focus:ring-1 focus:ring-[#C4612F]"
-                        />
+                          className="w-full px-2 py-1 text-sm border border-[#E7E1D7] rounded bg-white focus:outline-none focus:ring-1 focus:ring-[#C4612F]"
+                        >
+                          {VALID_KEYPOINT_NAMES.map((name) => (
+                            <option key={name} value={name}>
+                              {formatJointName(name)}
+                            </option>
+                          ))}
+                        </select>
                       </div>
+
                       <div>
-                        <label className="block text-xs text-[#5C635D] mb-1">Target Angle</label>
-                        <input
-                          type="number"
-                          value={criterion.targetAngle}
-                          onChange={(e) =>
-                            updateAngleCriterion(i, 'targetAngle', parseInt(e.target.value))
-                          }
-                          className="w-full px-2 py-1 text-sm border border-[#E7E1D7] rounded focus:outline-none focus:ring-1 focus:ring-[#C4612F]"
-                        />
+                        <label className="block text-xs text-[#5C635D] mb-1">
+                          Between these two points
+                        </label>
+                        <div className="grid grid-cols-2 gap-3">
+                          <select
+                            value={criterion.relativeTo[0]}
+                            onChange={(e) =>
+                              updateAngleCriterion(i, 'relativeTo', [
+                                e.target.value,
+                                criterion.relativeTo[1],
+                              ])
+                            }
+                            className="w-full px-2 py-1 text-sm border border-[#E7E1D7] rounded bg-white focus:outline-none focus:ring-1 focus:ring-[#C4612F]"
+                          >
+                            {VALID_KEYPOINT_NAMES.map((name) => (
+                              <option key={name} value={name}>
+                                {formatJointName(name)}
+                              </option>
+                            ))}
+                          </select>
+                          <select
+                            value={criterion.relativeTo[1]}
+                            onChange={(e) =>
+                              updateAngleCriterion(i, 'relativeTo', [
+                                criterion.relativeTo[0],
+                                e.target.value,
+                              ])
+                            }
+                            className="w-full px-2 py-1 text-sm border border-[#E7E1D7] rounded bg-white focus:outline-none focus:ring-1 focus:ring-[#C4612F]"
+                          >
+                            {VALID_KEYPOINT_NAMES.map((name) => (
+                              <option key={name} value={name}>
+                                {formatJointName(name)}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+                        <p className="text-[11px] text-[#5C635D] mt-1">
+                          The angle is formed at the joint by the lines to these two points.
+                        </p>
                       </div>
-                      <div>
-                        <label className="block text-xs text-[#5C635D] mb-1">Min Angle</label>
-                        <input
-                          type="number"
-                          value={criterion.minAngle}
-                          onChange={(e) =>
-                            updateAngleCriterion(i, 'minAngle', parseInt(e.target.value))
-                          }
-                          className="w-full px-2 py-1 text-sm border border-[#E7E1D7] rounded focus:outline-none focus:ring-1 focus:ring-[#C4612F]"
-                        />
+
+                      <div className="grid grid-cols-3 gap-3">
+                        <div>
+                          <label className="block text-xs text-[#5C635D] mb-1">Target (°)</label>
+                          <input
+                            type="number"
+                            value={criterion.targetAngle}
+                            onChange={(e) => {
+                              const v = parseInt(e.target.value, 10)
+                              updateAngleCriterion(i, 'targetAngle', Number.isNaN(v) ? 0 : v)
+                            }}
+                            className="w-full px-2 py-1 text-sm border border-[#E7E1D7] rounded focus:outline-none focus:ring-1 focus:ring-[#C4612F]"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-xs text-[#5C635D] mb-1">Min (°)</label>
+                          <input
+                            type="number"
+                            value={criterion.minAngle}
+                            onChange={(e) => {
+                              const v = parseInt(e.target.value, 10)
+                              updateAngleCriterion(i, 'minAngle', Number.isNaN(v) ? 0 : v)
+                            }}
+                            className="w-full px-2 py-1 text-sm border border-[#E7E1D7] rounded focus:outline-none focus:ring-1 focus:ring-[#C4612F]"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-xs text-[#5C635D] mb-1">Max (°)</label>
+                          <input
+                            type="number"
+                            value={criterion.maxAngle}
+                            onChange={(e) => {
+                              const v = parseInt(e.target.value, 10)
+                              updateAngleCriterion(i, 'maxAngle', Number.isNaN(v) ? 0 : v)
+                            }}
+                            className="w-full px-2 py-1 text-sm border border-[#E7E1D7] rounded focus:outline-none focus:ring-1 focus:ring-[#C4612F]"
+                          />
+                        </div>
                       </div>
-                      <div>
-                        <label className="block text-xs text-[#5C635D] mb-1">Max Angle</label>
-                        <input
-                          type="number"
-                          value={criterion.maxAngle}
-                          onChange={(e) =>
-                            updateAngleCriterion(i, 'maxAngle', parseInt(e.target.value))
-                          }
-                          className="w-full px-2 py-1 text-sm border border-[#E7E1D7] rounded focus:outline-none focus:ring-1 focus:ring-[#C4612F]"
-                        />
+
+                      <div
+                        className={`flex items-center justify-between px-3 py-2 rounded text-xs font-medium ${
+                          frameAngle === null
+                            ? 'bg-[#E7E1D7] text-[#5C635D]'
+                            : inRange
+                              ? 'bg-green-100 text-green-700'
+                              : 'bg-red-100 text-red-700'
+                        }`}
+                      >
+                        <span>Angle in this frame</span>
+                        <span>
+                          {frameAngle === null
+                            ? 'joint not visible'
+                            : `${frameAngle}° ${inRange ? '✓ in range' : '✗ out of range'}`}
+                        </span>
                       </div>
                     </div>
-                  </div>
-                ))}
+                  )
+                })}
 
                 {angleCriteria.length === 0 && (
                   <p className="text-sm text-[#5C635D] text-center py-4">
-                    No angle criteria yet. Add one to get started.
+                    No angle criteria yet. Auto-fill them from the recording or add one manually.
                   </p>
                 )}
               </div>
@@ -570,43 +761,100 @@ export default function EditExercisePage({ params }: { params: Promise<{ id: str
               </div>
 
               <div className="space-y-3">
-                {levelingRules.map((rule, i) => (
-                  <div key={i} className="p-3 bg-[#F7F4EF] rounded-lg space-y-2">
-                    <div className="flex items-center justify-between">
-                      <span className="text-sm font-medium text-[#1F2421]">Rule {i + 1}</span>
-                      <button
-                        onClick={() => removeLevelingRule(i)}
-                        className="text-xs text-red-600 hover:text-red-700"
+                {levelingRules.map((rule, i) => {
+                  const frameDiff = getFrameLevelDiff(rule)
+                  const isLevel = frameDiff !== null && frameDiff <= rule.maxDifference
+
+                  return (
+                    <div key={i} className="p-3 bg-[#F7F4EF] rounded-lg space-y-2">
+                      <div className="flex items-center justify-between">
+                        <span className="text-sm font-medium text-[#1F2421]">Rule {i + 1}</span>
+                        <button
+                          onClick={() => removeLevelingRule(i)}
+                          className="text-xs text-red-600 hover:text-red-700"
+                        >
+                          Remove
+                        </button>
+                      </div>
+
+                      <div>
+                        <label className="block text-xs text-[#5C635D] mb-1">
+                          Keep these two joints level
+                        </label>
+                        <div className="grid grid-cols-2 gap-3">
+                          <select
+                            value={rule.joints[0]}
+                            onChange={(e) =>
+                              updateLevelingRule(i, 'joints', [e.target.value, rule.joints[1]])
+                            }
+                            className="w-full px-2 py-1 text-sm border border-[#E7E1D7] rounded bg-white focus:outline-none focus:ring-1 focus:ring-[#C4612F]"
+                          >
+                            {VALID_KEYPOINT_NAMES.map((name) => (
+                              <option key={name} value={name}>
+                                {formatJointName(name)}
+                              </option>
+                            ))}
+                          </select>
+                          <select
+                            value={rule.joints[1]}
+                            onChange={(e) =>
+                              updateLevelingRule(i, 'joints', [rule.joints[0], e.target.value])
+                            }
+                            className="w-full px-2 py-1 text-sm border border-[#E7E1D7] rounded bg-white focus:outline-none focus:ring-1 focus:ring-[#C4612F]"
+                          >
+                            {VALID_KEYPOINT_NAMES.map((name) => (
+                              <option key={name} value={name}>
+                                {formatJointName(name)}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+                      </div>
+
+                      <div>
+                        <label className="block text-xs text-[#5C635D] mb-1">
+                          Max Height Difference (px)
+                        </label>
+                        <input
+                          type="number"
+                          value={rule.maxDifference}
+                          onChange={(e) => {
+                            const v = parseInt(e.target.value, 10)
+                            updateLevelingRule(i, 'maxDifference', Number.isNaN(v) ? 0 : v)
+                          }}
+                          className="w-full px-2 py-1 text-sm border border-[#E7E1D7] rounded focus:outline-none focus:ring-1 focus:ring-[#C4612F]"
+                        />
+                      </div>
+
+                      <div>
+                        <label className="block text-xs text-[#5C635D] mb-1">Message</label>
+                        <input
+                          type="text"
+                          value={rule.message}
+                          onChange={(e) => updateLevelingRule(i, 'message', e.target.value)}
+                          className="w-full px-2 py-1 text-sm border border-[#E7E1D7] rounded focus:outline-none focus:ring-1 focus:ring-[#C4612F]"
+                        />
+                      </div>
+
+                      <div
+                        className={`flex items-center justify-between px-3 py-2 rounded text-xs font-medium ${
+                          frameDiff === null
+                            ? 'bg-[#E7E1D7] text-[#5C635D]'
+                            : isLevel
+                              ? 'bg-green-100 text-green-700'
+                              : 'bg-red-100 text-red-700'
+                        }`}
                       >
-                        Remove
-                      </button>
+                        <span>Difference in this frame</span>
+                        <span>
+                          {frameDiff === null
+                            ? 'joint not visible'
+                            : `${frameDiff}px ${isLevel ? '✓ level' : '✗ not level'}`}
+                        </span>
+                      </div>
                     </div>
-
-                    <div>
-                      <label className="block text-xs text-[#5C635D] mb-1">
-                        Max Difference (degrees)
-                      </label>
-                      <input
-                        type="number"
-                        value={rule.maxDifference}
-                        onChange={(e) =>
-                          updateLevelingRule(i, 'maxDifference', parseInt(e.target.value))
-                        }
-                        className="w-full px-2 py-1 text-sm border border-[#E7E1D7] rounded focus:outline-none focus:ring-1 focus:ring-[#C4612F]"
-                      />
-                    </div>
-
-                    <div>
-                      <label className="block text-xs text-[#5C635D] mb-1">Message</label>
-                      <input
-                        type="text"
-                        value={rule.message}
-                        onChange={(e) => updateLevelingRule(i, 'message', e.target.value)}
-                        className="w-full px-2 py-1 text-sm border border-[#E7E1D7] rounded focus:outline-none focus:ring-1 focus:ring-[#C4612F]"
-                      />
-                    </div>
-                  </div>
-                ))}
+                  )
+                })}
 
                 {levelingRules.length === 0 && (
                   <p className="text-sm text-[#5C635D] text-center py-4">

@@ -8,6 +8,7 @@ import {
   initPoseDetector,
   detectPose,
   disposePoseDetector,
+  deriveCriteriaFromRecordings,
   type Pose,
 } from '@/lib/poseDetection'
 
@@ -250,8 +251,10 @@ export default function NewExercisePage() {
     try {
       const supabase = createClient()
 
-      // Auto-detect angles and moving body parts from recordings
-      const detectedCriteria = analyzeRecordings(recordings)
+      // Derive working validation criteria straight from the recordings —
+      // target angles, tolerance bands, and reference points the therapist
+      // can review in the editor instead of typing degrees from scratch.
+      const derivedCriteria = deriveCriteriaFromRecordings(recordings)
 
       const { data, error } = await supabase.from('exercises').insert({
         name: exerciseName,
@@ -264,55 +267,28 @@ export default function NewExercisePage() {
           duration: r.duration,
           recordedAt: r.recordedAt.toISOString(),
         })),
-        pose_criteria: detectedCriteria,
-        is_active: false, // Draft until refined in Phase 4
+        pose_criteria: {
+          ...derivedCriteria,
+          // Legacy field older rows used before targetBodyParts existed.
+          detectedMovingParts: derivedCriteria.targetBodyParts,
+          needsRefinement: derivedCriteria.criteria.length === 0,
+          autoDetectedAt: new Date().toISOString(),
+        },
+        is_active: false, // Draft until reviewed and published in the editor
       })
 
       if (error) throw error
 
-      alert('Exercise saved as draft! You can refine it in the editor.')
+      alert(
+        derivedCriteria.criteria.length > 0
+          ? 'Exercise saved as draft! Validation criteria were auto-derived from your recording — review them in the editor, then publish.'
+          : 'Exercise saved as draft! Criteria could not be auto-derived (joints not visible enough) — set them in the editor.'
+      )
       router.push('/admin')
     } catch (error) {
       console.error('Save error:', error)
       alert('Failed to save exercise')
       setRecordingState('reviewing')
-    }
-  }
-
-  // Auto-detect angles and moving body parts from recorded demonstrations
-  const analyzeRecordings = (demos: RecordedDemo[]) => {
-    // Placeholder for Phase 3 - will be enhanced in Phase 4
-    // For now, just identify which body parts moved significantly
-    const movingParts: Set<string> = new Set()
-    const angleRanges: Record<string, { min: number; max: number }> = {}
-
-    demos.forEach((demo) => {
-      if (demo.frames.length < 2) return
-
-      const firstFrame = demo.frames[0].pose
-      const lastFrame = demo.frames[demo.frames.length - 1].pose
-
-      // Compare keypoint positions to detect movement
-      firstFrame.keypoints.forEach((startKp, i) => {
-        const endKp = lastFrame.keypoints[i]
-        if (!startKp.name || !endKp.name) return
-
-        const distance = Math.sqrt(
-          Math.pow(endKp.x - startKp.x, 2) + Math.pow(endKp.y - startKp.y, 2)
-        )
-
-        // If moved more than 50 pixels, mark as moving
-        if (distance > 50) {
-          movingParts.add(startKp.name)
-        }
-      })
-    })
-
-    return {
-      detectedMovingParts: Array.from(movingParts),
-      angleRanges: angleRanges,
-      needsRefinement: true,
-      autoDetectedAt: new Date().toISOString(),
     }
   }
 
@@ -519,8 +495,8 @@ export default function NewExercisePage() {
               <ol className="text-xs text-[#5C635D] space-y-1 list-decimal list-inside">
                 <li>Fill in exercise details</li>
                 <li>Record 2-3 demonstrations</li>
-                <li>System auto-detects moving body parts</li>
-                <li>Save as draft for refinement</li>
+                <li>System derives target angles and tolerances from your movement</li>
+                <li>Review the auto-filled criteria in the editor, then publish</li>
               </ol>
             </div>
           </div>

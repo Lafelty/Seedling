@@ -270,8 +270,9 @@ export interface ExerciseAnalysis {
 /**
  * Calculate angle between three points (in degrees)
  * Returns angle at point B formed by points A-B-C
+ * Exported so the exercise editor can show live angles with the same math.
  */
-function calculateAngle(
+export function calculateAngle(
   pointA: { x: number; y: number },
   pointB: { x: number; y: number },
   pointC: { x: number; y: number }
@@ -412,6 +413,226 @@ export function analyzeExercise(
     message,
     failedCriteria,
   };
+}
+
+// ============================================================================
+// Auto-derivation of validation criteria from recorded demonstrations
+// ============================================================================
+
+/** The 17 keypoints MoveNet detects — the only valid names for joints and reference points. */
+export const VALID_KEYPOINT_NAMES: readonly string[] = [
+  'nose',
+  'left_eye',
+  'right_eye',
+  'left_ear',
+  'right_ear',
+  'left_shoulder',
+  'right_shoulder',
+  'left_elbow',
+  'right_elbow',
+  'left_wrist',
+  'right_wrist',
+  'left_hip',
+  'right_hip',
+  'left_knee',
+  'right_knee',
+  'left_ankle',
+  'right_ankle',
+];
+
+/**
+ * Anatomically sensible reference points for measuring the angle at each joint.
+ * Only these 8 joints have a meaningful "angle" — face points and extremities don't.
+ */
+export const ANATOMICAL_REFERENCES: Record<string, [string, string]> = {
+  left_shoulder: ['left_elbow', 'left_hip'],
+  right_shoulder: ['right_elbow', 'right_hip'],
+  left_elbow: ['left_shoulder', 'left_wrist'],
+  right_elbow: ['right_shoulder', 'right_wrist'],
+  left_hip: ['left_shoulder', 'left_knee'],
+  right_hip: ['right_shoulder', 'right_knee'],
+  left_knee: ['left_hip', 'left_ankle'],
+  right_knee: ['right_hip', 'right_ankle'],
+};
+
+/** Minimal shape of a recorded demo both admin pages share. */
+export interface RecordedDemoFrames {
+  frames: Array<{ pose: Pose }>;
+}
+
+const MIN_VISIBLE_FRAMES = 10; // pooled frames a joint needs before we trust its stats
+const MIN_VISIBLE_RATIO = 0.4; // joint must be measurable in this share of all frames
+const MOVING_ROM_THRESHOLD = 25; // degrees of motion that marks a joint as exercised
+const MOVING_DISPLACEMENT_PX = 40; // keypoint travel that marks a body part as moving
+
+/** Centered moving average — MoveNet angles jitter several degrees frame to frame. */
+function smoothSeries(values: number[], windowSize = 5): number[] {
+  if (values.length <= windowSize) return [...values];
+  const half = Math.floor(windowSize / 2);
+  return values.map((_, i) => {
+    const start = Math.max(0, i - half);
+    const end = Math.min(values.length, i + half + 1);
+    let sum = 0;
+    for (let j = start; j < end; j++) sum += values[j];
+    return sum / (end - start);
+  });
+}
+
+function percentile(values: number[], p: number): number {
+  const sorted = [...values].sort((a, b) => a - b);
+  const idx = (sorted.length - 1) * p;
+  const lo = Math.floor(idx);
+  const hi = Math.ceil(idx);
+  if (lo === hi) return sorted[lo];
+  return sorted[lo] + (sorted[hi] - sorted[lo]) * (idx - lo);
+}
+
+interface JointDemoStats {
+  count: number;
+  start: number; // typical angle at the beginning of the demo (rest pose)
+  p5: number;
+  p95: number;
+  median: number;
+}
+
+/** Angle statistics for one joint across one demo, or null if too rarely visible. */
+function collectJointStats(
+  demo: RecordedDemoFrames,
+  joint: string,
+  refs: [string, string]
+): JointDemoStats | null {
+  const series: number[] = [];
+  for (const frame of demo.frames) {
+    const j = getKeypoint(frame.pose, joint);
+    const a = getKeypoint(frame.pose, refs[0]);
+    const b = getKeypoint(frame.pose, refs[1]);
+    if (!j || !a || !b) continue;
+    series.push(calculateAngle(a, j, b));
+  }
+  if (series.length < 5) return null;
+
+  const smoothed = smoothSeries(series);
+  const startWindow = smoothed.slice(0, Math.max(3, Math.round(smoothed.length * 0.1)));
+  return {
+    count: smoothed.length,
+    start: percentile(startWindow, 0.5),
+    p5: percentile(smoothed, 0.05),
+    p95: percentile(smoothed, 0.95),
+    median: percentile(smoothed, 0.5),
+  };
+}
+
+/** Keypoints that travel far from where they started, in any demo. */
+function detectMovingKeypoints(demos: RecordedDemoFrames[]): string[] {
+  const validNames = new Set(VALID_KEYPOINT_NAMES);
+  const moving = new Set<string>();
+
+  for (const demo of demos) {
+    const firstSeen: Record<string, { x: number; y: number }> = {};
+    for (const frame of demo.frames) {
+      for (const kp of frame.pose.keypoints) {
+        if (!kp.name || !validNames.has(kp.name) || (kp.score ?? 0) < 0.5) continue;
+        const ref = firstSeen[kp.name];
+        if (!ref) {
+          firstSeen[kp.name] = { x: kp.x, y: kp.y };
+        } else if (Math.hypot(kp.x - ref.x, kp.y - ref.y) >= MOVING_DISPLACEMENT_PX) {
+          moving.add(kp.name);
+        }
+      }
+    }
+  }
+
+  return [...moving];
+}
+
+/**
+ * Derive ready-to-use validation criteria from recorded demonstrations.
+ *
+ * The recording is ground truth: joint angles are computed across every frame
+ * (same math the session engine uses), so the therapist never has to translate
+ * "arm at shoulder height" into degrees by hand.
+ *
+ * - Joints whose angle sweeps ≥ MOVING_ROM_THRESHOLD are treated as the exercised
+ *   joints. The target is the extreme of the movement (the end furthest from the
+ *   rest pose), with a tolerance band tight enough to exclude the rest pose —
+ *   otherwise the rep counter would fire while the patient just stands there.
+ * - If nothing sweeps that far, the recording is a static hold: every reliably
+ *   visible joint gets a criterion around its median angle.
+ * - Reference points always come from ANATOMICAL_REFERENCES.
+ *
+ * Returns the exact PoseCriteria shape the session engine consumes. Criteria may
+ * be empty when no joint was visible reliably enough.
+ */
+export function deriveCriteriaFromRecordings(demos: RecordedDemoFrames[]): PoseCriteria {
+  const usable = demos.filter((d) => d.frames.length >= 2);
+  const totalFrames = usable.reduce((sum, d) => sum + d.frames.length, 0);
+
+  // Pool per-demo stats into one weighted view per joint.
+  const jointStats: Record<string, JointDemoStats> = {};
+  if (totalFrames > 0) {
+    for (const [joint, refs] of Object.entries(ANATOMICAL_REFERENCES)) {
+      const perDemo = usable
+        .map((d) => collectJointStats(d, joint, refs))
+        .filter((s): s is JointDemoStats => s !== null);
+      const count = perDemo.reduce((sum, s) => sum + s.count, 0);
+      if (count < MIN_VISIBLE_FRAMES || count / totalFrames < MIN_VISIBLE_RATIO) continue;
+
+      const wmean = (pick: (s: JointDemoStats) => number) =>
+        perDemo.reduce((sum, s) => sum + pick(s) * s.count, 0) / count;
+      jointStats[joint] = {
+        count,
+        start: wmean((s) => s.start),
+        p5: wmean((s) => s.p5),
+        p95: wmean((s) => s.p95),
+        median: wmean((s) => s.median),
+      };
+    }
+  }
+
+  const criteria: AngleCriterion[] = [];
+  const movingJoints = Object.entries(jointStats)
+    .filter(([, s]) => s.p95 - s.p5 >= MOVING_ROM_THRESHOLD)
+    .sort(([, a], [, b]) => b.p95 - b.p5 - (a.p95 - a.p5)); // widest sweep first
+
+  if (movingJoints.length > 0) {
+    for (const [joint, s] of movingJoints) {
+      // Target = the movement extreme furthest from the rest pose. Since the
+      // sweep is ≥ 25°, that extreme is ≥ 12.5° from rest, so a 10–20° half-band
+      // scaled to the movement always leaves the rest pose outside the band.
+      const target = Math.abs(s.p95 - s.start) >= Math.abs(s.p5 - s.start) ? s.p95 : s.p5;
+      const halfBand = Math.min(20, Math.max(10, Math.abs(target - s.start) * 0.4));
+      criteria.push({
+        joint,
+        targetAngle: Math.round(target),
+        minAngle: Math.max(0, Math.round(target - halfBand)),
+        maxAngle: Math.min(180, Math.round(target + halfBand)),
+        relativeTo: [...ANATOMICAL_REFERENCES[joint]] as [string, string],
+      });
+    }
+  } else {
+    // Static hold: the whole recording is the target pose.
+    for (const [joint, s] of Object.entries(jointStats)) {
+      const halfBand = Math.max(10, (s.p95 - s.p5) / 2 + 5);
+      criteria.push({
+        joint,
+        targetAngle: Math.round(s.median),
+        minAngle: Math.max(0, Math.round(s.median - halfBand)),
+        maxAngle: Math.min(180, Math.round(s.median + halfBand)),
+        relativeTo: [...ANATOMICAL_REFERENCES[joint]] as [string, string],
+      });
+    }
+  }
+
+  // Everything the criteria reference must be visible during a session, plus
+  // whatever visibly moved (drives the skeleton highlight in the editor).
+  const targetBodyParts = new Set<string>(detectMovingKeypoints(usable));
+  for (const c of criteria) {
+    targetBodyParts.add(c.joint);
+    targetBodyParts.add(c.relativeTo[0]);
+    targetBodyParts.add(c.relativeTo[1]);
+  }
+
+  return { targetBodyParts: [...targetBodyParts], criteria, levelingRules: [] };
 }
 
 /**

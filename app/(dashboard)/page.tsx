@@ -18,10 +18,16 @@ export default function DashboardPage() {
   useEffect(() => {
     // Check if user is logged in (only in browser)
     if (typeof window !== 'undefined') {
-      const supabase = createClient();
-      supabase.auth.getUser().then(({ data: { user } }) => {
-        setUser(user);
-      });
+      try {
+        const supabase = createClient();
+        supabase.auth.getUser().then(({ data: { user } }) => {
+          setUser(user);
+        }).catch((error) => {
+          console.error('Error checking auth:', error);
+        });
+      } catch (error) {
+        console.error('Error creating Supabase client:', error);
+      }
     }
 
     const data = getProgress();

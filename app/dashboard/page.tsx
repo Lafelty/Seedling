@@ -27,7 +27,6 @@ interface WeeklyStats {
 
 export default function DashboardPage() {
   const router = useRouter()
-  const supabase = createClient()
 
   const [loading, setLoading] = useState(true)
   const [userName, setUserName] = useState<string>('')
@@ -40,6 +39,9 @@ export default function DashboardPage() {
   }, [])
 
   async function loadDashboardData() {
+    if (typeof window === 'undefined') return;
+
+    const supabase = createClient()
     const { data: { user } } = await supabase.auth.getUser()
 
     if (!user) {
@@ -305,6 +307,7 @@ export default function DashboardPage() {
           </Link>
           <button
             onClick={async () => {
+              const supabase = createClient()
               await supabase.auth.signOut()
               router.push('/login')
             }}

@@ -13,6 +13,7 @@ export default function DashboardPage() {
   const [dayStrip, setDayStrip] = useState<DayStatus[]>([]);
   const [showEmptyState, setShowEmptyState] = useState(false);
   const [user, setUser] = useState<any>(null);
+  const [isAdmin, setIsAdmin] = useState(false);
   const router = useRouter();
 
   useEffect(() => {
@@ -20,8 +21,20 @@ export default function DashboardPage() {
     if (typeof window !== 'undefined') {
       try {
         const supabase = createClient();
-        supabase.auth.getUser().then(({ data: { user } }) => {
+        supabase.auth.getUser().then(async ({ data: { user } }) => {
           setUser(user);
+
+          if (user) {
+            const { data: profile } = await supabase
+              .from('profiles')
+              .select('is_admin')
+              .eq('id', user.id)
+              .single();
+
+            if (profile?.is_admin) {
+              setIsAdmin(true);
+            }
+          }
         }).catch((error) => {
           console.error('Error checking auth:', error);
         });
@@ -99,6 +112,24 @@ export default function DashboardPage() {
             <div style={{ display: 'flex', gap: 'var(--space-3)', alignItems: 'center' }}>
               {user ? (
                 <>
+                  {isAdmin && (
+                    <Link
+                      href="/admin"
+                      style={{
+                        padding: 'var(--space-2) var(--space-4)',
+                        fontSize: 'var(--text-sm)',
+                        fontWeight: 600,
+                        color: 'white',
+                        background: 'var(--primary)',
+                        border: 'none',
+                        borderRadius: 'var(--radius-full)',
+                        textDecoration: 'none',
+                        display: 'inline-block',
+                      }}
+                    >
+                      Admin
+                    </Link>
+                  )}
                   <Link
                     href="/dashboard"
                     style={{

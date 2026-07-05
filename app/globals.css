@@ -181,12 +181,77 @@
     align-items: center;
     gap: var(--space-2);
     padding: var(--space-2) var(--space-4);
-    background: var(--accent);
-    color: var(--ink);
+    background: linear-gradient(135deg, #F3EAD3 0%, #C9B88A 100%);
+    color: #5C4E2A;
+    border: 1px solid rgba(178, 158, 108, 0.5);
     border-radius: var(--radius-full);
     font-family: var(--font-body);
     font-size: var(--text-base);
+    font-weight: 700;
+    box-shadow: 0 2px 8px rgba(201, 184, 138, 0.35);
+  }
+
+  .star-badge svg {
+    color: #A8862F;
+    filter: drop-shadow(0 1px 1px rgba(168, 134, 47, 0.3));
+  }
+
+  /* Header pill buttons */
+  .pill-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: var(--space-2);
+    padding: var(--space-2) var(--space-4);
+    min-height: 40px;
+    font-family: var(--font-body);
+    font-size: var(--text-sm);
     font-weight: 600;
+    border-radius: var(--radius-full);
+    border: 1px solid transparent;
+    cursor: pointer;
+    text-decoration: none;
+    white-space: nowrap;
+    transition: background var(--dur-fast) var(--ease-out),
+                box-shadow var(--dur-fast) var(--ease-out),
+                transform var(--dur-instant) var(--ease-out);
+  }
+
+  .pill-btn:active {
+    transform: scale(0.97);
+  }
+
+  .pill-btn-primary {
+    background: var(--primary);
+    color: white;
+  }
+
+  .pill-btn-outline {
+    background: var(--surface);
+    color: var(--ink);
+    border-color: var(--border);
+  }
+
+  .pill-btn-ghost {
+    background: transparent;
+    color: var(--muted);
+  }
+
+  @media (hover: hover) and (pointer: fine) {
+    .pill-btn-primary:hover {
+      background: #3E5A4B;
+      box-shadow: 0 4px 12px rgba(74, 107, 90, 0.25);
+    }
+
+    .pill-btn-outline:hover {
+      background: var(--bg);
+      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
+    }
+
+    .pill-btn-ghost:hover {
+      background: rgba(0, 0, 0, 0.04);
+      color: var(--ink);
+    }
   }
 
   /* Card */

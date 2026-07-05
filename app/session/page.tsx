@@ -20,7 +20,7 @@ import {
   type ExerciseAnalysis,
 } from '@/lib/poseDetection'
 
-type SessionState = 'loading' | 'countdown' | 'active' | 'paused' | 'completed'
+type SessionState = 'loading' | 'ready' | 'countdown' | 'active' | 'paused' | 'completed'
 type PostureFeedback = 'good' | 'adjust' | 'analyzing'
 
 interface RepData {
@@ -136,10 +136,23 @@ export default function SessionPage() {
     loadExercise()
   }, [])
 
+  // Mobile browsers block speechSynthesis until a call happens inside a
+  // user gesture. Speaking a silent utterance from the Start tap unlocks
+  // the engine so later programmatic speak() calls produce sound.
+  const unlockSpeech = () => {
+    if ('speechSynthesis' in window) {
+      window.speechSynthesis.cancel()
+      const unlock = new SpeechSynthesisUtterance(' ')
+      unlock.volume = 0
+      window.speechSynthesis.speak(unlock)
+    }
+  }
+
   // Text-to-speech helper
   const speak = (text: string) => {
     if ('speechSynthesis' in window) {
       window.speechSynthesis.cancel() // Cancel any ongoing speech
+      window.speechSynthesis.resume() // Chrome can leave the engine paused
       const utterance = new SpeechSynthesisUtterance(text)
       utterance.rate = 0.9
       utterance.pitch = 1.0
@@ -223,8 +236,10 @@ export default function SessionPage() {
           setIsDetecting(true)
         }
 
-        // Start with countdown
-        setSessionState('countdown')
+        // Wait for a tap before starting — mobile browsers only allow
+        // speech synthesis after a user gesture on the page, so the
+        // Start tap doubles as the audio unlock.
+        setSessionState('ready')
       } catch (err) {
         console.error('Camera error:', err)
         setCameraError('Camera access denied. Please allow camera access to continue.')
@@ -619,9 +634,9 @@ export default function SessionPage() {
         {/* Bottom Navigation */}
         <nav className="bottom-nav">
           <Link href="/" className="nav-item active">
-            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-              <path d="M12 2L2 7v7c0 5.55 3.84 10.74 9 12 5.16-1.26 9-6.45 9-12V7l-10-5z" />
-              <path d="M12 8v8M8 12h8" />
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M8 19a4 4 0 0 1-2.24-7.32A3.5 3.5 0 0 1 9 6.03V6a3 3 0 1 1 6 0v.04a3.5 3.5 0 0 1 3.24 5.65A4 4 0 0 1 16 19Z" />
+              <path d="M12 19v3" />
             </svg>
             <span>Garden</span>
           </Link>
@@ -697,6 +712,30 @@ export default function SessionPage() {
         </svg>
       )}
 
+      {/* Ready overlay — tap unlocks mobile audio, then countdown starts */}
+      {sessionState === 'ready' && (
+        <div className="absolute inset-0 flex items-center justify-center z-20" style={{ background: 'rgba(0,0,0,0.7)', backdropFilter: 'blur(8px)' }}>
+          <div className="text-center px-8">
+            <p className="font-display text-3xl mb-3" style={{ color: 'white', fontWeight: 600 }}>
+              Ready?
+            </p>
+            <p className="mb-8" style={{ color: 'rgba(255,255,255,0.75)', fontSize: 'var(--text-base)' }}>
+              Place your phone where your upper body is in frame
+            </p>
+            <button
+              onClick={() => {
+                unlockSpeech()
+                setSessionState('countdown')
+              }}
+              className="btn btn-primary"
+              style={{ fontSize: 'var(--text-lg)', padding: 'var(--space-4) var(--space-12)' }}
+            >
+              Start
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Countdown overlay */}
       {sessionState === 'countdown' && countdown > 0 && (
         <div className="absolute inset-0 flex items-center justify-center z-20" style={{ background: 'rgba(0,0,0,0.7)', backdropFilter: 'blur(8px)' }}>
@@ -730,20 +769,21 @@ export default function SessionPage() {
           style={{ padding: '0 var(--space-6)' }}
         >
           <div style={{
-            background: 'rgba(0,0,0,0.75)',
+            background: 'rgba(0,0,0,0.85)',
             backdropFilter: 'blur(8px)',
-            borderRadius: 'var(--radius-full)',
-            padding: 'var(--space-3) var(--space-5)',
+            border: '2px solid #f97316',
+            borderRadius: 'var(--radius-xl)',
+            padding: 'var(--space-4) var(--space-6)',
             display: 'flex',
             alignItems: 'center',
-            gap: 'var(--space-2)',
+            gap: 'var(--space-3)',
           }}>
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#f97316" strokeWidth="2.5">
+            <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="#f97316" strokeWidth="2.5" style={{ flexShrink: 0 }}>
               <circle cx="12" cy="12" r="10" />
               <line x1="12" y1="8" x2="12" y2="12" />
               <line x1="12" y1="16" x2="12.01" y2="16" />
             </svg>
-            <span style={{ color: 'white', fontSize: 'var(--text-sm)', fontWeight: 500 }}>
+            <span style={{ color: 'white', fontSize: 'var(--text-xl)', fontWeight: 700, lineHeight: 1.3 }}>
               Step back so your shoulders are visible
             </span>
           </div>

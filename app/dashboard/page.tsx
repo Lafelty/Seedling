@@ -310,6 +310,7 @@ export default function DashboardPage() {
               const supabase = createClient()
               await supabase.auth.signOut()
               router.push('/login')
+              router.refresh()
             }}
             style={{
               padding: 'var(--space-4) var(--space-8)',

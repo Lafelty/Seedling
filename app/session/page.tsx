@@ -160,6 +160,29 @@ export default function SessionPage() {
     loadExercise()
   }, [])
 
+  // Pin TTS to a fixed language/accent instead of the phone's preferred
+  // language. Change TTS_LANG to switch accent (e.g. 'en-GB', 'th-TH').
+  const TTS_LANG = 'en-US'
+  const ttsVoiceRef = useRef<SpeechSynthesisVoice | null>(null)
+
+  useEffect(() => {
+    if (!('speechSynthesis' in window)) return
+    const pickVoice = () => {
+      const voices = window.speechSynthesis.getVoices()
+      ttsVoiceRef.current =
+        // Exact locale, on-device voice preferred (works offline, no lag)
+        voices.find((v) => v.lang === TTS_LANG && v.localService) ||
+        voices.find((v) => v.lang === TTS_LANG) ||
+        // Same language, any region, as last resort
+        voices.find((v) => v.lang.startsWith(TTS_LANG.split('-')[0])) ||
+        null
+    }
+    pickVoice()
+    // Mobile browsers load the voice list async — empty on first call
+    window.speechSynthesis.addEventListener('voiceschanged', pickVoice)
+    return () => window.speechSynthesis.removeEventListener('voiceschanged', pickVoice)
+  }, [])
+
   // Mobile browsers block speechSynthesis until a call happens inside a
   // user gesture. Speaking a silent utterance from the Start tap unlocks
   // the engine so later programmatic speak() calls produce sound.
@@ -178,6 +201,8 @@ export default function SessionPage() {
       window.speechSynthesis.cancel() // Cancel any ongoing speech
       window.speechSynthesis.resume() // Chrome can leave the engine paused
       const utterance = new SpeechSynthesisUtterance(text)
+      utterance.lang = TTS_LANG
+      if (ttsVoiceRef.current) utterance.voice = ttsVoiceRef.current
       utterance.rate = 0.9
       utterance.pitch = 1.0
       utterance.volume = 1.0

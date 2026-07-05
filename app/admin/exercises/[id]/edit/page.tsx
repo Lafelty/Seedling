@@ -120,6 +120,17 @@ export default function EditExercisePage({ params }: { params: Promise<{ id: str
   })
   const [targetReps, setTargetReps] = useState(10)
   const [holdDuration, setHoldDuration] = useState(500)
+  // Difficulty dial stored inside pose_criteria — scales every tolerance band
+  const [toleranceMultiplier, setToleranceMultiplier] = useState(1)
+
+  // Per-criterion pass rates measured during test mode
+  const testStatsRef = useRef<{ evaluated: number; passes: Record<string, number> }>({
+    evaluated: 0,
+    passes: {},
+  })
+  const [testPassRates, setTestPassRates] = useState<
+    Array<{ key: string; label: string; pct: number }>
+  >([])
 
   // Live mirrors so the test loop always validates against the latest edits
   // without restarting the camera on every keystroke.
@@ -138,6 +149,7 @@ export default function EditExercisePage({ params }: { params: Promise<{ id: str
       ...r,
       joints: [r.joints[0], r.joints[1]] as [string, string],
     })),
+    toleranceMultiplier,
   }
   const testMessagesRef = useRef(feedbackMessages)
   testMessagesRef.current = feedbackMessages
@@ -224,6 +236,46 @@ export default function EditExercisePage({ params }: { params: Promise<{ id: str
           setTestReps(rep.repCount)
           setTestHoldProgress(rep.holdProgress)
           drawTestSkeleton(pose, feedback)
+
+          // Per-criterion pass rate — only frames where the engine actually
+          // evaluated the pose (skips "position yourself in frame" frames).
+          if (analysis.feedback !== 'analyzing') {
+            const stats = testStatsRef.current
+            stats.evaluated++
+            for (const c of testCriteriaRef.current.criteria) {
+              const failed = analysis.failedCriteria.some(
+                (f) => f === c.joint || f === `${c.joint}_tooLow` || f === `${c.joint}_tooHigh`
+              )
+              const key = `angle:${c.joint}`
+              stats.passes[key] = (stats.passes[key] ?? 0) + (failed ? 0 : 1)
+            }
+            for (const r of testCriteriaRef.current.levelingRules) {
+              const key = `level:${r.joints[0]}_${r.joints[1]}`
+              const failed = analysis.failedCriteria.includes(
+                `leveling_${r.joints[0]}_${r.joints[1]}`
+              )
+              stats.passes[key] = (stats.passes[key] ?? 0) + (failed ? 0 : 1)
+            }
+            if (stats.evaluated % 10 === 0) {
+              setTestPassRates(
+                [
+                  ...testCriteriaRef.current.criteria.map((c) => ({
+                    key: `angle:${c.joint}`,
+                    label: formatJointName(c.joint),
+                  })),
+                  ...testCriteriaRef.current.levelingRules.map((r) => ({
+                    key: `level:${r.joints[0]}_${r.joints[1]}`,
+                    label: `${formatJointName(r.joints[0])} ↔ ${formatJointName(r.joints[1])} level`,
+                  })),
+                ].map(({ key, label }) => ({
+                  key,
+                  label,
+                  pct: Math.round(((stats.passes[key] ?? 0) / stats.evaluated) * 100),
+                }))
+              )
+            }
+          }
+
           raf = requestAnimationFrame(loop)
         }
         loop()
@@ -311,6 +363,9 @@ export default function EditExercisePage({ params }: { params: Promise<{ id: str
     }
     if (data.hold_duration_ms) {
       setHoldDuration(data.hold_duration_ms)
+    }
+    if (typeof data.pose_criteria?.toleranceMultiplier === 'number') {
+      setToleranceMultiplier(data.pose_criteria.toleranceMultiplier)
     }
 
     setLoading(false)
@@ -471,6 +526,8 @@ export default function EditExercisePage({ params }: { params: Promise<{ id: str
     setTestFeedback(null)
     setTestReps(0)
     setTestHoldProgress(0)
+    testStatsRef.current = { evaluated: 0, passes: {} }
+    setTestPassRates([])
     setTestMode(true)
   }
 
@@ -584,6 +641,7 @@ export default function EditExercisePage({ params }: { params: Promise<{ id: str
       targetBodyParts,
       criteria: angleCriteria,
       levelingRules,
+      toleranceMultiplier,
     }
 
     const supabase = createClient()
@@ -621,7 +679,7 @@ export default function EditExercisePage({ params }: { params: Promise<{ id: str
     const { error } = await supabase
       .from('exercises')
       .update({
-        pose_criteria: { targetBodyParts, criteria: angleCriteria, levelingRules },
+        pose_criteria: { targetBodyParts, criteria: angleCriteria, levelingRules, toleranceMultiplier },
         feedback_messages: feedbackMessages,
         target_reps: targetReps,
         hold_duration_ms: holdDuration,
@@ -762,6 +820,41 @@ export default function EditExercisePage({ params }: { params: Promise<{ id: str
               </div>
             </div>
 
+            {/* Difficulty: one dial that scales every tolerance band */}
+            <div className="bg-white rounded-2xl p-6 border border-[#E7E1D7]">
+              <h3 className="text-lg font-serif text-[#1F2421] mb-2">Difficulty</h3>
+              <p className="text-xs text-[#5C635D] mb-3">
+                Scales every angle and leveling tolerance at once — match it to the
+                patient&apos;s mobility without editing individual angles.
+              </p>
+              <div className="grid grid-cols-3 gap-2">
+                {[
+                  { label: 'Gentle', value: 1.4, hint: '40% wider bands' },
+                  { label: 'Standard', value: 1, hint: 'As recorded' },
+                  { label: 'Strict', value: 0.75, hint: '25% tighter bands' },
+                ].map((opt) => (
+                  <button
+                    key={opt.label}
+                    onClick={() => setToleranceMultiplier(opt.value)}
+                    className={`px-3 py-2 rounded-lg text-sm font-medium border transition-colors ${
+                      toleranceMultiplier === opt.value
+                        ? 'bg-[#C4612F] text-white border-[#C4612F]'
+                        : 'bg-white text-[#1F2421] border-[#E7E1D7] hover:border-[#C4612F]'
+                    }`}
+                  >
+                    <span className="block">{opt.label}</span>
+                    <span
+                      className={`block text-[11px] font-normal ${
+                        toleranceMultiplier === opt.value ? 'text-white/80' : 'text-[#5C635D]'
+                      }`}
+                    >
+                      {opt.hint}
+                    </span>
+                  </button>
+                ))}
+              </div>
+            </div>
+
             {/* Test mode: run the real session validation against current edits */}
             <div className="bg-white rounded-2xl p-6 border border-[#E7E1D7]">
               <div className="flex items-center justify-between mb-2">
@@ -833,6 +926,44 @@ export default function EditExercisePage({ params }: { params: Promise<{ id: str
                       />
                     </div>
                   </div>
+
+                  {/* Per-criterion pass rate — spots the one that's too tight */}
+                  {testPassRates.length > 0 && (
+                    <div className="border-t border-[#E7E1D7] pt-3 space-y-2">
+                      <p className="text-xs font-medium text-[#1F2421]">
+                        Criteria pass rate (share of frames passing while you test)
+                      </p>
+                      {testPassRates.map((r) => (
+                        <div key={r.key} className="flex items-center gap-2">
+                          <span className="text-xs text-[#5C635D] w-40 truncate">{r.label}</span>
+                          <div className="flex-1 h-2 bg-[#E7E1D7] rounded-full overflow-hidden">
+                            <div
+                              className="h-full transition-[width]"
+                              style={{
+                                width: `${r.pct}%`,
+                                background:
+                                  r.pct >= 80 ? '#10b981' : r.pct >= 50 ? '#f59e0b' : '#ef4444',
+                              }}
+                            />
+                          </div>
+                          <span
+                            className="text-xs font-medium w-10 text-right"
+                            style={{
+                              color: r.pct >= 80 ? '#10b981' : r.pct >= 50 ? '#f59e0b' : '#ef4444',
+                            }}
+                          >
+                            {r.pct}%
+                          </span>
+                        </div>
+                      ))}
+                      {testPassRates.some((r) => r.pct < 50) && (
+                        <p className="text-xs text-[#ef4444]">
+                          A criterion under 50% is probably too tight — widen its range or
+                          switch difficulty to Gentle.
+                        </p>
+                      )}
+                    </div>
+                  )}
                 </div>
               )}
             </div>

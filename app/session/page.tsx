@@ -15,10 +15,26 @@ import {
   GenericRepCounter,
   CycleRepCounter,
   disposePoseDetector,
+  pickReferencePose,
   type Pose,
   type PoseCriteria,
   type ExerciseAnalysis,
 } from '@/lib/poseDetection'
+
+const GHOST_CONNECTIONS = [
+  ['left_shoulder', 'right_shoulder'],
+  ['left_shoulder', 'left_elbow'],
+  ['left_elbow', 'left_wrist'],
+  ['right_shoulder', 'right_elbow'],
+  ['right_elbow', 'right_wrist'],
+  ['left_shoulder', 'left_hip'],
+  ['right_shoulder', 'right_hip'],
+  ['left_hip', 'right_hip'],
+  ['left_hip', 'left_knee'],
+  ['left_knee', 'left_ankle'],
+  ['right_hip', 'right_knee'],
+  ['right_knee', 'right_ankle'],
+] as const
 
 type SessionState = 'loading' | 'ready' | 'countdown' | 'active' | 'paused' | 'completed'
 type PostureFeedback = 'good' | 'adjust' | 'analyzing'
@@ -39,6 +55,7 @@ interface Exercise {
   target_reps: number
   hold_duration_ms: number
   feedback_messages: Record<string, string>
+  recorded_paths?: Array<{ frames: Array<{ pose: Pose }> }> | null
 }
 
 export default function SessionPage() {
@@ -79,6 +96,10 @@ export default function SessionPage() {
   const [repJustCompleted, setRepJustCompleted] = useState(false)
   const [holdProgress, setHoldProgress] = useState(0)
   const [holdMissed, setHoldMissed] = useState(false)
+  // One spoken "now lower" cue per earned hold (cycle exercises)
+  const holdCueSpokenRef = useRef(false)
+  // Therapist's recorded target pose, drawn as a ghost skeleton to match
+  const [ghostPose, setGhostPose] = useState<Pose | null>(null)
   const [shouldersVisible, setShouldersVisible] = useState(true)
   const [hasSpoken, setHasSpoken] = useState(false)
   const [instructionBoxPos, setInstructionBoxPos] = useState({ x: 0, y: 0 })
@@ -99,7 +120,7 @@ export default function SessionPage() {
         // Fetch the first active exercise (or a specific exercise_id from query params)
         const { data, error } = await supabase
           .from('exercises')
-          .select('id, name, description, exercise_type, pose_criteria, target_reps, hold_duration_ms, feedback_messages')
+          .select('id, name, description, exercise_type, pose_criteria, target_reps, hold_duration_ms, feedback_messages, recorded_paths')
           .eq('is_active', true)
           .order('created_at', { ascending: false })
           .limit(1)
@@ -113,6 +134,9 @@ export default function SessionPage() {
 
         if (data) {
           setExercise(data as Exercise)
+          // Ghost skeleton: the therapist's recorded target pose, shown behind
+          // the patient's live skeleton as a visual goal.
+          setGhostPose(pickReferencePose(data.recorded_paths, data.pose_criteria))
           // Dynamic exercises with a known rest pose count full movement cycles
           // (rest → target → hold → back to rest); everything else counts holds.
           const cyclic =
@@ -352,11 +376,26 @@ export default function SessionPage() {
       let displayFeedback = analysis.feedback
       let displayMessage = analysis.message
       if (phase === 'holding') {
-        displayMessage = exercise.feedback_messages?.hold || 'Hold it…'
+        if (rep.holdEarned) {
+          // Hold already earned — stop saying "hold", coach the return
+          displayFeedback = 'good'
+          displayMessage = exercise.feedback_messages?.return || 'Great — now lower back to start slowly'
+        } else {
+          displayMessage = exercise.feedback_messages?.hold || 'Hold it…'
+        }
       } else if (phase === 'lowering') {
         // Out of the target band on purpose — coach the return, don't scold
         displayFeedback = 'good'
         displayMessage = exercise.feedback_messages?.return || 'Good — now return to start slowly'
+      }
+
+      // Speak the "now lower" cue once per earned hold — the patient is mid-
+      // exercise and may not be looking at the screen.
+      if (phase && rep.holdEarned && !holdCueSpokenRef.current) {
+        holdCueSpokenRef.current = true
+        speak(exercise.feedback_messages?.return || 'Great! Now lower back to start slowly.')
+      } else if (!rep.holdEarned) {
+        holdCueSpokenRef.current = false
       }
       setPostureFeedback(displayFeedback)
       setFeedbackMessage(displayMessage)
@@ -672,6 +711,51 @@ export default function SessionPage() {
           viewBox={`0 0 ${videoRef.current.videoWidth} ${videoRef.current.videoHeight}`}
           style={{ width: '100%', height: '100%', transform: 'scaleX(-1)' }}
         >
+
+          {/* Ghost skeleton — the therapist's target pose, anchored to the
+              patient's shoulders and scaled to their body so it overlays where
+              their limbs should be */}
+          {ghostPose && (() => {
+            const find = (pose: Pose, name: string) => {
+              const kp = pose.keypoints.find((k) => k.name === name)
+              return kp && (kp.score ?? 0) > 0.3 ? kp : null
+            }
+            const pls = find(detectedPose, 'left_shoulder')
+            const prs = find(detectedPose, 'right_shoulder')
+            const gls = find(ghostPose, 'left_shoulder')
+            const grs = find(ghostPose, 'right_shoulder')
+            if (!pls || !prs || !gls || !grs) return null
+
+            const pMid = { x: (pls.x + prs.x) / 2, y: (pls.y + prs.y) / 2 }
+            const gMid = { x: (gls.x + grs.x) / 2, y: (gls.y + grs.y) / 2 }
+            const gWidth = Math.hypot(gls.x - grs.x, gls.y - grs.y)
+            if (gWidth < 1) return null
+            const scale = Math.hypot(pls.x - prs.x, pls.y - prs.y) / gWidth
+            const tx = (p: { x: number; y: number }) => ({
+              x: pMid.x + (p.x - gMid.x) * scale,
+              y: pMid.y + (p.y - gMid.y) * scale,
+            })
+
+            return GHOST_CONNECTIONS.map(([start, end], i) => {
+              const s = find(ghostPose, start)
+              const e = find(ghostPose, end)
+              if (!s || !e) return null
+              const s2 = tx(s)
+              const e2 = tx(e)
+              return (
+                <line
+                  key={`ghost-${i}`}
+                  x1={s2.x} y1={s2.y}
+                  x2={e2.x} y2={e2.y}
+                  stroke="white"
+                  strokeWidth="5"
+                  strokeLinecap="round"
+                  strokeDasharray="14 10"
+                  opacity="0.45"
+                />
+              )
+            })
+          })()}
 
           {/* Live skeleton — solid colored lines reflecting posture feedback */}
           {(() => {

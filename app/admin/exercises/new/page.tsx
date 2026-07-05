@@ -370,6 +370,12 @@ export default function NewExercisePage() {
 
                 {recordingState === 'reviewing' && (
                   <>
+                    {recordings.length < 2 && (
+                      <p className="w-full text-sm text-[#C4612F] font-medium">
+                        Tip: record 2–3 demos — tolerances are derived from your own
+                        variation between takes, so validation fits real movement better.
+                      </p>
+                    )}
                     <button
                       onClick={() => setRecordingState('setup')}
                       className="px-6 py-3 bg-[#C4612F] hover:bg-[#A94E22] text-white rounded-full font-medium transition-colors"

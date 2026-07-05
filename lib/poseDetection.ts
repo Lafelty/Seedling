@@ -261,6 +261,9 @@ export interface PoseCriteria {
   targetBodyParts: string[];
   criteria: AngleCriterion[];
   levelingRules: LevelingRule[];
+  // Difficulty dial: scales every angle band and leveling tolerance without
+  // touching the stored angles. >1 = more lenient, <1 = stricter. Default 1.
+  toleranceMultiplier?: number;
 }
 
 export interface ExerciseAnalysis {
@@ -354,6 +357,9 @@ export function analyzeExercise(
     };
   }
 
+  // Difficulty dial — widens (or tightens) every band around its target
+  const m = poseCriteria?.toleranceMultiplier ?? 1;
+
   // Check angle criteria, tracking the rest zone alongside the target band
   let restEligible = 0;
   let restMet = 0;
@@ -371,10 +377,12 @@ export function analyzeExercise(
     }
 
     const angle = calculateAngle(pointA, joint, pointB);
+    const minAngle = criterion.targetAngle - (criterion.targetAngle - criterion.minAngle) * m;
+    const maxAngle = criterion.targetAngle + (criterion.maxAngle - criterion.targetAngle) * m;
 
-    if (angle < criterion.minAngle) {
+    if (angle < minAngle) {
       failedCriteria.push(`${criterion.joint}_tooLow`);
-    } else if (angle > criterion.maxAngle) {
+    } else if (angle > maxAngle) {
       failedCriteria.push(`${criterion.joint}_tooHigh`);
     }
 
@@ -399,7 +407,7 @@ export function analyzeExercise(
 
     if (joint1 && joint2) {
       const diff = Math.abs(joint1.y - joint2.y);
-      if (diff > rule.maxDifference) {
+      if (diff > rule.maxDifference * m) {
         failedCriteria.push(`leveling_${rule.joints[0]}_${rule.joints[1]}`);
       }
     }
@@ -602,8 +610,11 @@ export function deriveCriteriaFromRecordings(demos: RecordedDemoFrames[]): PoseC
   const usable = demos.filter((d) => d.frames.length >= 2);
   const totalFrames = usable.reduce((sum, d) => sum + d.frames.length, 0);
 
-  // Pool per-demo stats into one weighted view per joint.
+  // Pool per-demo stats into one weighted view per joint, keeping the
+  // per-demo stats around: the spread between demos is the therapist's own
+  // natural variation, which sizes the tolerance bands below.
   const jointStats: Record<string, JointDemoStats> = {};
+  const perDemoStats: Record<string, JointDemoStats[]> = {};
   if (totalFrames > 0) {
     for (const [joint, refs] of Object.entries(ANATOMICAL_REFERENCES)) {
       const perDemo = usable
@@ -621,6 +632,7 @@ export function deriveCriteriaFromRecordings(demos: RecordedDemoFrames[]): PoseC
         p95: wmean((s) => s.p95),
         median: wmean((s) => s.median),
       };
+      perDemoStats[joint] = perDemo;
     }
   }
 
@@ -634,8 +646,20 @@ export function deriveCriteriaFromRecordings(demos: RecordedDemoFrames[]): PoseC
       // Target = the movement extreme furthest from the rest pose. Since the
       // sweep is ≥ 25°, that extreme is ≥ 12.5° from rest, so a 10–20° half-band
       // scaled to the movement always leaves the rest pose outside the band.
-      const target = Math.abs(s.p95 - s.start) >= Math.abs(s.p5 - s.start) ? s.p95 : s.p5;
-      const halfBand = Math.min(20, Math.max(10, Math.abs(target - s.start) * 0.4));
+      const usesP95 = Math.abs(s.p95 - s.start) >= Math.abs(s.p5 - s.start);
+      const target = usesP95 ? s.p95 : s.p5;
+      let halfBand = Math.min(20, Math.max(10, Math.abs(target - s.start) * 0.4));
+
+      // With 2+ demos, widen the band to cover the therapist's own demo-to-demo
+      // variation at the target — capped so the rest pose stays outside it.
+      const demos = perDemoStats[joint] ?? [];
+      if (demos.length >= 2) {
+        const extremes = demos.map((d) => (usesP95 ? d.p95 : d.p5));
+        const spread = Math.max(...extremes) - Math.min(...extremes);
+        const cap = Math.max(10, Math.min(25, Math.abs(target - s.start) * 0.7));
+        halfBand = Math.min(cap, Math.max(halfBand, spread / 2 + 8));
+      }
+
       criteria.push({
         joint,
         targetAngle: Math.round(target),
@@ -648,7 +672,16 @@ export function deriveCriteriaFromRecordings(demos: RecordedDemoFrames[]): PoseC
   } else {
     // Static hold: the whole recording is the target pose.
     for (const [joint, s] of Object.entries(jointStats)) {
-      const halfBand = Math.max(10, (s.p95 - s.p5) / 2 + 5);
+      let halfBand = Math.max(10, (s.p95 - s.p5) / 2 + 5);
+
+      // With 2+ demos, cover the drift between the demos' median poses too.
+      const demos = perDemoStats[joint] ?? [];
+      if (demos.length >= 2) {
+        const medians = demos.map((d) => d.median);
+        const spread = Math.max(...medians) - Math.min(...medians);
+        halfBand = Math.min(30, Math.max(halfBand, spread / 2 + 8));
+      }
+
       criteria.push({
         joint,
         targetAngle: Math.round(s.median),
@@ -672,15 +705,54 @@ export function deriveCriteriaFromRecordings(demos: RecordedDemoFrames[]): PoseC
 }
 
 /**
+ * Pick the recorded frame that best shows the target pose — used as the ghost
+ * skeleton patients see during a session. For dynamic exercises that's the
+ * frame where the primary joint is closest to its target angle; for static
+ * holds (or missing criteria) the middle frame of the demo.
+ */
+export function pickReferencePose(
+  demos: RecordedDemoFrames[] | null | undefined,
+  poseCriteria: PoseCriteria | null | undefined
+): Pose | null {
+  const demo = demos?.find((d) => d.frames && d.frames.length > 0);
+  if (!demo) return null;
+
+  const middle = demo.frames[Math.floor(demo.frames.length / 2)].pose;
+  const crit = poseCriteria?.criteria?.[0];
+  if (!crit) return middle;
+
+  let best: Pose | null = null;
+  let bestDiff = Infinity;
+  for (const frame of demo.frames) {
+    const joint = getKeypoint(frame.pose, crit.joint);
+    const a = getKeypoint(frame.pose, crit.relativeTo[0]);
+    const b = getKeypoint(frame.pose, crit.relativeTo[1]);
+    if (!joint || !a || !b) continue;
+    const diff = Math.abs(calculateAngle(a, joint, b) - crit.targetAngle);
+    if (diff < bestDiff) {
+      bestDiff = diff;
+      best = frame.pose;
+    }
+  }
+  return best ?? middle;
+}
+
+/**
  * Generic rep counter for any exercise type
  * Works with both static holds and dynamic movements
  */
 export class GenericRepCounter {
   private wasInPosition = false;
   private positionHeldSince = 0;
+  private lastInPositionAt = 0;
+  private countedThisHold = false;
   private repCount = 0;
   private lastTransitionTime = 0;
   private readonly minRepInterval = 1000; // ms cooldown between reps
+  // Pose keypoints jitter frame to frame; a single out-of-tolerance frame must
+  // not reset an otherwise steady hold. Only treat the position as exited after
+  // the criteria have failed continuously for this long.
+  private readonly exitGraceMs = 300;
   private holdThreshold: number;
 
   constructor(holdThresholdMs: number = 500) {
@@ -692,43 +764,66 @@ export class GenericRepCounter {
     justCompleted: boolean;
     holdProgress: number;
     holdMissed: boolean;
+    holdEarned: boolean;
   } {
     const now = Date.now();
     const inPosition = analysis.meetsAllCriteria;
     let justCompleted = false;
     let holdMissed = false;
 
-    if (inPosition && !this.wasInPosition) {
-      // Entered correct position
-      this.wasInPosition = true;
-      this.positionHeldSince = now;
-    } else if (!inPosition && this.wasInPosition) {
-      // Exited correct position
-      const heldFor = this.positionHeldSince > 0 ? now - this.positionHeldSince : 0;
-
-      if (heldFor >= this.holdThreshold && now - this.lastTransitionTime >= this.minRepInterval) {
+    if (inPosition) {
+      this.lastInPositionAt = now;
+      if (!this.wasInPosition) {
+        // Entered correct position
+        this.wasInPosition = true;
+        this.positionHeldSince = now;
+        this.countedThisHold = false;
+      }
+      // Count the rep the moment the hold is earned — while the patient is
+      // still holding — so the app reacts immediately instead of waiting for
+      // them to leave the position.
+      if (
+        !this.countedThisHold &&
+        now - this.positionHeldSince >= this.holdThreshold &&
+        now - this.lastTransitionTime >= this.minRepInterval
+      ) {
         this.repCount++;
         justCompleted = true;
+        this.countedThisHold = true;
         this.lastTransitionTime = now;
-      } else if (heldFor < this.holdThreshold) {
+      }
+    } else if (this.wasInPosition && now - this.lastInPositionAt >= this.exitGraceMs) {
+      // Really exited (out of position past the jitter grace window)
+      const heldFor =
+        this.positionHeldSince > 0 ? this.lastInPositionAt - this.positionHeldSince : 0;
+      if (!this.countedThisHold && heldFor < this.holdThreshold) {
         holdMissed = true;
       }
-
       this.wasInPosition = false;
       this.positionHeldSince = 0;
+      this.countedThisHold = false;
     }
 
-    const holdProgress =
-      this.wasInPosition && this.positionHeldSince > 0
+    const holdProgress = this.countedThisHold
+      ? 1
+      : this.wasInPosition && this.positionHeldSince > 0
         ? Math.min(1, (now - this.positionHeldSince) / this.holdThreshold)
         : 0;
 
-    return { repCount: this.repCount, justCompleted, holdProgress, holdMissed };
+    return {
+      repCount: this.repCount,
+      justCompleted,
+      holdProgress,
+      holdMissed,
+      holdEarned: this.countedThisHold,
+    };
   }
 
   reset() {
     this.wasInPosition = false;
     this.positionHeldSince = 0;
+    this.lastInPositionAt = 0;
+    this.countedThisHold = false;
     this.repCount = 0;
     this.lastTransitionTime = 0;
   }
@@ -750,10 +845,15 @@ export type CyclePhase = 'rest' | 'lifting' | 'holding' | 'lowering';
 export class CycleRepCounter {
   private phase: CyclePhase = 'rest';
   private holdStart = 0;
+  private lastAtTargetAt = 0;
   private holdSatisfied = false;
   private repCount = 0;
   private lastRepTime = 0;
   private readonly minRepInterval = 1000; // ms cooldown between reps
+  // Keypoint jitter makes borderline frames flicker out of tolerance; a hold
+  // only ends after the target criteria fail continuously for this long, so a
+  // steady hold isn't reset by a single noisy frame.
+  private readonly exitGraceMs = 300;
   private holdThreshold: number;
 
   constructor(holdThresholdMs: number = 500) {
@@ -765,6 +865,7 @@ export class CycleRepCounter {
     justCompleted: boolean;
     holdProgress: number;
     holdMissed: boolean;
+    holdEarned: boolean;
     phase: CyclePhase;
   } {
     const now = Date.now();
@@ -787,6 +888,7 @@ export class CycleRepCounter {
         if (atTarget) {
           this.phase = 'holding';
           this.holdStart = now;
+          this.lastAtTargetAt = now;
           this.holdSatisfied = false;
         } else if (!atRest) {
           this.phase = 'lifting';
@@ -797,6 +899,7 @@ export class CycleRepCounter {
         if (atTarget) {
           this.phase = 'holding';
           this.holdStart = now;
+          this.lastAtTargetAt = now;
           this.holdSatisfied = false;
         } else if (atRest) {
           this.phase = 'rest'; // returned without reaching the target
@@ -805,8 +908,10 @@ export class CycleRepCounter {
 
       case 'holding':
         if (atTarget) {
+          this.lastAtTargetAt = now;
           if (now - this.holdStart >= this.holdThreshold) this.holdSatisfied = true;
-        } else {
+        } else if (now - this.lastAtTargetAt >= this.exitGraceMs) {
+          // Really left the target band (past the jitter grace window)
           if (!this.holdSatisfied) holdMissed = true;
           if (atRest) {
             completeIfEarned();
@@ -822,6 +927,7 @@ export class CycleRepCounter {
           // Came back up — resume the hold (an already-earned hold stays earned)
           this.phase = 'holding';
           this.holdStart = now;
+          this.lastAtTargetAt = now;
         } else if (atRest) {
           completeIfEarned();
           this.phase = 'rest';
@@ -830,18 +936,26 @@ export class CycleRepCounter {
     }
 
     const holdProgress =
-      this.phase === 'holding'
-        ? Math.min(1, (now - this.holdStart) / this.holdThreshold)
-        : this.phase === 'lowering' && this.holdSatisfied
-          ? 1
+      this.holdSatisfied
+        ? 1
+        : this.phase === 'holding'
+          ? Math.min(1, (now - this.holdStart) / this.holdThreshold)
           : 0;
 
-    return { repCount: this.repCount, justCompleted, holdProgress, holdMissed, phase: this.phase };
+    return {
+      repCount: this.repCount,
+      justCompleted,
+      holdProgress,
+      holdMissed,
+      holdEarned: this.holdSatisfied,
+      phase: this.phase,
+    };
   }
 
   reset() {
     this.phase = 'rest';
     this.holdStart = 0;
+    this.lastAtTargetAt = 0;
     this.holdSatisfied = false;
     this.repCount = 0;
     this.lastRepTime = 0;

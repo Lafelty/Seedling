@@ -117,14 +117,22 @@ export default function SessionPage() {
       try {
         const supabase = createClient()
 
-        // Fetch the first active exercise (or a specific exercise_id from query params)
-        const { data, error } = await supabase
+        // /levels passes ?exercise=<id>; without it fall back to the most
+        // recent active exercise (classic single-exercise session).
+        const requestedId = new URLSearchParams(window.location.search).get('exercise')
+
+        let query = supabase
           .from('exercises')
           .select('id, name, description, exercise_type, pose_criteria, target_reps, hold_duration_ms, feedback_messages, recorded_paths')
           .eq('is_active', true)
-          .order('created_at', { ascending: false })
-          .limit(1)
-          .single()
+
+        if (requestedId) {
+          query = query.eq('id', requestedId)
+        } else {
+          query = query.order('created_at', { ascending: false }).limit(1)
+        }
+
+        const { data, error } = await query.single()
 
         if (error) {
           console.error('Error loading exercise:', error)

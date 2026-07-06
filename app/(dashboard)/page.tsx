@@ -354,7 +354,7 @@ export default function DashboardPage() {
         {/* Begin Session Button */}
         <section className="px-6 py-8 animate-fadeInUp" style={{ animationDelay: '400ms' }}>
           <div className="max-w-2xl mx-auto">
-            <Link href="/session" className="btn btn-primary w-full text-center flex items-center justify-center gap-2">
+            <Link href="/levels" className="btn btn-primary w-full text-center flex items-center justify-center gap-2">
               Begin today's session
               <svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="2">
                 <path d="M5 10h10M10 5l5 5-5 5" />

@@ -547,6 +547,41 @@ export default function SessionPage() {
     }
   }
 
+  // Fire-and-forget guardian email — the server decides whether to send
+  // based on the patient's profile toggle. Never blocks the celebration.
+  async function notifyGuardian() {
+    try {
+      const supabase = createClient()
+      const { data: { session } } = await supabase.auth.getSession()
+      const token = session?.access_token
+      if (!token) return
+
+      const durationSeconds = sessionStartTimeRef.current
+        ? Math.floor((Date.now() - sessionStartTimeRef.current.getTime()) / 1000)
+        : 0
+      const formScore = totalActiveTimeRef.current > 0
+        ? Math.round((goodPostureTimeRef.current / totalActiveTimeRef.current) * 100)
+        : null
+
+      fetch('/api/notify-guardian', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          exerciseName: exercise?.name,
+          reps: repCountRef.current,
+          targetReps: TARGET_REPS,
+          durationSeconds,
+          formScore,
+        }),
+      }).catch((err) => console.error('Guardian notify failed:', err))
+    } catch (err) {
+      console.error('Guardian notify failed:', err)
+    }
+  }
+
   async function completeSession() {
     setSessionState('completed')
     updateProgress(1) // Award 1 star locally
@@ -557,6 +592,8 @@ export default function SessionPage() {
     speak('Session complete! Great job!')
 
     await saveSessionToDb(true)
+
+    notifyGuardian()
 
     // Trigger confetti celebration
     const duration = 3000;

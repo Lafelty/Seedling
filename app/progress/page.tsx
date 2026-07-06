@@ -17,6 +17,50 @@ interface DaySession {
   exercise_name: string;
 }
 
+type DayMood = 'great' | 'happy' | 'partial' | 'rest' | 'future';
+
+const MOOD_BG: Record<DayMood, string> = {
+  great: '#F0DC8B',
+  happy: '#AED8A0',
+  partial: '#7BAE89',
+  rest: '#D3D6D0',
+  future: 'rgba(107, 143, 122, 0.10)',
+};
+
+function DayFace({ mood }: { mood: DayMood }) {
+  const face = '#2F3B33';
+  return (
+    <svg viewBox="0 0 48 48" width="100%" height="100%" aria-hidden="true" style={{ display: 'block', opacity: mood === 'future' ? 0.25 : 1 }}>
+      {mood === 'great' ? (
+        <>
+          <circle cx="16.5" cy="19" r="3" fill={face} />
+          <circle cx="31.5" cy="19" r="3" fill={face} />
+          <path d="M14.5 27 q9.5 13 19 0 z" fill={face} />
+        </>
+      ) : mood === 'happy' ? (
+        <>
+          <circle cx="16.5" cy="19.5" r="2.6" fill={face} />
+          <circle cx="31.5" cy="19.5" r="2.6" fill={face} />
+          <path d="M16 27.5 q8 7.5 16 0" fill="none" stroke={face} strokeWidth="3" strokeLinecap="round" />
+        </>
+      ) : mood === 'partial' ? (
+        <>
+          <circle cx="16.5" cy="19.5" r="2.6" fill={face} />
+          <circle cx="31.5" cy="19.5" r="2.6" fill={face} />
+          <line x1="17" y1="29" x2="31" y2="29" stroke={face} strokeWidth="3" strokeLinecap="round" />
+        </>
+      ) : (
+        // rest / future: sleepy dash-dot eyes, flat mouth
+        <>
+          <line x1="13.5" y1="19.5" x2="19" y2="19.5" stroke={face} strokeWidth="3" strokeLinecap="round" />
+          <circle cx="31.5" cy="19.5" r="2.6" fill={face} />
+          <line x1="18" y1="29" x2="30" y2="29" stroke={face} strokeWidth="3" strokeLinecap="round" />
+        </>
+      )}
+    </svg>
+  );
+}
+
 export default function ProgressPage() {
   const [progress, setProgress] = useState<ProgressData | null>(null);
   const [sessions, setSessions] = useState<DaySession[]>([]);
@@ -217,7 +261,7 @@ export default function ProgressPage() {
         </div>
 
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: 'var(--space-2)', marginBottom: 'var(--space-4)' }}>
-          {['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map((day) => (
+          {['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'].map((day) => (
             <div key={day} style={{ textAlign: 'center', fontSize: 'var(--text-xs)', color: 'var(--primary)', fontWeight: 700 }}>
               {day}
             </div>
@@ -225,7 +269,7 @@ export default function ProgressPage() {
         </div>
 
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: 'var(--space-2)' }}>
-          {Array.from({ length: daysInMonth[0].getDay() }).map((_, i) => (
+          {Array.from({ length: (daysInMonth[0].getDay() + 6) % 7 }).map((_, i) => (
             <div key={`empty-${i}`} />
           ))}
 
@@ -234,50 +278,71 @@ export default function ProgressPage() {
             const isFuture = day > today && !isToday;
             const dayStr = format(day, 'yyyy-MM-dd');
             const daySessions = sessionsByDay.get(dayStr) ?? [];
+            const completedSessions = daySessions.filter(s => s.completed_at);
             const hasCompleted = progress.completedDates.includes(dayStr)
-              || daySessions.some(s => s.completed_at);
+              || completedSessions.length > 0;
             const hasPartial = !hasCompleted && daySessions.length > 0;
             const isSelected = dayStr === selectedDay;
 
+            const formScores = completedSessions
+              .map(s => s.form_quality_score)
+              .filter((v): v is number => v != null);
+            const avgForm = formScores.length > 0
+              ? formScores.reduce((a, b) => a + b, 0) / formScores.length
+              : null;
+            const isGreat = hasCompleted
+              && (completedSessions.length >= 2 || (avgForm != null && avgForm >= 80));
+
+            const mood: DayMood = isFuture
+              ? 'future'
+              : isGreat
+              ? 'great'
+              : hasCompleted
+              ? 'happy'
+              : hasPartial
+              ? 'partial'
+              : 'rest';
+
             return (
-              <button
-                key={day.toISOString()}
-                onClick={() => !isFuture && setSelectedDay(dayStr)}
-                disabled={isFuture}
-                title={hasCompleted ? 'Session complete — tap to view' : hasPartial ? 'Partial session — tap to view' : isFuture ? '' : 'Tap to view this day'}
-                style={{
-                  aspectRatio: '1',
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  borderRadius: '50%',
-                  fontSize: 'var(--text-sm)',
-                  fontWeight: 600,
-                  background: hasCompleted
-                    ? 'linear-gradient(160deg, #6B8F7A, var(--primary))'
-                    : hasPartial
-                    ? 'rgba(74, 107, 90, 0.20)'
-                    : isFuture
-                    ? 'transparent'
-                    : 'rgba(107, 143, 122, 0.12)',
-                  color: hasCompleted ? 'white' : hasPartial ? 'var(--primary)' : '#5A7D69',
-                  border: isToday ? '2px solid var(--primary)' : '1px solid transparent',
-                  boxShadow: isSelected
-                    ? '0 0 0 2px var(--surface), 0 0 0 4px #C9B88A'
-                    : 'none',
-                  opacity: isFuture ? 0.3 : 1,
-                  cursor: isFuture ? 'default' : 'pointer',
-                  transition: 'transform var(--dur-fast, 150ms) ease, box-shadow var(--dur-fast, 150ms) ease',
-                }}
-              >
-                {hasCompleted ? (
-                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                    <path d="M11 20A7 7 0 0 1 9.8 6.1C15.5 5 17 4.48 19 2c1 2 2 4.18 2 8 0 5.5-4.78 10-10 10Z" />
-                  </svg>
-                ) : (
-                  format(day, 'd')
-                )}
-              </button>
+              <div key={day.toISOString()} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '4px' }}>
+                <span
+                  style={{
+                    fontSize: 'var(--text-xs)',
+                    fontWeight: isToday ? 700 : 600,
+                    color: isToday ? 'var(--primary)' : 'var(--muted)',
+                    opacity: isFuture ? 0.5 : 1,
+                  }}
+                >
+                  {format(day, 'd')}
+                </span>
+                <button
+                  onClick={() => !isFuture && setSelectedDay(dayStr)}
+                  disabled={isFuture}
+                  aria-label={format(day, 'MMMM d')}
+                  title={
+                    mood === 'great' ? 'Amazing day — tap to view'
+                    : mood === 'happy' ? 'Session complete — tap to view'
+                    : mood === 'partial' ? 'Partial session — tap to view'
+                    : isFuture ? '' : 'Rest day — tap to view'
+                  }
+                  style={{
+                    width: '100%',
+                    maxWidth: '52px',
+                    aspectRatio: '1',
+                    padding: 0,
+                    borderRadius: '50%',
+                    background: MOOD_BG[mood],
+                    border: 'none',
+                    boxShadow: isSelected
+                      ? '0 0 0 2px var(--surface), 0 0 0 4px #C9B88A'
+                      : 'none',
+                    cursor: isFuture ? 'default' : 'pointer',
+                    transition: 'transform var(--dur-fast, 150ms) ease, box-shadow var(--dur-fast, 150ms) ease',
+                  }}
+                >
+                  <DayFace mood={mood} />
+                </button>
+              </div>
             );
           })}
         </div>
@@ -285,16 +350,24 @@ export default function ProgressPage() {
         {/* Legend */}
         <div style={{ display: 'flex', gap: 'var(--space-4)', flexWrap: 'wrap', marginTop: 'var(--space-4)', fontSize: 'var(--text-xs)', color: 'var(--muted)' }}>
           <span style={{ display: 'inline-flex', alignItems: 'center', gap: 'var(--space-1)' }}>
-            <span style={{ width: '10px', height: '10px', borderRadius: '50%', background: 'var(--primary)', display: 'inline-block' }} />
+            <span style={{ width: '14px', height: '14px', borderRadius: '50%', background: MOOD_BG.great, display: 'inline-block' }} />
+            Amazing day
+          </span>
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 'var(--space-1)' }}>
+            <span style={{ width: '14px', height: '14px', borderRadius: '50%', background: MOOD_BG.happy, display: 'inline-block' }} />
             Session complete
           </span>
           <span style={{ display: 'inline-flex', alignItems: 'center', gap: 'var(--space-1)' }}>
-            <span style={{ width: '10px', height: '10px', borderRadius: '50%', background: 'rgba(74, 107, 90, 0.16)', border: '1px solid var(--primary)', display: 'inline-block' }} />
+            <span style={{ width: '14px', height: '14px', borderRadius: '50%', background: MOOD_BG.partial, display: 'inline-block' }} />
             Partial session
           </span>
           <span style={{ display: 'inline-flex', alignItems: 'center', gap: 'var(--space-1)' }}>
-            <span style={{ width: '10px', height: '10px', borderRadius: '50%', border: '2px solid #C9B88A', display: 'inline-block' }} />
-            Selected day
+            <span style={{ width: '14px', height: '14px', borderRadius: '50%', background: MOOD_BG.rest, display: 'inline-block' }} />
+            Rest day
+          </span>
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 'var(--space-1)' }}>
+            <span style={{ width: '14px', height: '14px', borderRadius: '50%', border: '2px solid #C9B88A', display: 'inline-block' }} />
+            Selected
           </span>
         </div>
       </div>

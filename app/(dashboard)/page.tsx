@@ -4,7 +4,7 @@ import Link from 'next/link';
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { createClient } from '@/lib/supabase/client';
-import { getProgress, getDayStrip, markOnboardingComplete, setProgressUid, type ProgressData, type DayStatus } from '@/lib/progress';
+import { getProgress, getDayStrip, markOnboardingComplete, setProgressUid, reconcileStars, type ProgressData, type DayStatus } from '@/lib/progress';
 
 export const dynamic = 'force-dynamic';
 
@@ -36,15 +36,40 @@ export default function DashboardPage() {
           setDayStrip(getDayStrip());
 
           if (user) {
-            const { data: profile } = await supabase
+            const { data: profile, error: profileError } = await supabase
               .from('profiles')
-              .select('is_admin')
+              .select('is_admin, total_stars')
               .eq('id', user.id)
               .single();
+
+            if (profileError) {
+              // total_stars doesn't exist until supabase/stars_migration.sql
+              // has run — fall back to the pre-migration admin check.
+              console.error('Error loading profile (run stars_migration.sql?):', profileError);
+              const { data: fallback } = await supabase
+                .from('profiles')
+                .select('is_admin')
+                .eq('id', user.id)
+                .single();
+              if (fallback?.is_admin) setIsAdmin(true);
+              return;
+            }
 
             if (profile?.is_admin) {
               setIsAdmin(true);
             }
+
+            // Database is the source of truth for stars (admins can edit it);
+            // seed it once from legacy localStorage progress.
+            const { totalStars, seedDb } = reconcileStars(profile?.total_stars ?? 0);
+            if (seedDb) {
+              await supabase
+                .from('profiles')
+                .update({ total_stars: totalStars })
+                .eq('id', user.id);
+            }
+            setProgress(getProgress());
+            if (totalStars > 0) setShowEmptyState(false);
           }
         }).catch((error) => {
           console.error('Error checking auth:', error);
@@ -81,7 +106,7 @@ export default function DashboardPage() {
         {/* Skeleton Garden */}
         <section className="px-6 py-12">
           <div className="max-w-2xl mx-auto text-center">
-            <div className="skeleton mx-auto" style={{ width: '200px', height: '280px', marginBottom: '32px', borderRadius: 'var(--radius-lg)' }} />
+            <div className="skeleton mx-auto" style={{ width: '200px', height: '320px', marginBottom: '32px', borderRadius: 'var(--radius-lg)' }} />
             <div className="skeleton mx-auto" style={{ width: '200px', height: '28px', marginBottom: '8px' }} />
             <div className="skeleton mx-auto" style={{ width: '280px', height: '20px' }} />
           </div>
@@ -362,7 +387,7 @@ export default function DashboardPage() {
 
 function SoilIllustration({ stage }: { stage: 'seed' | 'sapling' | 'young' | 'mature' }) {
   return (
-    <div className="relative w-full max-w-sm mx-auto" style={{ height: '280px' }}>
+    <div className="relative w-full max-w-sm mx-auto" style={{ height: '320px' }}>
       {/* Soft ambient glow behind the garden */}
       <div
         style={{
@@ -413,7 +438,7 @@ function SoilIllustration({ stage }: { stage: 'seed' | 'sapling' | 'young' | 'ma
 
 function SeedStage() {
   return (
-    <svg width="80" height="130" viewBox="0 0 80 130">
+    <svg width="104" height="169" viewBox="0 0 80 130">
       {/* Sprout stem */}
       <path d="M40 108 Q40 92 40 80" stroke="#4A6B5A" strokeWidth="3.5" fill="none" strokeLinecap="round" />
       {/* Left leaf */}
@@ -426,7 +451,7 @@ function SeedStage() {
 
 function SaplingStage() {
   return (
-    <svg width="100" height="150" viewBox="0 0 100 150">
+    <svg width="130" height="195" viewBox="0 0 100 150">
       {/* Trunk */}
       <path d="M50 128 L50 74" stroke="#8B6F47" strokeWidth="5" strokeLinecap="round" />
       {/* Foliage — layered greens */}
@@ -440,7 +465,7 @@ function SaplingStage() {
 
 function YoungTreeStage() {
   return (
-    <svg width="140" height="185" viewBox="0 0 140 185">
+    <svg width="182" height="240" viewBox="0 0 140 185">
       {/* Trunk and branches */}
       <path d="M70 163 L70 72" stroke="#8B6F47" strokeWidth="7" strokeLinecap="round" />
       <path d="M70 118 L46 94" stroke="#8B6F47" strokeWidth="5" strokeLinecap="round" />
@@ -457,7 +482,7 @@ function YoungTreeStage() {
 
 function MatureTreeStage() {
   return (
-    <svg width="160" height="205" viewBox="0 0 160 205">
+    <svg width="208" height="266" viewBox="0 0 160 205">
       {/* Trunk and branches */}
       <path d="M80 183 L80 84" stroke="#8B6F47" strokeWidth="10" strokeLinecap="round" />
       <path d="M80 132 L42 102" stroke="#8B6F47" strokeWidth="6" strokeLinecap="round" />

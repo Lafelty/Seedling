@@ -541,7 +541,11 @@ export default function SessionPage() {
 
   async function completeSession() {
     setSessionState('completed')
-    updateProgress(1) // Award 1 star
+    updateProgress(1) // Award 1 star locally
+    // Mirror the star into the database (atomic increment via RPC)
+    createClient().rpc('award_stars', { star_count: 1 }).then(({ error }) => {
+      if (error) console.error('Error saving star to database:', error)
+    })
     speak('Session complete! Great job!')
 
     await saveSessionToDb(true)

@@ -18,11 +18,21 @@ interface Exercise {
   created_at: string
 }
 
+interface Profile {
+  id: string
+  email: string
+  name: string | null
+  total_stars: number
+  is_admin: boolean
+  created_at: string
+}
+
 export default function AdminDashboard() {
   const router = useRouter()
   const [loading, setLoading] = useState(true)
   const [isAdmin, setIsAdmin] = useState(false)
   const [exercises, setExercises] = useState<Exercise[]>([])
+  const [profiles, setProfiles] = useState<Profile[]>([])
 
   useEffect(() => {
     checkAdminAndLoadExercises()
@@ -59,6 +69,19 @@ export default function AdminDashboard() {
 
     if (exercisesData) {
       setExercises(exercisesData as Exercise[])
+    }
+
+    // Load users (requires supabase/stars_migration.sql: total_stars column
+    // + admin visibility on all profiles)
+    const { data: profilesData, error: profilesError } = await supabase
+      .from('profiles')
+      .select('id, email, name, total_stars, is_admin, created_at')
+      .order('created_at', { ascending: false })
+
+    if (profilesError) {
+      console.error('Error loading profiles (run stars_migration.sql?):', profilesError)
+    } else if (profilesData) {
+      setProfiles(profilesData as Profile[])
     }
 
     setLoading(false)
@@ -209,6 +232,27 @@ export default function AdminDashboard() {
               {exercises.filter(e => e.is_active).length}
             </p>
           </div>
+          <div style={{
+            background: 'var(--surface)',
+            borderRadius: 'var(--radius-xl)',
+            padding: 'var(--space-6)',
+            border: '1px solid var(--border)',
+          }}>
+            <p style={{
+              fontSize: 'var(--text-sm)',
+              color: 'var(--muted)',
+              marginBottom: 'var(--space-2)',
+            }}>
+              Patients
+            </p>
+            <p style={{
+              fontSize: 'var(--text-3xl)',
+              fontWeight: 700,
+              color: 'var(--ink)',
+            }}>
+              {profiles.length}
+            </p>
+          </div>
         </div>
 
         {/* Exercises Table */}
@@ -319,6 +363,35 @@ export default function AdminDashboard() {
               </table>
             </div>
           )}
+        </div>
+
+        {/* Star Config */}
+        <div style={{
+          marginTop: 'var(--space-8)',
+          display: 'flex',
+          justifyContent: 'center',
+        }}>
+          <Link
+            href="/starconfig"
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: 'var(--space-2)',
+              padding: 'var(--space-3) var(--space-6)',
+              fontSize: 'var(--text-sm)',
+              fontWeight: 600,
+              color: 'white',
+              background: 'var(--primary)',
+              border: 'none',
+              borderRadius: 'var(--radius-full)',
+              textDecoration: 'none',
+            }}
+          >
+            <svg width="16" height="16" viewBox="0 0 20 20" fill="currentColor">
+              <path d="M10 0l2.5 6.5H19l-5.5 4 2 6.5L10 13l-5.5 4 2-6.5-5.5-4h6.5z" />
+            </svg>
+            Star Config
+          </Link>
         </div>
       </div>
     </div>

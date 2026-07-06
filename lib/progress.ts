@@ -77,6 +77,30 @@ export function getProgress(): ProgressData {
   };
 }
 
+/**
+ * Reconcile local progress with the database (profiles.total_stars).
+ * The database wins, except when it is still 0 and the browser holds legacy
+ * localStorage stars — then the caller should seed the database (seedDb).
+ */
+export function reconcileStars(dbStars: number): { totalStars: number; seedDb: boolean } {
+  const current = getProgress();
+
+  if (dbStars === 0 && current.totalStars > 0) {
+    return { totalStars: current.totalStars, seedDb: true };
+  }
+
+  if (dbStars !== current.totalStars) {
+    const updated: ProgressData = {
+      ...current,
+      totalStars: dbStars,
+      treeStage: getTreeStage(dbStars),
+    };
+    localStorage.setItem(storageKey(), JSON.stringify(updated));
+  }
+
+  return { totalStars: dbStars, seedDb: false };
+}
+
 export function updateProgress(starsEarned: number): ProgressData {
   const current = getProgress();
   const today = new Date().toISOString().split('T')[0];

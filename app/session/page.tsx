@@ -828,13 +828,14 @@ export default function SessionPage() {
       {/* Ready overlay — tap unlocks mobile audio, then countdown starts */}
       {sessionState === 'ready' && (
         <div className="absolute inset-0 flex items-center justify-center z-20" style={{ background: 'rgba(0,0,0,0.7)', backdropFilter: 'blur(8px)' }}>
-          <div className="text-center px-8">
+          <div className="text-center px-8" style={{ width: '100%', maxWidth: '360px' }}>
             <p className="font-display text-3xl mb-3" style={{ color: 'white', fontWeight: 600 }}>
               Ready?
             </p>
-            <p className="mb-8" style={{ color: 'rgba(255,255,255,0.75)', fontSize: 'var(--text-base)' }}>
+            <p className="mb-6" style={{ color: 'rgba(255,255,255,0.75)', fontSize: 'var(--text-base)' }}>
               Place your phone where your upper body is in frame
             </p>
+            <ExerciseDemo frames={DEMO_FRAMES} />
             <button
               onClick={() => {
                 unlockSpeech()
@@ -1229,6 +1230,76 @@ export default function SessionPage() {
           }
         }
       `}</style>
+    </div>
+  )
+}
+
+// Demo frames for the pre-session picture holder. Both images stay mounted and
+// swap by opacity so the exchange is seamless — a two-frame "video" loop.
+// TODO: load per-exercise frames from the database once demo photos exist
+// for every exercise.
+const DEMO_FRAMES = [
+  '/exercise-demo/wrist-up.jpg',
+  '/exercise-demo/wrist-down.jpg',
+]
+
+function ExerciseDemo({ frames, intervalMs = 700 }: { frames: string[]; intervalMs?: number }) {
+  const [frame, setFrame] = useState(0)
+
+  useEffect(() => {
+    const id = setInterval(() => {
+      setFrame(f => (f + 1) % frames.length)
+    }, intervalMs)
+    return () => clearInterval(id)
+  }, [frames.length, intervalMs])
+
+  return (
+    <div
+      style={{
+        position: 'relative',
+        width: '100%',
+        aspectRatio: '4 / 3',
+        margin: '0 auto var(--space-6)',
+        borderRadius: 'var(--radius-xl)',
+        overflow: 'hidden',
+        border: '1px solid rgba(255,255,255,0.25)',
+        background: 'rgba(255,255,255,0.06)',
+        boxShadow: '0 8px 24px rgba(0,0,0,0.35)',
+      }}
+    >
+      {frames.map((src, i) => (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img
+          key={src}
+          src={src}
+          alt={`Exercise demonstration, position ${i + 1}`}
+          style={{
+            position: 'absolute',
+            inset: 0,
+            width: '100%',
+            height: '100%',
+            objectFit: 'cover',
+            opacity: frame === i ? 1 : 0,
+            transition: 'opacity 300ms ease-in-out',
+          }}
+        />
+      ))}
+      <span
+        style={{
+          position: 'absolute',
+          top: 'var(--space-2)',
+          left: 'var(--space-2)',
+          padding: 'var(--space-1) var(--space-3)',
+          borderRadius: 'var(--radius-full)',
+          background: 'rgba(0,0,0,0.55)',
+          color: 'white',
+          fontSize: 'var(--text-xs)',
+          fontWeight: 600,
+          letterSpacing: '0.02em',
+        }}
+      >
+        Demo
+      </span>
     </div>
   )
 }

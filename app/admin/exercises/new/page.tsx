@@ -44,6 +44,11 @@ export default function NewExercisePage() {
   const [noSubject, setNoSubject] = useState(false)
   const noSubjectRef = useRef(false)
 
+  // TEMP diagnostic: throttled readout of what the detector returns each frame.
+  // Remove once hand tracking is confirmed drawing on real webcams.
+  const [debugLine, setDebugLine] = useState('')
+  const lastDebugAt = useRef(0)
+
   // Captured frames live in a ref, not state: appending to a growing state array
   // every animation frame re-rendered the whole page 30×/s (O(n²) copies), which
   // was the recording lag. The ref is drained in stopRecording.
@@ -159,6 +164,19 @@ export default function NewExercisePage() {
         if (!pose !== noSubjectRef.current) {
           noSubjectRef.current = !pose
           setNoSubject(!pose)
+        }
+
+        // TEMP diagnostic, throttled to ~4/s.
+        if (Date.now() - lastDebugAt.current > 250) {
+          lastDebugAt.current = Date.now()
+          const cv = canvasRef.current
+          const withScore = pose ? pose.keypoints.filter((k) => (k.score ?? 0) > 0.3).length : 0
+          const k0 = pose?.keypoints[0]
+          setDebugLine(
+            pose
+              ? `${trackingMode} · n=${pose.keypoints.length} drawn=${withScore} k0=(${k0?.x?.toFixed(0)},${k0?.y?.toFixed(0)}) s=${(k0?.score ?? -1).toFixed(2)} · canvas=${cv?.width}x${cv?.height} vid=${video.videoWidth}x${video.videoHeight}`
+              : `${trackingMode} · no pose · vid=${video.videoWidth}x${video.videoHeight}`
+          )
         }
       }
 
@@ -404,6 +422,13 @@ export default function NewExercisePage() {
                       <div className="absolute top-4 left-4 flex items-center gap-2 bg-red-600 text-white px-3 py-1 rounded-full">
                         <div className="w-2 h-2 bg-white rounded-full animate-pulse" />
                         <span className="text-sm font-medium">Recording</span>
+                      </div>
+                    )}
+
+                    {/* TEMP diagnostic readout */}
+                    {debugLine && (
+                      <div className="absolute bottom-2 left-2 right-2 bg-black/80 text-green-300 text-[10px] font-mono px-2 py-1 rounded break-all">
+                        {debugLine}
                       </div>
                     )}
 

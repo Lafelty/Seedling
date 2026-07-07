@@ -8,33 +8,21 @@ import confetti from 'canvas-confetti'
 import { useToast } from '@/components/Toast'
 import { createClient } from '@/lib/supabase/client'
 import {
-  initPoseDetector,
-  detectPose,
+  initDetector,
+  detect,
   analyzeExercise,
-  shouldersInFrame,
+  subjectInFrame,
   GenericRepCounter,
   CycleRepCounter,
-  disposePoseDetector,
+  disposeDetector,
   pickReferencePose,
+  connectionsForMode,
+  anchorPairForMode,
+  type TrackingMode,
   type Pose,
   type PoseCriteria,
   type ExerciseAnalysis,
 } from '@/lib/poseDetection'
-
-const GHOST_CONNECTIONS = [
-  ['left_shoulder', 'right_shoulder'],
-  ['left_shoulder', 'left_elbow'],
-  ['left_elbow', 'left_wrist'],
-  ['right_shoulder', 'right_elbow'],
-  ['right_elbow', 'right_wrist'],
-  ['left_shoulder', 'left_hip'],
-  ['right_shoulder', 'right_hip'],
-  ['left_hip', 'right_hip'],
-  ['left_hip', 'left_knee'],
-  ['left_knee', 'left_ankle'],
-  ['right_hip', 'right_knee'],
-  ['right_knee', 'right_ankle'],
-] as const
 
 type SessionState = 'loading' | 'ready' | 'countdown' | 'active' | 'paused' | 'completed'
 type PostureFeedback = 'good' | 'adjust' | 'analyzing'
@@ -56,6 +44,8 @@ interface Exercise {
   hold_duration_ms: number
   feedback_messages: Record<string, string>
   recorded_paths?: Array<{ frames: Array<{ pose: Pose }> }> | null
+  // Absent until hand_tracking_migration.sql has run — treat as 'body'.
+  tracking_mode?: TrackingMode | null
 }
 
 export default function SessionPage() {
@@ -110,6 +100,8 @@ export default function SessionPage() {
   const { showToast, ToastComponent } = useToast()
 
   const TARGET_REPS = exercise?.target_reps ?? 10
+  // Null-safe pre-migration: rows without tracking_mode are body exercises.
+  const mode: TrackingMode = exercise?.tracking_mode ?? 'body'
 
   // Load exercise from database
   useEffect(() => {
@@ -123,7 +115,7 @@ export default function SessionPage() {
 
         let query = supabase
           .from('exercises')
-          .select('id, name, description, exercise_type, pose_criteria, target_reps, hold_duration_ms, feedback_messages, recorded_paths')
+          .select('id, name, description, exercise_type, pose_criteria, target_reps, hold_duration_ms, feedback_messages, recorded_paths, tracking_mode')
           .eq('is_active', true)
 
         if (requestedId) {
@@ -284,8 +276,8 @@ export default function SessionPage() {
           await videoRef.current.play()
         }
 
-        // Initialize pose detector
-        const initialized = await initPoseDetector()
+        // Initialize the detector for this exercise's tracking mode
+        const initialized = await initDetector(exercise?.tracking_mode ?? 'body')
         if (!initialized) {
           console.warn('Pose detector failed to initialize, continuing without AI')
         } else {
@@ -312,7 +304,7 @@ export default function SessionPage() {
       if (animationFrameRef.current) {
         cancelAnimationFrame(animationFrameRef.current)
       }
-      disposePoseDetector()
+      disposeDetector()
     }
   }, [exerciseLoading, exercise])
 
@@ -391,7 +383,7 @@ export default function SessionPage() {
       lastFrameTime.current = now
 
       // Detect pose
-      const pose = await detectPose(videoRef.current)
+      const pose = await detect(videoRef.current, exercise.tracking_mode ?? 'body')
       setDetectedPose(pose)
 
       if (pose && pose.keypoints) {
@@ -439,8 +431,8 @@ export default function SessionPage() {
       }
       totalActiveTimeRef.current += deltaTime
 
-      // Track shoulder visibility for the "step back" warning
-      setShouldersVisible(shouldersInFrame(pose))
+      // Track anchor visibility for the out-of-frame warning
+      setShouldersVisible(subjectInFrame(pose, exercise.tracking_mode ?? 'body'))
 
       if (rep.holdMissed) {
         setHoldMissed(true)
@@ -787,17 +779,18 @@ export default function SessionPage() {
         >
 
           {/* Ghost skeleton — the therapist's target pose, anchored to the
-              patient's shoulders and scaled to their body so it overlays where
-              their limbs should be */}
+              patient's anchor pair (shoulders, or wrist↔knuckle for hands) and
+              scaled to their body so it overlays where their limbs should be */}
           {ghostPose && (() => {
             const find = (pose: Pose, name: string) => {
               const kp = pose.keypoints.find((k) => k.name === name)
               return kp && (kp.score ?? 0) > 0.3 ? kp : null
             }
-            const pls = find(detectedPose, 'left_shoulder')
-            const prs = find(detectedPose, 'right_shoulder')
-            const gls = find(ghostPose, 'left_shoulder')
-            const grs = find(ghostPose, 'right_shoulder')
+            const [anchorA, anchorB] = anchorPairForMode(mode)
+            const pls = find(detectedPose, anchorA)
+            const prs = find(detectedPose, anchorB)
+            const gls = find(ghostPose, anchorA)
+            const grs = find(ghostPose, anchorB)
             if (!pls || !prs || !gls || !grs) return null
 
             const pMid = { x: (pls.x + prs.x) / 2, y: (pls.y + prs.y) / 2 }
@@ -810,7 +803,7 @@ export default function SessionPage() {
               y: pMid.y + (p.y - gMid.y) * scale,
             })
 
-            return GHOST_CONNECTIONS.map(([start, end], i) => {
+            return connectionsForMode(mode).map(([start, end], i) => {
               const s = find(ghostPose, start)
               const e = find(ghostPose, end)
               if (!s || !e) return null
@@ -822,7 +815,7 @@ export default function SessionPage() {
                   x1={s2.x} y1={s2.y}
                   x2={e2.x} y2={e2.y}
                   stroke="white"
-                  strokeWidth="5"
+                  strokeWidth={mode === 'hand' ? 3 : 5}
                   strokeLinecap="round"
                   strokeDasharray="14 10"
                   opacity="0.45"
@@ -831,15 +824,19 @@ export default function SessionPage() {
             })
           })()}
 
-          {/* Live skeleton — solid colored lines reflecting posture feedback */}
+          {/* Live skeleton — solid colored lines reflecting posture feedback.
+              Body mode keeps its arm-only subset; hand mode draws the full
+              21-segment hand with a thinner stroke. */}
           {(() => {
-            const connections = [
-              ['left_shoulder',  'right_shoulder'],
-              ['left_shoulder',  'left_elbow'],
-              ['left_elbow',     'left_wrist'],
-              ['right_shoulder', 'right_elbow'],
-              ['right_elbow',    'right_wrist'],
-            ];
+            const connections = mode === 'hand'
+              ? connectionsForMode('hand')
+              : [
+                  ['left_shoulder',  'right_shoulder'],
+                  ['left_shoulder',  'left_elbow'],
+                  ['left_elbow',     'left_wrist'],
+                  ['right_shoulder', 'right_elbow'],
+                  ['right_elbow',    'right_wrist'],
+                ];
 
             const lineColor = feedbackColor[postureFeedback];
 
@@ -858,7 +855,7 @@ export default function SessionPage() {
                     x1={startKp.x} y1={startKp.y}
                     x2={endKp.x}   y2={endKp.y}
                     stroke={lineColor}
-                    strokeWidth="8"
+                    strokeWidth={mode === 'hand' ? 4 : 8}
                     strokeLinecap="round"
                     opacity="0.85"
                   />
@@ -878,7 +875,9 @@ export default function SessionPage() {
               Ready?
             </p>
             <p className="mb-6" style={{ color: 'rgba(255,255,255,0.75)', fontSize: 'var(--text-base)' }}>
-              Place your phone where your upper body is in frame
+              {mode === 'hand'
+                ? 'Hold your hand up so it fills the frame, palm facing the camera'
+                : 'Place your phone where your upper body is in frame'}
             </p>
             <ExerciseDemo frames={DEMO_FRAMES} />
             <button
@@ -943,7 +942,9 @@ export default function SessionPage() {
               <line x1="12" y1="16" x2="12.01" y2="16" />
             </svg>
             <span style={{ color: 'white', fontSize: 'var(--text-xl)', fontWeight: 700, lineHeight: 1.3 }}>
-              Step back so your shoulders are visible
+              {mode === 'hand'
+                ? 'Move your hand fully into frame'
+                : 'Step back so your shoulders are visible'}
             </span>
           </div>
         </div>

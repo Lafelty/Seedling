@@ -7,14 +7,16 @@ import { createClient } from '@/lib/supabase/client'
 import {
   calculateAngle,
   deriveCriteriaFromRecordings,
-  initPoseDetector,
-  detectPose,
-  disposePoseDetector,
+  initDetector,
+  detect,
+  disposeDetector,
   analyzeExercise,
   GenericRepCounter,
   CycleRepCounter,
-  ANATOMICAL_REFERENCES,
-  VALID_KEYPOINT_NAMES,
+  referencesForMode,
+  keypointNamesForMode,
+  connectionsForMode,
+  type TrackingMode,
   type Pose,
   type PoseCriteria,
   type ExerciseAnalysis,
@@ -45,6 +47,8 @@ interface Exercise {
   hold_duration_ms: number
   feedback_messages: any
   is_active: boolean
+  // Absent until hand_tracking_migration.sql has run — treat as 'body'.
+  tracking_mode?: TrackingMode | null
 }
 
 interface AngleCriterion {
@@ -68,21 +72,6 @@ const formatJointName = (name: string) =>
     .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
     .join(' ')
 
-const SKELETON_CONNECTIONS = [
-  ['left_shoulder', 'right_shoulder'],
-  ['left_shoulder', 'left_elbow'],
-  ['left_elbow', 'left_wrist'],
-  ['right_shoulder', 'right_elbow'],
-  ['right_elbow', 'right_wrist'],
-  ['left_shoulder', 'left_hip'],
-  ['right_shoulder', 'right_hip'],
-  ['left_hip', 'right_hip'],
-  ['left_hip', 'left_knee'],
-  ['left_knee', 'left_ankle'],
-  ['right_hip', 'right_knee'],
-  ['right_knee', 'right_ankle'],
-]
-
 export default function EditExercisePage({ params }: { params: Promise<{ id: string }> }) {
   const resolvedParams = use(params)
   const router = useRouter()
@@ -93,6 +82,8 @@ export default function EditExercisePage({ params }: { params: Promise<{ id: str
 
   const [loading, setLoading] = useState(true)
   const [exercise, setExercise] = useState<Exercise | null>(null)
+  // Display-only: recordings are mode-specific, so the mode is fixed at creation.
+  const mode: TrackingMode = exercise?.tracking_mode ?? 'body'
   const [selectedDemo, setSelectedDemo] = useState<number>(0)
   const [currentFrame, setCurrentFrame] = useState<number>(0)
   const [isPlaying, setIsPlaying] = useState(false)
@@ -204,7 +195,7 @@ export default function EditExercisePage({ params }: { params: Promise<{ id: str
         video.srcObject = stream
         await video.play()
 
-        const ok = await initPoseDetector()
+        const ok = await initDetector(mode)
         if (!ok) {
           setTestCameraError('Failed to load pose detection model')
           return
@@ -219,7 +210,7 @@ export default function EditExercisePage({ params }: { params: Promise<{ id: str
 
         const loop = async () => {
           if (!running || !testVideoRef.current) return
-          const pose = await detectPose(testVideoRef.current)
+          const pose = await detect(testVideoRef.current, mode)
           const analysis = analyzeExercise(pose, testCriteriaRef.current, testMessagesRef.current)
           const rep = testRepCounterRef.current!.count(analysis)
           const phase = 'phase' in rep ? (rep.phase as CyclePhase) : null
@@ -291,7 +282,7 @@ export default function EditExercisePage({ params }: { params: Promise<{ id: str
       running = false
       cancelAnimationFrame(raf)
       if (stream) stream.getTracks().forEach((t) => t.stop())
-      disposePoseDetector()
+      disposeDetector()
     }
   }, [testMode, holdDuration])
 
@@ -310,6 +301,8 @@ export default function EditExercisePage({ params }: { params: Promise<{ id: str
     }
 
     setExercise(data as Exercise)
+    const exMode: TrackingMode = (data.tracking_mode as TrackingMode) ?? 'body'
+    const exRefs = referencesForMode(exMode)
 
     // Initialize refinement state from saved criteria — or, when none were ever
     // saved, derive a working set straight from the recording so the therapist
@@ -325,11 +318,14 @@ export default function EditExercisePage({ params }: { params: Promise<{ id: str
           relativeTo:
             Array.isArray(c.relativeTo) && c.relativeTo.length === 2
               ? c.relativeTo
-              : [...(ANATOMICAL_REFERENCES[c.joint] ?? ['left_elbow', 'left_hip'])],
+              : [...(exRefs[c.joint] ??
+                  (exMode === 'hand'
+                    ? ['wrist', 'middle_finger_mcp']
+                    : ['left_elbow', 'left_hip']))],
         }))
       )
     } else if (Array.isArray(data.recorded_paths) && data.recorded_paths.length > 0) {
-      const derived = deriveCriteriaFromRecordings(data.recorded_paths)
+      const derived = deriveCriteriaFromRecordings(data.recorded_paths, exMode)
       if (derived.criteria.length > 0) {
         setAngleCriteria(derived.criteria)
         derivedParts = derived.targetBodyParts
@@ -393,7 +389,7 @@ export default function EditExercisePage({ params }: { params: Promise<{ id: str
     pose.keypoints.forEach((kp) => {
       if (kp.score && kp.score > 0.3) {
         ctx.beginPath()
-        ctx.arc(kp.x * scaleX, kp.y * scaleY, 6, 0, 2 * Math.PI)
+        ctx.arc(kp.x * scaleX, kp.y * scaleY, mode === 'hand' ? 4 : 6, 0, 2 * Math.PI)
 
         // Highlight target body parts
         if (targetBodyParts.includes(kp.name || '')) {
@@ -403,8 +399,8 @@ export default function EditExercisePage({ params }: { params: Promise<{ id: str
         }
         ctx.fill()
 
-        // Label
-        if (kp.name) {
+        // Label — 21 hand labels are unreadable, so only mark the fingertips
+        if (kp.name && (mode !== 'hand' || kp.name.endsWith('_tip'))) {
           ctx.fillStyle = '#1F2421'
           ctx.font = '10px sans-serif'
           ctx.fillText(kp.name, kp.x * scaleX + 8, kp.y * scaleY)
@@ -413,7 +409,7 @@ export default function EditExercisePage({ params }: { params: Promise<{ id: str
     })
 
     // Draw skeleton connections
-    SKELETON_CONNECTIONS.forEach(([startName, endName]) => {
+    connectionsForMode(mode).forEach(([startName, endName]) => {
       const start = pose.keypoints.find((kp) => kp.name === startName)
       const end = pose.keypoints.find((kp) => kp.name === endName)
 
@@ -501,13 +497,13 @@ export default function EditExercisePage({ params }: { params: Promise<{ id: str
     pose.keypoints.forEach((kp) => {
       if (kp.score && kp.score > 0.3) {
         ctx.beginPath()
-        ctx.arc(kp.x, kp.y, 5, 0, 2 * Math.PI)
+        ctx.arc(kp.x, kp.y, mode === 'hand' ? 3 : 5, 0, 2 * Math.PI)
         ctx.fillStyle = color
         ctx.fill()
       }
     })
 
-    SKELETON_CONNECTIONS.forEach(([startName, endName]) => {
+    connectionsForMode(mode).forEach(([startName, endName]) => {
       const start = pose.keypoints.find((kp) => kp.name === startName)
       const end = pose.keypoints.find((kp) => kp.name === endName)
       if (start && end && start.score && start.score > 0.3 && end.score && end.score > 0.3) {
@@ -574,7 +570,7 @@ export default function EditExercisePage({ params }: { params: Promise<{ id: str
     ) {
       return
     }
-    const derived = deriveCriteriaFromRecordings(exercise.recorded_paths)
+    const derived = deriveCriteriaFromRecordings(exercise.recorded_paths, mode)
     if (derived.criteria.length === 0) {
       alert('No joints were visible reliably enough in the recording to derive criteria.')
       return
@@ -585,7 +581,7 @@ export default function EditExercisePage({ params }: { params: Promise<{ id: str
   }
 
   const addAngleCriterion = () => {
-    const joint = 'left_shoulder'
+    const joint = mode === 'hand' ? 'index_finger_pip' : 'left_shoulder'
     setAngleCriteria([
       ...angleCriteria,
       {
@@ -593,7 +589,7 @@ export default function EditExercisePage({ params }: { params: Promise<{ id: str
         minAngle: 80,
         maxAngle: 100,
         targetAngle: 90,
-        relativeTo: [...ANATOMICAL_REFERENCES[joint]],
+        relativeTo: [...referencesForMode(mode)[joint]],
       },
     ])
   }
@@ -603,8 +599,9 @@ export default function EditExercisePage({ params }: { params: Promise<{ id: str
     updated[index] = { ...updated[index], [field]: value }
     // A new joint makes the old reference points meaningless — swap in the
     // anatomical defaults for that joint (still editable afterwards).
-    if (field === 'joint' && ANATOMICAL_REFERENCES[value]) {
-      updated[index] = { ...updated[index], relativeTo: [...ANATOMICAL_REFERENCES[value]] }
+    const refs = referencesForMode(mode)
+    if (field === 'joint' && refs[value]) {
+      updated[index] = { ...updated[index], relativeTo: [...refs[value]] }
     }
     setAngleCriteria(updated)
   }
@@ -727,6 +724,9 @@ export default function EditExercisePage({ params }: { params: Promise<{ id: str
             </h1>
             <p className="text-sm text-[#5C635D] mt-1">
               {exercise.is_active ? '✓ Published' : 'Draft'}
+              <span className="ml-2 px-2 py-0.5 rounded-full text-xs font-medium bg-[#F2E3D6] text-[#C4612F]">
+                {mode === 'hand' ? 'Hand tracking' : 'Body tracking'}
+              </span>
             </p>
           </div>
           <div className="flex gap-3">
@@ -1056,7 +1056,7 @@ export default function EditExercisePage({ params }: { params: Promise<{ id: str
                           onChange={(e) => updateAngleCriterion(i, 'joint', e.target.value)}
                           className="w-full px-2 py-1 text-sm border border-[#E7E1D7] rounded bg-white focus:outline-none focus:ring-1 focus:ring-[#C4612F]"
                         >
-                          {VALID_KEYPOINT_NAMES.map((name) => (
+                          {keypointNamesForMode(mode).map((name) => (
                             <option key={name} value={name}>
                               {formatJointName(name)}
                             </option>
@@ -1079,7 +1079,7 @@ export default function EditExercisePage({ params }: { params: Promise<{ id: str
                             }
                             className="w-full px-2 py-1 text-sm border border-[#E7E1D7] rounded bg-white focus:outline-none focus:ring-1 focus:ring-[#C4612F]"
                           >
-                            {VALID_KEYPOINT_NAMES.map((name) => (
+                            {keypointNamesForMode(mode).map((name) => (
                               <option key={name} value={name}>
                                 {formatJointName(name)}
                               </option>
@@ -1095,7 +1095,7 @@ export default function EditExercisePage({ params }: { params: Promise<{ id: str
                             }
                             className="w-full px-2 py-1 text-sm border border-[#E7E1D7] rounded bg-white focus:outline-none focus:ring-1 focus:ring-[#C4612F]"
                           >
-                            {VALID_KEYPOINT_NAMES.map((name) => (
+                            {keypointNamesForMode(mode).map((name) => (
                               <option key={name} value={name}>
                                 {formatJointName(name)}
                               </option>
@@ -1199,6 +1199,13 @@ export default function EditExercisePage({ params }: { params: Promise<{ id: str
                 </button>
               </div>
 
+              {mode === 'hand' && (
+                <p className="text-xs text-[#5C635D] mb-3">
+                  Leveling compares vertical pixel positions — rarely useful for hand
+                  exercises, where finger angles do the work.
+                </p>
+              )}
+
               <div className="space-y-3">
                 {levelingRules.map((rule, i) => {
                   const frameDiff = getFrameLevelDiff(rule)
@@ -1228,7 +1235,7 @@ export default function EditExercisePage({ params }: { params: Promise<{ id: str
                             }
                             className="w-full px-2 py-1 text-sm border border-[#E7E1D7] rounded bg-white focus:outline-none focus:ring-1 focus:ring-[#C4612F]"
                           >
-                            {VALID_KEYPOINT_NAMES.map((name) => (
+                            {keypointNamesForMode(mode).map((name) => (
                               <option key={name} value={name}>
                                 {formatJointName(name)}
                               </option>
@@ -1241,7 +1248,7 @@ export default function EditExercisePage({ params }: { params: Promise<{ id: str
                             }
                             className="w-full px-2 py-1 text-sm border border-[#E7E1D7] rounded bg-white focus:outline-none focus:ring-1 focus:ring-[#C4612F]"
                           >
-                            {VALID_KEYPOINT_NAMES.map((name) => (
+                            {keypointNamesForMode(mode).map((name) => (
                               <option key={name} value={name}>
                                 {formatJointName(name)}
                               </option>

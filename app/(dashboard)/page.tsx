@@ -1,16 +1,25 @@
 'use client';
 
 import Link from 'next/link';
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { createClient } from '@/lib/supabase/client';
 import { getProgress, getDayStrip, markOnboardingComplete, setProgressUid, reconcileStars, type ProgressData, type DayStatus } from '@/lib/progress';
+import { format, startOfDay, subDays } from 'date-fns';
+import { DayFace, MOOD_BG, computeDayMood } from '@/components/DayFace';
+
+interface WeekSession {
+  started_at: string;
+  completed_at: string | null;
+  form_quality_score: number | null;
+}
 
 export const dynamic = 'force-dynamic';
 
 export default function DashboardPage() {
   const [progress, setProgress] = useState<ProgressData | null>(null);
   const [dayStrip, setDayStrip] = useState<DayStatus[]>([]);
+  const [weekSessions, setWeekSessions] = useState<WeekSession[]>([]);
   const [showEmptyState, setShowEmptyState] = useState(false);
   const [user, setUser] = useState<any>(null);
   const [isAdmin, setIsAdmin] = useState(false);
@@ -88,6 +97,49 @@ export default function DashboardPage() {
       setShowEmptyState(true);
     }
   }, []);
+
+  // Load this week's sessions so the day strip can show mood faces
+  // (same great/happy/partial/rest logic as the progress calendar).
+  useEffect(() => {
+    if (!user) return;
+    (async () => {
+      const supabase = createClient();
+      const { data, error } = await supabase
+        .from('therapy_sessions')
+        .select('started_at, completed_at, form_quality_score')
+        .eq('user_id', user.id)
+        .gte('started_at', startOfDay(subDays(new Date(), 6)).toISOString())
+        .order('started_at', { ascending: true });
+
+      if (error) {
+        console.error('Error loading week sessions:', error);
+        return;
+      }
+
+      setWeekSessions(
+        (data ?? []).map((row: any) => ({
+          started_at: row.started_at,
+          completed_at: row.completed_at,
+          form_quality_score: row.form_quality_score === null ? null : Number(row.form_quality_score),
+        }))
+      );
+    })();
+  }, [user]);
+
+  const weekStatsByDay = useMemo(() => {
+    const map = new Map<string, { completed: number; started: number; forms: number[] }>();
+    for (const s of weekSessions) {
+      const key = format(new Date(s.started_at), 'yyyy-MM-dd');
+      const entry = map.get(key) ?? { completed: 0, started: 0, forms: [] };
+      entry.started += 1;
+      if (s.completed_at) {
+        entry.completed += 1;
+        if (s.form_quality_score != null) entry.forms.push(s.form_quality_score);
+      }
+      map.set(key, entry);
+    }
+    return map;
+  }, [weekSessions]);
 
   if (!progress) {
     return (
@@ -309,6 +361,18 @@ export default function DashboardPage() {
                   const isToday = day.date === today;
                   const isFuture = day.date > today;
 
+                  const stats = weekStatsByDay.get(day.date);
+                  const avgForm = stats && stats.forms.length > 0
+                    ? stats.forms.reduce((a, b) => a + b, 0) / stats.forms.length
+                    : null;
+                  const mood = computeDayMood({
+                    completedCount: stats?.completed ?? 0,
+                    startedCount: stats?.started ?? 0,
+                    avgForm,
+                    fallbackCompleted: day.completed,
+                    isFuture,
+                  });
+
                   return (
                     <div
                       key={day.date}
@@ -324,31 +388,24 @@ export default function DashboardPage() {
                         {dayLetter}
                       </span>
                       <div
+                        title={
+                          mood === 'great' ? 'Amazing day'
+                          : mood === 'happy' ? 'Session complete'
+                          : mood === 'partial' ? 'Partial session'
+                          : isFuture ? '' : 'Rest day'
+                        }
                         style={{
                           width: '100%',
-                          maxWidth: '48px',
+                          maxWidth: '56px',
                           aspectRatio: '1',
                           borderRadius: '50%',
-                          background: day.completed ? 'var(--success)' : 'var(--border)',
-                          display: 'flex',
-                          alignItems: 'center',
-                          justifyContent: 'center',
-                          fontSize: 'var(--text-base)',
-                          color: day.completed ? 'white' : 'var(--muted)',
-                          fontWeight: 600,
-                          opacity: isFuture ? 0.3 : 1,
+                          background: MOOD_BG[mood],
                           boxShadow: isToday
                             ? '0 0 0 2px var(--surface), 0 0 0 4px var(--primary)'
                             : 'none',
                         }}
                       >
-                        {day.completed ? (
-                          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" className="animate-checkPop">
-                            <path d="M5 12l5 5L19 7" />
-                          </svg>
-                        ) : (
-                          date.getDate()
-                        )}
+                        <DayFace mood={mood} />
                       </div>
                     </div>
                   );

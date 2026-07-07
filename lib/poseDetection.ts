@@ -1,6 +1,22 @@
 // Client-side only imports
 let poseDetection: typeof import('@tensorflow-models/pose-detection') | null = null;
 let detector: any = null;
+let handPoseDetection: typeof import('@tensorflow-models/hand-pose-detection') | null = null;
+let handDetector: any = null;
+
+// Generation counters, bumped on every dispose. Model loads take seconds; a
+// dispose (mode switch, unmount, HMR) can land while createDetector is still
+// in flight, and without this check the late resolver would assign a zombie
+// detector next to the other mode's model.
+let poseGen = 0;
+let handGen = 0;
+
+// The detect loops run per-frame while models load — warn once, not 200×.
+let warnedPoseNotReady = false;
+let warnedHandNotReady = false;
+
+/** Which landmark model an exercise is tracked with. */
+export type TrackingMode = 'body' | 'hand';
 
 export interface Pose {
   keypoints: Array<{
@@ -31,6 +47,7 @@ export async function initPoseDetector(): Promise<boolean> {
     }
 
     if (detector) return true;
+    const gen = poseGen;
 
     // Dynamically import TensorFlow only in browser
     if (!poseDetection) {
@@ -45,10 +62,22 @@ export async function initPoseDetector(): Promise<boolean> {
     }
 
     const model = poseDetection.SupportedModels.MoveNet;
-    detector = await poseDetection.createDetector(model, {
+    const created = await poseDetection.createDetector(model, {
       modelType: poseDetection.movenet.modelType.SINGLEPOSE_THUNDER,
     });
 
+    if (gen !== poseGen) {
+      // Disposed while loading (mode switch / unmount) — don't resurrect.
+      created.dispose();
+      return false;
+    }
+    if (detector) {
+      // A concurrent init already won (StrictMode double-mount).
+      created.dispose();
+      return true;
+    }
+    detector = created;
+    warnedPoseNotReady = false;
     console.log('Pose detector initialized successfully');
     return true;
   } catch (error) {
@@ -62,7 +91,10 @@ export async function initPoseDetector(): Promise<boolean> {
  */
 export async function detectPose(video: HTMLVideoElement): Promise<Pose | null> {
   if (!detector) {
-    console.warn('Pose detector not initialized');
+    if (!warnedPoseNotReady) {
+      console.warn('Pose detector not initialized yet — frames skipped until the model loads');
+      warnedPoseNotReady = true;
+    }
     return null;
   }
 
@@ -150,20 +182,21 @@ export function analyzeShoulderRaise(pose: Pose | null): ShoulderRaiseAnalysis {
 }
 
 /**
- * Returns true when both shoulders are detected with sufficient confidence.
- * Used to show a "step back" warning when the patient is too close to the camera.
- * @param pose - The detected pose from MoveNet
- * @returns boolean indicating if shoulders are visible
+ * Returns true when the mode's anchor keypoints are detected with sufficient
+ * confidence — shoulders for body tracking, wrist + middle knuckle for hands.
+ * Used to warn when the subject is out of frame or too close to the camera.
  */
-export function shouldersInFrame(pose: Pose | null): boolean {
+export function subjectInFrame(pose: Pose | null, mode: TrackingMode = 'body'): boolean {
   if (!pose?.keypoints) return false;
-  const left = pose.keypoints.find((kp) => kp.name === 'left_shoulder');
-  const right = pose.keypoints.find((kp) => kp.name === 'right_shoulder');
-  return !!(
-    left && right &&
-    (left.score ?? 0) > 0.5 &&
-    (right.score ?? 0) > 0.5
-  );
+  const [nameA, nameB] = anchorPairForMode(mode);
+  const a = pose.keypoints.find((kp) => kp.name === nameA);
+  const b = pose.keypoints.find((kp) => kp.name === nameB);
+  return !!(a && b && (a.score ?? 0) > 0.5 && (b.score ?? 0) > 0.5);
+}
+
+/** Body-mode wrapper kept for older call sites. */
+export function shouldersInFrame(pose: Pose | null): boolean {
+  return subjectInFrame(pose, 'body');
 }
 
 /**
@@ -230,10 +263,137 @@ export class RepCounter {
  * Cleanup detector resources
  */
 export function disposePoseDetector() {
+  poseGen++; // invalidate any createDetector still in flight
   if (detector) {
     detector.dispose();
     detector = null;
   }
+}
+
+/**
+ * Initialize the MediaPipeHands detector (client-side only, tfjs runtime —
+ * no external WASM/CDN assets, same WebGL backend as MoveNet).
+ */
+export async function initHandDetector(): Promise<boolean> {
+  try {
+    if (typeof window === 'undefined') {
+      console.warn('Hand detection only works in browser');
+      return false;
+    }
+
+    if (handDetector) return true;
+    const gen = handGen;
+
+    if (!handPoseDetection) {
+      const tf = await import('@tensorflow/tfjs-core');
+      await import('@tensorflow/tfjs-backend-webgl');
+      await tf.ready();
+      console.log('TensorFlow.js backend ready:', tf.getBackend());
+      handPoseDetection = await import('@tensorflow-models/hand-pose-detection');
+    }
+
+    console.log('Loading hand model (~10 MB on first use)…');
+    const model = handPoseDetection.SupportedModels.MediaPipeHands;
+    const created = await handPoseDetection.createDetector(model, {
+      runtime: 'tfjs',
+      // 'lite' over 'full': the full model runs ~6 s/frame on webgl — far too
+      // slow for a live preview. lite keeps all 21 landmarks at real-time speed.
+      modelType: 'lite',
+      // detectHand only ever returns the single most-confident hand, so tracking
+      // a second one is pure wasted compute every frame.
+      maxHands: 1,
+    });
+
+    if (gen !== handGen) {
+      // Disposed while loading (mode switch / unmount) — don't resurrect.
+      created.dispose();
+      return false;
+    }
+    if (handDetector) {
+      // A concurrent init already won (StrictMode double-mount).
+      created.dispose();
+      return true;
+    }
+    handDetector = created;
+    warnedHandNotReady = false;
+    console.log('Hand detector initialized successfully');
+    return true;
+  } catch (error) {
+    console.error('Failed to initialize hand detector:', error);
+    return false;
+  }
+}
+
+/**
+ * Detect the most confident hand in a video frame, normalized into the same
+ * Pose shape MoveNet produces so the whole downstream engine works unchanged.
+ */
+export async function detectHand(video: HTMLVideoElement): Promise<Pose | null> {
+  if (!handDetector) {
+    if (!warnedHandNotReady) {
+      console.warn('Hand detector not initialized yet — frames skipped until the model loads');
+      warnedHandNotReady = true;
+    }
+    return null;
+  }
+
+  try {
+    const hands = await handDetector.estimateHands(video);
+    if (!hands || hands.length === 0) return null;
+    // tfjs runtime reports score: NaN for video inputs (finite only for static
+    // images), and NaN slips through ?? — sanitize before it poisons every
+    // downstream confidence check (NaN > 0.5 is false, NaN is falsy).
+    const scoreOf = (v: any) => (Number.isFinite(v) ? (v as number) : undefined);
+    const hand = hands.reduce((best: any, h: any) =>
+      (scoreOf(h.score) ?? 0) > (scoreOf(best.score) ?? 0) ? h : best
+    );
+    // The detector only returns hands above its internal palm-detection
+    // confidence, so a missing/NaN score still means "confidently detected".
+    const handScore = scoreOf(hand.score) ?? 1;
+    return {
+      // tfjs-runtime hand keypoints carry no per-keypoint score, but getKeypoint
+      // rejects anything under 0.5 — copy the hand's overall score onto each one.
+      keypoints: hand.keypoints.map((kp: any) => ({
+        x: kp.x,
+        y: kp.y,
+        name: kp.name,
+        score: scoreOf(kp.score) ?? handScore,
+      })),
+      score: handScore,
+    };
+  } catch (error) {
+    console.error('Hand detection error:', error);
+    return null;
+  }
+}
+
+export function disposeHandDetector() {
+  handGen++; // invalidate any createDetector still in flight
+  if (handDetector) {
+    handDetector.dispose();
+    handDetector = null;
+  }
+}
+
+// ---- Mode facade: the only detector API pages should call ----
+
+/** Init the detector for a mode, disposing the other model first (one model resident at a time). */
+export async function initDetector(mode: TrackingMode): Promise<boolean> {
+  if (mode === 'hand') {
+    disposePoseDetector();
+    return initHandDetector();
+  }
+  disposeHandDetector();
+  return initPoseDetector();
+}
+
+export async function detect(video: HTMLVideoElement, mode: TrackingMode): Promise<Pose | null> {
+  return mode === 'hand' ? detectHand(video) : detectPose(video);
+}
+
+export function disposeDetector() {
+  disposePoseDetector();
+  disposeHandDetector();
 }
 
 // ============================================================================
@@ -491,6 +651,122 @@ export const ANATOMICAL_REFERENCES: Record<string, [string, string]> = {
   right_knee: ['right_hip', 'right_ankle'],
 };
 
+/** The 21 landmarks MediaPipeHands (tfjs runtime) detects. */
+export const HAND_KEYPOINT_NAMES: readonly string[] = [
+  'wrist',
+  'thumb_cmc',
+  'thumb_mcp',
+  'thumb_ip',
+  'thumb_tip',
+  'index_finger_mcp',
+  'index_finger_pip',
+  'index_finger_dip',
+  'index_finger_tip',
+  'middle_finger_mcp',
+  'middle_finger_pip',
+  'middle_finger_dip',
+  'middle_finger_tip',
+  'ring_finger_mcp',
+  'ring_finger_pip',
+  'ring_finger_dip',
+  'ring_finger_tip',
+  'pinky_finger_mcp',
+  'pinky_finger_pip',
+  'pinky_finger_dip',
+  'pinky_finger_tip',
+];
+
+/**
+ * Reference points for measuring the angle at each hand joint: MCPs measure
+ * knuckle flexion against the wrist, PIPs measure finger curl (mcp → tip),
+ * DIPs measure fingertip curl. Wrist and fingertips have no meaningful angle.
+ */
+export const HAND_ANATOMICAL_REFERENCES: Record<string, [string, string]> = {
+  thumb_cmc: ['wrist', 'thumb_mcp'],
+  thumb_mcp: ['thumb_cmc', 'thumb_ip'],
+  thumb_ip: ['thumb_mcp', 'thumb_tip'],
+  index_finger_mcp: ['wrist', 'index_finger_pip'],
+  index_finger_pip: ['index_finger_mcp', 'index_finger_tip'],
+  index_finger_dip: ['index_finger_pip', 'index_finger_tip'],
+  middle_finger_mcp: ['wrist', 'middle_finger_pip'],
+  middle_finger_pip: ['middle_finger_mcp', 'middle_finger_tip'],
+  middle_finger_dip: ['middle_finger_pip', 'middle_finger_tip'],
+  ring_finger_mcp: ['wrist', 'ring_finger_pip'],
+  ring_finger_pip: ['ring_finger_mcp', 'ring_finger_tip'],
+  ring_finger_dip: ['ring_finger_pip', 'ring_finger_tip'],
+  pinky_finger_mcp: ['wrist', 'pinky_finger_pip'],
+  pinky_finger_pip: ['pinky_finger_mcp', 'pinky_finger_tip'],
+  pinky_finger_dip: ['pinky_finger_pip', 'pinky_finger_tip'],
+};
+
+/** The 12 body bone segments every skeleton overlay draws. */
+export const BODY_CONNECTIONS: [string, string][] = [
+  ['left_shoulder', 'right_shoulder'],
+  ['left_shoulder', 'left_elbow'],
+  ['left_elbow', 'left_wrist'],
+  ['right_shoulder', 'right_elbow'],
+  ['right_elbow', 'right_wrist'],
+  ['left_shoulder', 'left_hip'],
+  ['right_shoulder', 'right_hip'],
+  ['left_hip', 'right_hip'],
+  ['left_hip', 'left_knee'],
+  ['left_knee', 'left_ankle'],
+  ['right_hip', 'right_knee'],
+  ['right_knee', 'right_ankle'],
+];
+
+/** The 21 hand bone segments: palm arch + thumb and four finger chains. */
+export const HAND_CONNECTIONS: [string, string][] = [
+  // Palm
+  ['wrist', 'thumb_cmc'],
+  ['wrist', 'index_finger_mcp'],
+  ['wrist', 'pinky_finger_mcp'],
+  ['index_finger_mcp', 'middle_finger_mcp'],
+  ['middle_finger_mcp', 'ring_finger_mcp'],
+  ['ring_finger_mcp', 'pinky_finger_mcp'],
+  // Thumb
+  ['thumb_cmc', 'thumb_mcp'],
+  ['thumb_mcp', 'thumb_ip'],
+  ['thumb_ip', 'thumb_tip'],
+  // Index
+  ['index_finger_mcp', 'index_finger_pip'],
+  ['index_finger_pip', 'index_finger_dip'],
+  ['index_finger_dip', 'index_finger_tip'],
+  // Middle
+  ['middle_finger_mcp', 'middle_finger_pip'],
+  ['middle_finger_pip', 'middle_finger_dip'],
+  ['middle_finger_dip', 'middle_finger_tip'],
+  // Ring
+  ['ring_finger_mcp', 'ring_finger_pip'],
+  ['ring_finger_pip', 'ring_finger_dip'],
+  ['ring_finger_dip', 'ring_finger_tip'],
+  // Pinky
+  ['pinky_finger_mcp', 'pinky_finger_pip'],
+  ['pinky_finger_pip', 'pinky_finger_dip'],
+  ['pinky_finger_dip', 'pinky_finger_tip'],
+];
+
+// ---- Per-mode lookups ----
+
+export function keypointNamesForMode(mode: TrackingMode): readonly string[] {
+  return mode === 'hand' ? HAND_KEYPOINT_NAMES : VALID_KEYPOINT_NAMES;
+}
+
+export function referencesForMode(mode: TrackingMode): Record<string, [string, string]> {
+  return mode === 'hand' ? HAND_ANATOMICAL_REFERENCES : ANATOMICAL_REFERENCES;
+}
+
+export function connectionsForMode(mode: TrackingMode): [string, string][] {
+  return mode === 'hand' ? HAND_CONNECTIONS : BODY_CONNECTIONS;
+}
+
+/** Two stable keypoints used for in-frame checks and ghost-skeleton anchoring. */
+export function anchorPairForMode(mode: TrackingMode): [string, string] {
+  return mode === 'hand'
+    ? ['wrist', 'middle_finger_mcp']
+    : ['left_shoulder', 'right_shoulder'];
+}
+
 /** Minimal shape of a recorded demo both admin pages share. */
 export interface RecordedDemoFrames {
   frames: Array<{ pose: Pose }>;
@@ -498,8 +774,11 @@ export interface RecordedDemoFrames {
 
 const MIN_VISIBLE_FRAMES = 10; // pooled frames a joint needs before we trust its stats
 const MIN_VISIBLE_RATIO = 0.4; // joint must be measurable in this share of all frames
-const MOVING_ROM_THRESHOLD = 25; // degrees of motion that marks a joint as exercised
-const MOVING_DISPLACEMENT_PX = 40; // keypoint travel that marks a body part as moving
+// Degrees of motion that mark a joint as exercised / pixel travel that marks a
+// part as moving. Hands sweep smaller angles (thumb opposition is ~15–30°) and
+// occupy far fewer pixels than a body, so their thresholds are tighter.
+const MOVING_ROM_THRESHOLD: Record<TrackingMode, number> = { body: 25, hand: 15 };
+const MOVING_DISPLACEMENT_PX: Record<TrackingMode, number> = { body: 40, hand: 25 };
 
 /** Centered moving average — MoveNet angles jitter several degrees frame to frame. */
 function smoothSeries(values: number[], windowSize = 5): number[] {
@@ -566,8 +845,8 @@ function collectJointStats(
 }
 
 /** Keypoints that travel far from where they started, in any demo. */
-function detectMovingKeypoints(demos: RecordedDemoFrames[]): string[] {
-  const validNames = new Set(VALID_KEYPOINT_NAMES);
+function detectMovingKeypoints(demos: RecordedDemoFrames[], mode: TrackingMode): string[] {
+  const validNames = new Set(keypointNamesForMode(mode));
   const moving = new Set<string>();
 
   for (const demo of demos) {
@@ -578,7 +857,7 @@ function detectMovingKeypoints(demos: RecordedDemoFrames[]): string[] {
         const ref = firstSeen[kp.name];
         if (!ref) {
           firstSeen[kp.name] = { x: kp.x, y: kp.y };
-        } else if (Math.hypot(kp.x - ref.x, kp.y - ref.y) >= MOVING_DISPLACEMENT_PX) {
+        } else if (Math.hypot(kp.x - ref.x, kp.y - ref.y) >= MOVING_DISPLACEMENT_PX[mode]) {
           moving.add(kp.name);
         }
       }
@@ -595,18 +874,22 @@ function detectMovingKeypoints(demos: RecordedDemoFrames[]): string[] {
  * (same math the session engine uses), so the therapist never has to translate
  * "arm at shoulder height" into degrees by hand.
  *
- * - Joints whose angle sweeps ≥ MOVING_ROM_THRESHOLD are treated as the exercised
- *   joints. The target is the extreme of the movement (the end furthest from the
- *   rest pose), with a tolerance band tight enough to exclude the rest pose —
- *   otherwise the rep counter would fire while the patient just stands there.
+ * - Joints whose angle sweeps past the mode's ROM threshold are treated as the
+ *   exercised joints. The target is the extreme of the movement (the end furthest
+ *   from the rest pose), with a tolerance band tight enough to exclude the rest
+ *   pose — otherwise the rep counter would fire while the patient just stands there.
  * - If nothing sweeps that far, the recording is a static hold: every reliably
  *   visible joint gets a criterion around its median angle.
- * - Reference points always come from ANATOMICAL_REFERENCES.
+ * - Reference points always come from the mode's anatomical reference table.
  *
  * Returns the exact PoseCriteria shape the session engine consumes. Criteria may
  * be empty when no joint was visible reliably enough.
  */
-export function deriveCriteriaFromRecordings(demos: RecordedDemoFrames[]): PoseCriteria {
+export function deriveCriteriaFromRecordings(
+  demos: RecordedDemoFrames[],
+  mode: TrackingMode = 'body'
+): PoseCriteria {
+  const refTable = referencesForMode(mode);
   const usable = demos.filter((d) => d.frames.length >= 2);
   const totalFrames = usable.reduce((sum, d) => sum + d.frames.length, 0);
 
@@ -616,7 +899,7 @@ export function deriveCriteriaFromRecordings(demos: RecordedDemoFrames[]): PoseC
   const jointStats: Record<string, JointDemoStats> = {};
   const perDemoStats: Record<string, JointDemoStats[]> = {};
   if (totalFrames > 0) {
-    for (const [joint, refs] of Object.entries(ANATOMICAL_REFERENCES)) {
+    for (const [joint, refs] of Object.entries(refTable)) {
       const perDemo = usable
         .map((d) => collectJointStats(d, joint, refs))
         .filter((s): s is JointDemoStats => s !== null);
@@ -638,14 +921,15 @@ export function deriveCriteriaFromRecordings(demos: RecordedDemoFrames[]): PoseC
 
   const criteria: AngleCriterion[] = [];
   const movingJoints = Object.entries(jointStats)
-    .filter(([, s]) => s.p95 - s.p5 >= MOVING_ROM_THRESHOLD)
+    .filter(([, s]) => s.p95 - s.p5 >= MOVING_ROM_THRESHOLD[mode])
     .sort(([, a], [, b]) => b.p95 - b.p5 - (a.p95 - a.p5)); // widest sweep first
 
   if (movingJoints.length > 0) {
     for (const [joint, s] of movingJoints) {
-      // Target = the movement extreme furthest from the rest pose. Since the
-      // sweep is ≥ 25°, that extreme is ≥ 12.5° from rest, so a 10–20° half-band
-      // scaled to the movement always leaves the rest pose outside the band.
+      // Target = the movement extreme furthest from the rest pose. The sweep
+      // meets the mode's ROM threshold, so that extreme sits at least half the
+      // threshold from rest and the scaled half-band below always leaves the
+      // rest pose outside the band.
       const usesP95 = Math.abs(s.p95 - s.start) >= Math.abs(s.p5 - s.start);
       const target = usesP95 ? s.p95 : s.p5;
       let halfBand = Math.min(20, Math.max(10, Math.abs(target - s.start) * 0.4));
@@ -666,7 +950,7 @@ export function deriveCriteriaFromRecordings(demos: RecordedDemoFrames[]): PoseC
         minAngle: Math.max(0, Math.round(target - halfBand)),
         maxAngle: Math.min(180, Math.round(target + halfBand)),
         restAngle: Math.round(s.start),
-        relativeTo: [...ANATOMICAL_REFERENCES[joint]] as [string, string],
+        relativeTo: [...refTable[joint]] as [string, string],
       });
     }
   } else {
@@ -687,14 +971,14 @@ export function deriveCriteriaFromRecordings(demos: RecordedDemoFrames[]): PoseC
         targetAngle: Math.round(s.median),
         minAngle: Math.max(0, Math.round(s.median - halfBand)),
         maxAngle: Math.min(180, Math.round(s.median + halfBand)),
-        relativeTo: [...ANATOMICAL_REFERENCES[joint]] as [string, string],
+        relativeTo: [...refTable[joint]] as [string, string],
       });
     }
   }
 
   // Everything the criteria reference must be visible during a session, plus
   // whatever visibly moved (drives the skeleton highlight in the editor).
-  const targetBodyParts = new Set<string>(detectMovingKeypoints(usable));
+  const targetBodyParts = new Set<string>(detectMovingKeypoints(usable, mode));
   for (const c of criteria) {
     targetBodyParts.add(c.joint);
     targetBodyParts.add(c.relativeTo[0]);

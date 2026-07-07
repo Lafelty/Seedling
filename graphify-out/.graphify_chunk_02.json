@@ -1,0 +1,139 @@
+{
+  "nodes": [
+    {
+      "id": "picture_img_0427_mood_calendar_screenshot",
+      "label": "Mood-Face Calendar Screenshot (Monthly View)",
+      "file_type": "image",
+      "source_file": "C:\\Users\\ASUS\\Desktop\\MedProj\\Picture\\IMG_0427.JPG",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "picture_img_0427_mood_face_day_indicator",
+      "label": "Mood Face Day Indicator",
+      "file_type": "concept",
+      "source_file": "C:\\Users\\ASUS\\Desktop\\MedProj\\Picture\\IMG_0427.JPG",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "picture_img_0427_color_coded_mood_scale",
+      "label": "Color-Coded Mood Scale (yellow=very happy, light green=happy, dark green=neutral/sad, grey=no data)",
+      "file_type": "concept",
+      "source_file": "C:\\Users\\ASUS\\Desktop\\MedProj\\Picture\\IMG_0427.JPG",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "picture_img_0427_weekly_calendar_grid",
+      "label": "Mon-Sun Weekly Calendar Grid Layout (dark theme)",
+      "file_type": "concept",
+      "source_file": "C:\\Users\\ASUS\\Desktop\\MedProj\\Picture\\IMG_0427.JPG",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "components_dayface_dayface",
+      "label": "DayFace Component",
+      "file_type": "code",
+      "source_file": "C:\\Users\\ASUS\\Desktop\\MedProj\\Picture\\IMG_0427.JPG",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    }
+  ],
+  "edges": [
+    {
+      "source": "picture_img_0427_mood_calendar_screenshot",
+      "target": "picture_img_0427_mood_face_day_indicator",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "C:\\Users\\ASUS\\Desktop\\MedProj\\Picture\\IMG_0427.JPG",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "picture_img_0427_mood_calendar_screenshot",
+      "target": "picture_img_0427_color_coded_mood_scale",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "C:\\Users\\ASUS\\Desktop\\MedProj\\Picture\\IMG_0427.JPG",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "picture_img_0427_mood_calendar_screenshot",
+      "target": "picture_img_0427_weekly_calendar_grid",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "C:\\Users\\ASUS\\Desktop\\MedProj\\Picture\\IMG_0427.JPG",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "picture_img_0427_mood_face_day_indicator",
+      "target": "picture_img_0427_color_coded_mood_scale",
+      "relation": "conceptually_related_to",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "C:\\Users\\ASUS\\Desktop\\MedProj\\Picture\\IMG_0427.JPG",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "picture_img_0427_mood_calendar_screenshot",
+      "target": "components_dayface_dayface",
+      "relation": "conceptually_related_to",
+      "confidence": "INFERRED",
+      "confidence_score": 0.75,
+      "source_file": "C:\\Users\\ASUS\\Desktop\\MedProj\\Picture\\IMG_0427.JPG",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "components_dayface_dayface",
+      "target": "picture_img_0427_mood_face_day_indicator",
+      "relation": "implements",
+      "confidence": "INFERRED",
+      "confidence_score": 0.75,
+      "source_file": "C:\\Users\\ASUS\\Desktop\\MedProj\\Picture\\IMG_0427.JPG",
+      "source_location": null,
+      "weight": 1.0
+    }
+  ],
+  "hyperedges": [
+    {
+      "id": "mood_face_calendar_ui_pattern",
+      "label": "Mood-Face Calendar UI Pattern",
+      "nodes": [
+        "picture_img_0427_mood_calendar_screenshot",
+        "picture_img_0427_mood_face_day_indicator",
+        "picture_img_0427_color_coded_mood_scale",
+        "picture_img_0427_weekly_calendar_grid"
+      ],
+      "relation": "form",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "C:\\Users\\ASUS\\Desktop\\MedProj\\Picture\\IMG_0427.JPG"
+    }
+  ],
+  "input_tokens": 0,
+  "output_tokens": 0
+}

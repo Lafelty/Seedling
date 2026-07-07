@@ -1,6 +1,6 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
-  transpilePackages: ['@tensorflow/tfjs', '@tensorflow-models/pose-detection'],
+  transpilePackages: ['@tensorflow/tfjs', '@tensorflow-models/pose-detection', '@tensorflow-models/hand-pose-detection'],
   turbopack: {
     resolveAlias: {
       '@mediapipe/pose': './lib/mediapipe-stub.js',

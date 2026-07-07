@@ -5,10 +5,12 @@ import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { createClient } from '@/lib/supabase/client'
 import {
-  initPoseDetector,
-  detectPose,
-  disposePoseDetector,
+  initDetector,
+  detect,
+  disposeDetector,
   deriveCriteriaFromRecordings,
+  connectionsForMode,
+  type TrackingMode,
   type Pose,
 } from '@/lib/poseDetection'
 
@@ -36,15 +38,31 @@ export default function NewExercisePage() {
   const [recordingState, setRecordingState] = useState<RecordingState>('setup')
   const [countdown, setCountdown] = useState(3)
   const [cameraError, setCameraError] = useState<string | null>(null)
-  const [currentPose, setCurrentPose] = useState<Pose | null>(null)
   const [recordings, setRecordings] = useState<RecordedDemo[]>([])
-  const [currentRecording, setCurrentRecording] = useState<RecordedFrame[]>([])
+  // True when the detector currently sees nothing — drives the framing hint.
+  // Updated only on transitions (see the detect loop), never per frame.
+  const [noSubject, setNoSubject] = useState(false)
+  const noSubjectRef = useRef(false)
+
+  // Captured frames live in a ref, not state: appending to a growing state array
+  // every animation frame re-rendered the whole page 30×/s (O(n²) copies), which
+  // was the recording lag. The ref is drained in stopRecording.
+  const recordedFramesRef = useRef<RecordedFrame[]>([])
+  // Lets the detect loop read the live recording state without re-subscribing.
+  const recordingStateRef = useRef<RecordingState>(recordingState)
+  useEffect(() => {
+    recordingStateRef.current = recordingState
+  }, [recordingState])
 
   // Exercise metadata
   const [exerciseName, setExerciseName] = useState('')
   const [exerciseDescription, setExerciseDescription] = useState('')
   const [exerciseType, setExerciseType] = useState<'static' | 'dynamic'>('dynamic')
   const [difficulty, setDifficulty] = useState<'beginner' | 'intermediate' | 'advanced'>('beginner')
+  // Locked once demos exist — mixed-mode demos would corrupt derivation.
+  const [trackingMode, setTrackingMode] = useState<TrackingMode>('body')
+  // False while the mode's model is downloading — no keypoints until then.
+  const [modelReady, setModelReady] = useState(false)
 
   // Camera setup
   useEffect(() => {
@@ -64,11 +82,6 @@ export default function NewExercisePage() {
           videoRef.current.srcObject = stream
           await videoRef.current.play()
         }
-
-        const success = await initPoseDetector()
-        if (!success) {
-          setCameraError('Failed to load pose detection model')
-        }
       } catch (error) {
         console.error('Camera error:', error)
         setCameraError('Camera access denied')
@@ -84,37 +97,75 @@ export default function NewExercisePage() {
       if (animationFrameRef.current) {
         cancelAnimationFrame(animationFrameRef.current)
       }
-      disposePoseDetector()
     }
   }, [])
 
-  // Pose detection loop
+  // Detector lifecycle — separate from the camera so switching tracking mode
+  // swaps models (the facade disposes the other model before loading).
   useEffect(() => {
-    if (!videoRef.current || recordingState === 'setup') return
+    let cancelled = false
+    setModelReady(false)
+
+    ;(async () => {
+      const success = await initDetector(trackingMode)
+      if (cancelled) return
+      if (success) {
+        setModelReady(true)
+      } else {
+        setCameraError('Failed to load pose detection model')
+      }
+    })()
+
+    return () => {
+      cancelled = true
+      disposeDetector()
+    }
+  }, [trackingMode])
+
+  // Pose detection loop — runs a live preview as soon as the model is ready
+  // (including during setup, so hand users can frame their hand before recording).
+  useEffect(() => {
+    if (!modelReady) return
 
     let isRunning = true
+    // Cap detection to ~25 fps. The models can't run faster than this per frame
+    // anyway, and pinning rAF to 60 fps just starves the rest of the page.
+    const DETECT_INTERVAL_MS = 40
+    let lastDetectAt = 0
 
-    const detectLoop = async () => {
-      if (!isRunning || !videoRef.current) return
+    const detectLoop = async (now = 0) => {
+      if (!isRunning) return
+      const video = videoRef.current
 
-      const pose = await detectPose(videoRef.current)
-      setCurrentPose(pose)
+      if (video && video.readyState >= 2 && now - lastDetectAt >= DETECT_INTERVAL_MS) {
+        lastDetectAt = now
+        const pose = await detect(video, trackingMode)
+        if (!isRunning) return // disposed while awaiting the detector
 
-      // If recording, capture frame
-      if (recordingState === 'recording' && pose) {
-        const timestamp = Date.now() - recordingStartTime.current
-        setCurrentRecording((prev) => [...prev, { timestamp, pose }])
-      }
+        if (recordingStateRef.current === 'recording' && pose) {
+          recordedFramesRef.current.push({
+            timestamp: Date.now() - recordingStartTime.current,
+            pose,
+          })
+        }
 
-      // Draw skeleton on canvas
-      if (pose && canvasRef.current) {
-        drawSkeleton(pose)
+        if (pose) {
+          drawSkeleton(pose)
+        } else {
+          clearSkeleton()
+        }
+
+        // Re-render only when visibility flips, not every frame.
+        if (!pose !== noSubjectRef.current) {
+          noSubjectRef.current = !pose
+          setNoSubject(!pose)
+        }
       }
 
       animationFrameRef.current = requestAnimationFrame(detectLoop)
     }
 
-    detectLoop()
+    animationFrameRef.current = requestAnimationFrame(detectLoop)
 
     return () => {
       isRunning = false
@@ -122,7 +173,7 @@ export default function NewExercisePage() {
         cancelAnimationFrame(animationFrameRef.current)
       }
     }
-  }, [recordingState])
+  }, [modelReady, trackingMode])
 
   // Countdown before recording
   useEffect(() => {
@@ -134,7 +185,7 @@ export default function NewExercisePage() {
           clearInterval(interval)
           setRecordingState('recording')
           recordingStartTime.current = Date.now()
-          setCurrentRecording([])
+          recordedFramesRef.current = []
           return 3
         }
         return prev - 1
@@ -143,6 +194,15 @@ export default function NewExercisePage() {
 
     return () => clearInterval(interval)
   }, [recordingState])
+
+  // Wipe the overlay when the detector loses the subject, so a stale skeleton
+  // doesn't freeze on screen.
+  const clearSkeleton = () => {
+    const canvas = canvasRef.current
+    if (!canvas) return
+    const ctx = canvas.getContext('2d')
+    ctx?.clearRect(0, 0, canvas.width, canvas.height)
+  }
 
   const drawSkeleton = (pose: Pose) => {
     const canvas = canvasRef.current
@@ -159,33 +219,22 @@ export default function NewExercisePage() {
     // Clear canvas
     ctx.clearRect(0, 0, canvas.width, canvas.height)
 
-    // Draw keypoints
+    // Red while recording, green otherwise. Read from the ref because the detect
+    // loop is not re-created on recording-state changes.
+    const color = recordingStateRef.current === 'recording' ? '#ef4444' : '#10b981'
+
+    // Draw keypoints (smaller dots in hand mode — 21 points in a small area)
     pose.keypoints.forEach((kp) => {
       if (kp.score && kp.score > 0.3) {
         ctx.beginPath()
-        ctx.arc(kp.x, kp.y, 5, 0, 2 * Math.PI)
-        ctx.fillStyle = recordingState === 'recording' ? '#ef4444' : '#10b981'
+        ctx.arc(kp.x, kp.y, trackingMode === 'hand' ? 3 : 5, 0, 2 * Math.PI)
+        ctx.fillStyle = color
         ctx.fill()
       }
     })
 
     // Draw skeleton connections
-    const connections = [
-      ['left_shoulder', 'right_shoulder'],
-      ['left_shoulder', 'left_elbow'],
-      ['left_elbow', 'left_wrist'],
-      ['right_shoulder', 'right_elbow'],
-      ['right_elbow', 'right_wrist'],
-      ['left_shoulder', 'left_hip'],
-      ['right_shoulder', 'right_hip'],
-      ['left_hip', 'right_hip'],
-      ['left_hip', 'left_knee'],
-      ['left_knee', 'left_ankle'],
-      ['right_hip', 'right_knee'],
-      ['right_knee', 'right_ankle'],
-    ]
-
-    connections.forEach(([startName, endName]) => {
+    connectionsForMode(trackingMode).forEach(([startName, endName]) => {
       const start = pose.keypoints.find((kp) => kp.name === startName)
       const end = pose.keypoints.find((kp) => kp.name === endName)
 
@@ -200,7 +249,7 @@ export default function NewExercisePage() {
         ctx.beginPath()
         ctx.moveTo(start.x, start.y)
         ctx.lineTo(end.x, end.y)
-        ctx.strokeStyle = recordingState === 'recording' ? '#ef4444' : '#10b981'
+        ctx.strokeStyle = color
         ctx.lineWidth = 2
         ctx.stroke()
       }
@@ -213,7 +262,8 @@ export default function NewExercisePage() {
   }
 
   const stopRecording = () => {
-    if (currentRecording.length === 0) {
+    const frames = recordedFramesRef.current
+    if (frames.length === 0) {
       alert('No frames recorded. Try again.')
       setRecordingState('setup')
       return
@@ -221,13 +271,13 @@ export default function NewExercisePage() {
 
     const demo: RecordedDemo = {
       id: `demo-${Date.now()}`,
-      frames: currentRecording,
-      duration: currentRecording[currentRecording.length - 1].timestamp,
+      frames: [...frames],
+      duration: frames[frames.length - 1].timestamp,
       recordedAt: new Date(),
     }
 
     setRecordings((prev) => [...prev, demo])
-    setCurrentRecording([])
+    recordedFramesRef.current = []
     setRecordingState('reviewing')
   }
 
@@ -254,13 +304,14 @@ export default function NewExercisePage() {
       // Derive working validation criteria straight from the recordings —
       // target angles, tolerance bands, and reference points the therapist
       // can review in the editor instead of typing degrees from scratch.
-      const derivedCriteria = deriveCriteriaFromRecordings(recordings)
+      const derivedCriteria = deriveCriteriaFromRecordings(recordings, trackingMode)
 
       const { data, error } = await supabase.from('exercises').insert({
         name: exerciseName,
         description: exerciseDescription || null,
         exercise_type: exerciseType,
         difficulty: difficulty,
+        tracking_mode: trackingMode,
         recorded_paths: recordings.map((r) => ({
           id: r.id,
           frames: r.frames,
@@ -330,6 +381,24 @@ export default function NewExercisePage() {
                       className="absolute inset-0 w-full h-full scale-x-[-1]"
                     />
 
+                    {/* Model status — no keypoints can appear until this clears */}
+                    {!modelReady && (
+                      <div className="absolute top-4 right-4 flex items-center gap-2 bg-black/70 text-white px-3 py-1 rounded-full">
+                        <div className="w-2 h-2 bg-amber-400 rounded-full animate-pulse" />
+                        <span className="text-sm">
+                          Loading {trackingMode === 'hand' ? 'hand' : 'pose'} model…
+                        </span>
+                      </div>
+                    )}
+                    {modelReady && recordingState !== 'recording' && (
+                      <div className="absolute top-4 right-4 flex items-center gap-2 bg-black/70 text-white px-3 py-1 rounded-full">
+                        <div className="w-2 h-2 bg-green-400 rounded-full" />
+                        <span className="text-sm">
+                          {trackingMode === 'hand' ? 'Hand' : 'Pose'} model ready
+                        </span>
+                      </div>
+                    )}
+
                     {/* Recording indicator */}
                     {recordingState === 'recording' && (
                       <div className="absolute top-4 left-4 flex items-center gap-2 bg-red-600 text-white px-3 py-1 rounded-full">
@@ -344,6 +413,20 @@ export default function NewExercisePage() {
                         <div className="text-8xl font-bold text-white">{countdown}</div>
                       </div>
                     )}
+
+                    {/* Framing hint — shown only while the detector sees nothing */}
+                    {modelReady &&
+                      noSubject &&
+                      recordingState !== 'reviewing' &&
+                      recordingState !== 'saving' && (
+                        <div className="absolute inset-x-4 bottom-4 flex items-center justify-center bg-black/70 text-white px-4 py-2 rounded-xl text-center">
+                          <span className="text-sm">
+                            {trackingMode === 'hand'
+                              ? 'No hand detected — hold your open hand up to the camera, palm facing it, about 30–40 cm away.'
+                              : 'No body detected — step back so your head and shoulders are in frame.'}
+                          </span>
+                        </div>
+                      )}
                   </>
                 )}
               </div>
@@ -405,6 +488,37 @@ export default function NewExercisePage() {
               <h2 className="text-xl font-serif text-[#1F2421] mb-4">Exercise Details</h2>
 
               <div className="space-y-4">
+                <div>
+                  <label className="block text-sm font-medium text-[#1F2421] mb-1">
+                    Tracking Mode
+                  </label>
+                  <div className="grid grid-cols-2 gap-2">
+                    {([
+                      { value: 'body', label: 'Body pose' },
+                      { value: 'hand', label: 'Hand — finger & grip' },
+                    ] as const).map((opt) => (
+                      <button
+                        key={opt.value}
+                        type="button"
+                        onClick={() => setTrackingMode(opt.value)}
+                        disabled={recordings.length > 0}
+                        className={`px-3 py-2 rounded-lg text-sm font-medium border transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${
+                          trackingMode === opt.value
+                            ? 'bg-[#C4612F] text-white border-[#C4612F]'
+                            : 'bg-white text-[#1F2421] border-[#E7E1D7] hover:border-[#C4612F]'
+                        }`}
+                      >
+                        {opt.label}
+                      </button>
+                    ))}
+                  </div>
+                  {recordings.length > 0 && (
+                    <p className="text-[11px] text-[#5C635D] mt-1">
+                      Delete all demos to change the tracking mode.
+                    </p>
+                  )}
+                </div>
+
                 <div>
                   <label className="block text-sm font-medium text-[#1F2421] mb-1">
                     Exercise Name *

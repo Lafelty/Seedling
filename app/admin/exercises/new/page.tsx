@@ -44,11 +44,6 @@ export default function NewExercisePage() {
   const [noSubject, setNoSubject] = useState(false)
   const noSubjectRef = useRef(false)
 
-  // TEMP diagnostic: throttled readout of what the detector returns each frame.
-  // Remove once hand tracking is confirmed drawing on real webcams.
-  const [debugLine, setDebugLine] = useState('')
-  const lastDebugAt = useRef(0)
-
   // Captured frames live in a ref, not state: appending to a growing state array
   // every animation frame re-rendered the whole page 30×/s (O(n²) copies), which
   // was the recording lag. The ref is drained in stopRecording.
@@ -165,19 +160,6 @@ export default function NewExercisePage() {
           noSubjectRef.current = !pose
           setNoSubject(!pose)
         }
-
-        // TEMP diagnostic, throttled to ~4/s.
-        if (Date.now() - lastDebugAt.current > 250) {
-          lastDebugAt.current = Date.now()
-          const cv = canvasRef.current
-          const withScore = pose ? pose.keypoints.filter((k) => (k.score ?? 0) > 0.3).length : 0
-          const k0 = pose?.keypoints[0]
-          setDebugLine(
-            pose
-              ? `${trackingMode} · n=${pose.keypoints.length} drawn=${withScore} k0=(${k0?.x?.toFixed(0)},${k0?.y?.toFixed(0)}) s=${(k0?.score ?? -1).toFixed(2)} · canvas=${cv?.width}x${cv?.height} vid=${video.videoWidth}x${video.videoHeight}`
-              : `${trackingMode} · no pose · vid=${video.videoWidth}x${video.videoHeight}`
-          )
-        }
       }
 
       animationFrameRef.current = requestAnimationFrame(detectLoop)
@@ -222,6 +204,37 @@ export default function NewExercisePage() {
     ctx?.clearRect(0, 0, canvas.width, canvas.height)
   }
 
+  // Draw one keypoint set (dots + bones) in the given colour.
+  const drawKeypointSet = (
+    ctx: CanvasRenderingContext2D,
+    keypoints: Pose['keypoints'],
+    color: string
+  ) => {
+    // Dots — smaller in hand mode (21 points in a small area)
+    keypoints.forEach((kp) => {
+      if (kp.score && kp.score > 0.3) {
+        ctx.beginPath()
+        ctx.arc(kp.x, kp.y, trackingMode === 'hand' ? 3 : 5, 0, 2 * Math.PI)
+        ctx.fillStyle = color
+        ctx.fill()
+      }
+    })
+
+    // Bones
+    connectionsForMode(trackingMode).forEach(([startName, endName]) => {
+      const start = keypoints.find((kp) => kp.name === startName)
+      const end = keypoints.find((kp) => kp.name === endName)
+      if (start && end && start.score && start.score > 0.3 && end.score && end.score > 0.3) {
+        ctx.beginPath()
+        ctx.moveTo(start.x, start.y)
+        ctx.lineTo(end.x, end.y)
+        ctx.strokeStyle = color
+        ctx.lineWidth = 2
+        ctx.stroke()
+      }
+    })
+  }
+
   const drawSkeleton = (pose: Pose) => {
     const canvas = canvasRef.current
     const video = videoRef.current
@@ -233,45 +246,15 @@ export default function NewExercisePage() {
     // Match canvas size to video
     canvas.width = video.videoWidth
     canvas.height = video.videoHeight
-
-    // Clear canvas
     ctx.clearRect(0, 0, canvas.width, canvas.height)
 
     // Red while recording, green otherwise. Read from the ref because the detect
     // loop is not re-created on recording-state changes.
     const color = recordingStateRef.current === 'recording' ? '#ef4444' : '#10b981'
 
-    // Draw keypoints (smaller dots in hand mode — 21 points in a small area)
-    pose.keypoints.forEach((kp) => {
-      if (kp.score && kp.score > 0.3) {
-        ctx.beginPath()
-        ctx.arc(kp.x, kp.y, trackingMode === 'hand' ? 3 : 5, 0, 2 * Math.PI)
-        ctx.fillStyle = color
-        ctx.fill()
-      }
-    })
-
-    // Draw skeleton connections
-    connectionsForMode(trackingMode).forEach(([startName, endName]) => {
-      const start = pose.keypoints.find((kp) => kp.name === startName)
-      const end = pose.keypoints.find((kp) => kp.name === endName)
-
-      if (
-        start &&
-        end &&
-        start.score &&
-        start.score > 0.3 &&
-        end.score &&
-        end.score > 0.3
-      ) {
-        ctx.beginPath()
-        ctx.moveTo(start.x, start.y)
-        ctx.lineTo(end.x, end.y)
-        ctx.strokeStyle = color
-        ctx.lineWidth = 2
-        ctx.stroke()
-      }
-    })
+    // Primary hand/body plus any additional detected hands (hand mode).
+    drawKeypointSet(ctx, pose.keypoints, color)
+    pose.extraHands?.forEach((h) => drawKeypointSet(ctx, h.keypoints, color))
   }
 
   const startRecording = () => {
@@ -422,13 +405,6 @@ export default function NewExercisePage() {
                       <div className="absolute top-4 left-4 flex items-center gap-2 bg-red-600 text-white px-3 py-1 rounded-full">
                         <div className="w-2 h-2 bg-white rounded-full animate-pulse" />
                         <span className="text-sm font-medium">Recording</span>
-                      </div>
-                    )}
-
-                    {/* TEMP diagnostic readout */}
-                    {debugLine && (
-                      <div className="absolute bottom-2 left-2 right-2 bg-black/80 text-green-300 text-[10px] font-mono px-2 py-1 rounded break-all">
-                        {debugLine}
                       </div>
                     )}
 

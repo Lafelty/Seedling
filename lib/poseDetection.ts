@@ -29,6 +29,13 @@ export interface Pose {
     name?: string;
   }>;
   score?: number;
+  // Hand mode only: any additional detected hands beyond the primary one, for
+  // overlay drawing. The validation/derivation engine ignores this and works off
+  // `keypoints`, so a two-hand recording still derives criteria from the primary.
+  extraHands?: Array<{
+    keypoints: Array<{ x: number; y: number; score?: number; name?: string }>;
+    score?: number;
+  }>;
 }
 
 export interface ShoulderRaiseAnalysis {
@@ -302,9 +309,7 @@ export async function initHandDetector(): Promise<boolean> {
       // 'lite' over 'full': the full model runs ~6 s/frame on webgl — far too
       // slow for a live preview. lite keeps all 21 landmarks at real-time speed.
       modelType: 'lite',
-      // detectHand only ever returns the single most-confident hand, so tracking
-      // a second one is pure wasted compute every frame.
-      maxHands: 1,
+      maxHands: 2,
     });
 
     if (gen !== handGen) {
@@ -362,23 +367,27 @@ export async function detectHand(video: HTMLVideoElement): Promise<Pose | null> 
     // images), and NaN slips through ?? — sanitize before it poisons every
     // downstream confidence check (NaN > 0.5 is false, NaN is falsy).
     const scoreOf = (v: any) => (Number.isFinite(v) ? (v as number) : undefined);
-    const hand = hands.reduce((best: any, h: any) =>
-      (scoreOf(h.score) ?? 0) > (scoreOf(best.score) ?? 0) ? h : best
-    );
     // The detector only returns hands above its internal palm-detection
     // confidence, so a missing/NaN score still means "confidently detected".
-    const handScore = scoreOf(hand.score) ?? 1;
-    return {
-      // tfjs-runtime hand keypoints carry no per-keypoint score, but getKeypoint
-      // rejects anything under 0.5 — copy the hand's overall score onto each one.
-      keypoints: hand.keypoints.map((kp: any) => ({
-        x: kp.x,
-        y: kp.y,
-        name: kp.name,
-        score: scoreOf(kp.score) ?? handScore,
-      })),
-      score: handScore,
+    const toSet = (h: any) => {
+      const s = scoreOf(h.score) ?? 1;
+      return {
+        // tfjs-runtime hand keypoints carry no per-keypoint score, but getKeypoint
+        // rejects anything under 0.5 — copy the hand's overall score onto each one.
+        keypoints: h.keypoints.map((kp: any) => ({
+          x: kp.x,
+          y: kp.y,
+          name: kp.name,
+          score: scoreOf(kp.score) ?? s,
+        })),
+        score: s,
+      };
     };
+    // Most-confident hand is the primary (drives validation/derivation); any
+    // others ride along in extraHands purely so the overlay can draw them.
+    const sets = hands.map(toSet).sort((a: any, b: any) => (b.score ?? 0) - (a.score ?? 0));
+    const [primary, ...rest] = sets;
+    return { ...primary, extraHands: rest.length > 0 ? rest : undefined };
   } catch (error) {
     console.error('Hand detection error:', error);
     return null;

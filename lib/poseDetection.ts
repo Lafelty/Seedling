@@ -3,6 +3,9 @@ let poseDetection: typeof import('@tensorflow-models/pose-detection') | null = n
 let detector: any = null;
 let handPoseDetection: typeof import('@tensorflow-models/hand-pose-detection') | null = null;
 let handDetector: any = null;
+// Reused frame buffer for hand detection — see detectHand for why video frames
+// are copied onto a canvas before estimateHands.
+let handInputCanvas: HTMLCanvasElement | null = null;
 
 // Generation counters, bumped on every dispose. Model loads take seconds; a
 // dispose (mode switch, unmount, HMR) can land while createDetector is still
@@ -338,7 +341,22 @@ export async function detectHand(video: HTMLVideoElement): Promise<Pose | null> 
   }
 
   try {
-    const hands = await handDetector.estimateHands(video);
+    // MediaPipeHands (tfjs runtime) returns NaN keypoint coordinates when given
+    // an HTMLVideoElement directly — MoveNet doesn't, which is why body tracking
+    // worked and hands drew nothing. Copying the current frame onto a canvas
+    // first yields valid pixel coordinates. The canvas is sized to the video's
+    // native resolution, so coords land in the same space the overlay expects.
+    const w = video.videoWidth;
+    const h = video.videoHeight;
+    if (!w || !h) return null;
+    if (!handInputCanvas) handInputCanvas = document.createElement('canvas');
+    if (handInputCanvas.width !== w) handInputCanvas.width = w;
+    if (handInputCanvas.height !== h) handInputCanvas.height = h;
+    const hctx = handInputCanvas.getContext('2d');
+    if (!hctx) return null;
+    hctx.drawImage(video, 0, 0, w, h);
+
+    const hands = await handDetector.estimateHands(handInputCanvas);
     if (!hands || hands.length === 0) return null;
     // tfjs runtime reports score: NaN for video inputs (finite only for static
     // images), and NaN slips through ?? — sanitize before it poisons every

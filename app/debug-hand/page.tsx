@@ -69,9 +69,8 @@ export default function DebugHandPage() {
         }
         detector.dispose()
 
-        // Phase 2: the app's own facade against a synthetic camera stream —
-        // exercises initDetector/detect exactly like the admin/session pages do.
-        const { initDetector, detect, disposeDetector } = await import('@/lib/poseDetection')
+        // Phase 2: lite model on a synthetic video, with the depthwise-conv
+        // packing flag toggled — isolates the NaN-coordinate bug.
         const canvas = document.createElement('canvas')
         canvas.width = 640
         canvas.height = 480
@@ -85,17 +84,44 @@ export default function DebugHandPage() {
         await new Promise((r) => setTimeout(r, 300))
         log.push(`video: ${video.videoWidth}x${video.videoHeight} readyState=${video.readyState}`)
 
-        const ok = await initDetector('hand')
-        log.push(`initDetector('hand'): ${ok}`)
-        let detected = 0
-        for (let i = 0; i < 3; i++) {
-          ctx.drawImage(img, 0, 0, 640, 480) // keep stream frames flowing
-          const pose = await detect(video, 'hand')
-          log.push(`  detect #${i + 1}: ${pose ? `${pose.keypoints.length} kps, score=${pose.score?.toFixed(3)}, kp0.score=${pose.keypoints[0]?.score?.toFixed(3)}` : 'null'}`)
-          if (pose) detected++
+        const run = async (label: string, modelType: 'full' | 'lite', input: any, staticImageMode?: boolean) => {
+          const d = await hpd.createDetector(hpd.SupportedModels.MediaPipeHands, {
+            runtime: 'tfjs',
+            modelType,
+            maxHands: 1,
+          })
+          let k0: any = null
+          let n = 0
+          for (let i = 0; i < 3; i++) {
+            ctx.drawImage(img, 0, 0, 640, 480)
+            const cfg = staticImageMode === undefined ? undefined : { staticImageMode }
+            const hands = await d.estimateHands(input, cfg)
+            n = hands?.[0]?.keypoints?.length ?? 0
+            k0 = hands?.[0]?.keypoints?.[0] ?? null
+          }
+          d.dispose()
+          log.push(`${label}: n=${n} kp0=${k0 ? `(${Math.round(k0.x)},${Math.round(k0.y)})` : 'none'} nan=${k0 ? Number.isNaN(k0.x) : 'n/a'}`)
         }
-        log.push(`facade video detections: ${detected}/3`)
-        disposeDetector()
+
+        await run('lite+video', 'lite', video)
+
+        // The fix: copy the current video frame onto a canvas and detect on that.
+        const off = document.createElement('canvas')
+        off.width = 640
+        off.height = 480
+        const octx = off.getContext('2d')!
+        const dLite = await hpd.createDetector(hpd.SupportedModels.MediaPipeHands, {
+          runtime: 'tfjs', modelType: 'lite', maxHands: 1,
+        })
+        let ck0: any = null
+        for (let i = 0; i < 3; i++) {
+          ctx.drawImage(img, 0, 0, 640, 480)
+          octx.drawImage(video, 0, 0, 640, 480)
+          const hands = await dLite.estimateHands(off)
+          ck0 = hands?.[0]?.keypoints?.[0] ?? null
+        }
+        dLite.dispose()
+        log.push(`lite+canvas-from-video: kp0=${ck0 ? `(${Math.round(ck0.x)},${Math.round(ck0.y)})` : 'none'} nan=${ck0 ? Number.isNaN(ck0.x) : 'n/a'}`)
         setOut('RESULT\n' + log.join('\n'))
       } catch (e: any) {
         setOut('ERROR\n' + log.join('\n') + '\n' + (e?.message || String(e)) + '\n' + (e?.stack || ''))

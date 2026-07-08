@@ -78,7 +78,7 @@ export default function LevelsPage() {
   return (
     <>
       <main
-        className="min-h-screen max-w-2xl mx-auto px-4 py-8 pb-24"
+        className="min-h-screen max-w-4xl mx-auto px-4 py-8 pb-24"
         style={{ background: 'linear-gradient(180deg, rgba(74, 107, 90, 0.07), transparent 360px)' }}
       >
         {/* Header */}
@@ -105,7 +105,7 @@ export default function LevelsPage() {
             </Link>
           </div>
         ) : (
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(240px, 1fr))', gap: 'var(--space-4)' }}>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(240px, 300px))', gap: 'var(--space-4)', justifyContent: 'center' }}>
             {visibleBoxes.map((node, index) => {
               const locked = node.status === 'locked'
               const cleared = node.status === 'cleared'

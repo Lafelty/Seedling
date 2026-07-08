@@ -385,50 +385,55 @@ export default function EditExercisePage({ params }: { params: Promise<{ id: str
     const scaleX = canvas.width / 640
     const scaleY = canvas.height / 480
 
-    // Draw keypoints
-    pose.keypoints.forEach((kp) => {
-      if (kp.score && kp.score > 0.3) {
-        ctx.beginPath()
-        ctx.arc(kp.x * scaleX, kp.y * scaleY, mode === 'hand' ? 4 : 6, 0, 2 * Math.PI)
+    // Paint one hand/body set: dots (+ labels on the primary) and bones.
+    const paintSet = (keypoints: Pose['keypoints'], withLabels: boolean) => {
+      keypoints.forEach((kp) => {
+        if (kp.score && kp.score > 0.3) {
+          ctx.beginPath()
+          ctx.arc(kp.x * scaleX, kp.y * scaleY, mode === 'hand' ? 4 : 6, 0, 2 * Math.PI)
 
-        // Highlight target body parts
-        if (targetBodyParts.includes(kp.name || '')) {
-          ctx.fillStyle = '#C4612F'
-        } else {
-          ctx.fillStyle = '#10b981'
+          // Highlight target body parts
+          if (targetBodyParts.includes(kp.name || '')) {
+            ctx.fillStyle = '#C4612F'
+          } else {
+            ctx.fillStyle = '#10b981'
+          }
+          ctx.fill()
+
+          // Label — 21 hand labels are unreadable, so only mark the fingertips
+          if (withLabels && kp.name && (mode !== 'hand' || kp.name.endsWith('_tip'))) {
+            ctx.fillStyle = '#1F2421'
+            ctx.font = '10px sans-serif'
+            ctx.fillText(kp.name, kp.x * scaleX + 8, kp.y * scaleY)
+          }
         }
-        ctx.fill()
+      })
 
-        // Label — 21 hand labels are unreadable, so only mark the fingertips
-        if (kp.name && (mode !== 'hand' || kp.name.endsWith('_tip'))) {
-          ctx.fillStyle = '#1F2421'
-          ctx.font = '10px sans-serif'
-          ctx.fillText(kp.name, kp.x * scaleX + 8, kp.y * scaleY)
+      connectionsForMode(mode).forEach(([startName, endName]) => {
+        const start = keypoints.find((kp) => kp.name === startName)
+        const end = keypoints.find((kp) => kp.name === endName)
+
+        if (
+          start &&
+          end &&
+          start.score &&
+          start.score > 0.3 &&
+          end.score &&
+          end.score > 0.3
+        ) {
+          ctx.beginPath()
+          ctx.moveTo(start.x * scaleX, start.y * scaleY)
+          ctx.lineTo(end.x * scaleX, end.y * scaleY)
+          ctx.strokeStyle = '#10b981'
+          ctx.lineWidth = 2
+          ctx.stroke()
         }
-      }
-    })
+      })
+    }
 
-    // Draw skeleton connections
-    connectionsForMode(mode).forEach(([startName, endName]) => {
-      const start = pose.keypoints.find((kp) => kp.name === startName)
-      const end = pose.keypoints.find((kp) => kp.name === endName)
-
-      if (
-        start &&
-        end &&
-        start.score &&
-        start.score > 0.3 &&
-        end.score &&
-        end.score > 0.3
-      ) {
-        ctx.beginPath()
-        ctx.moveTo(start.x * scaleX, start.y * scaleY)
-        ctx.lineTo(end.x * scaleX, end.y * scaleY)
-        ctx.strokeStyle = '#10b981'
-        ctx.lineWidth = 2
-        ctx.stroke()
-      }
-    })
+    // Primary hand/body (with labels), then any additional detected hands.
+    paintSet(pose.keypoints, true)
+    pose.extraHands?.forEach((h) => paintSet(h.keypoints, false))
 
     // Overlay each angle criterion: dashed lines to its reference points and
     // an arc with the measured angle, so the numbers below have a visual form.
@@ -494,27 +499,33 @@ export default function EditExercisePage({ params }: { params: Promise<{ id: str
     const color =
       feedback === 'good' ? '#10b981' : feedback === 'adjust' ? '#ef4444' : '#9ca3af'
 
-    pose.keypoints.forEach((kp) => {
-      if (kp.score && kp.score > 0.3) {
-        ctx.beginPath()
-        ctx.arc(kp.x, kp.y, mode === 'hand' ? 3 : 5, 0, 2 * Math.PI)
-        ctx.fillStyle = color
-        ctx.fill()
-      }
-    })
+    const paintSet = (keypoints: Pose['keypoints']) => {
+      keypoints.forEach((kp) => {
+        if (kp.score && kp.score > 0.3) {
+          ctx.beginPath()
+          ctx.arc(kp.x, kp.y, mode === 'hand' ? 3 : 5, 0, 2 * Math.PI)
+          ctx.fillStyle = color
+          ctx.fill()
+        }
+      })
 
-    connectionsForMode(mode).forEach(([startName, endName]) => {
-      const start = pose.keypoints.find((kp) => kp.name === startName)
-      const end = pose.keypoints.find((kp) => kp.name === endName)
-      if (start && end && start.score && start.score > 0.3 && end.score && end.score > 0.3) {
-        ctx.beginPath()
-        ctx.moveTo(start.x, start.y)
-        ctx.lineTo(end.x, end.y)
-        ctx.strokeStyle = color
-        ctx.lineWidth = 2
-        ctx.stroke()
-      }
-    })
+      connectionsForMode(mode).forEach(([startName, endName]) => {
+        const start = keypoints.find((kp) => kp.name === startName)
+        const end = keypoints.find((kp) => kp.name === endName)
+        if (start && end && start.score && start.score > 0.3 && end.score && end.score > 0.3) {
+          ctx.beginPath()
+          ctx.moveTo(start.x, start.y)
+          ctx.lineTo(end.x, end.y)
+          ctx.strokeStyle = color
+          ctx.lineWidth = 2
+          ctx.stroke()
+        }
+      })
+    }
+
+    // Primary hand/body plus any additional detected hands.
+    paintSet(pose.keypoints)
+    pose.extraHands?.forEach((h) => paintSet(h.keypoints))
   }
 
   const startTest = () => {

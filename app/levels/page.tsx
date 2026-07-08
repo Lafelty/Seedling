@@ -8,6 +8,61 @@ import { buildLevelMap, type CompletedSession, type GroupNode, type LevelExercis
 
 export const dynamic = 'force-dynamic'
 
+/** Circular progress ring with a glyph or number in the middle. */
+function RingBadge({
+  pct,
+  cleared,
+  locked,
+  children,
+  size = 52,
+}: {
+  pct: number
+  cleared: boolean
+  locked: boolean
+  children: React.ReactNode
+  size?: number
+}) {
+  const stroke = 4
+  const r = (size - stroke) / 2
+  const c = 2 * Math.PI * r
+  const off = c - (pct / 100) * c
+  const track = locked ? 'var(--border)' : 'rgba(74, 107, 90, 0.16)'
+  const fill = cleared ? '#C9B88A' : 'var(--primary)'
+  return (
+    <div style={{ position: 'relative', width: size, height: size, flexShrink: 0 }}>
+      <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} style={{ transform: 'rotate(-90deg)' }}>
+        <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke={track} strokeWidth={stroke} />
+        {!locked && (
+          <circle
+            cx={size / 2}
+            cy={size / 2}
+            r={r}
+            fill="none"
+            stroke={fill}
+            strokeWidth={stroke}
+            strokeLinecap="round"
+            strokeDasharray={c}
+            strokeDashoffset={off}
+            className="lvl-ring"
+          />
+        )}
+      </svg>
+      <div
+        style={{
+          position: 'absolute',
+          inset: 0,
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          color: locked ? 'var(--muted)' : cleared ? '#8A7A4E' : 'var(--primary)',
+        }}
+      >
+        {children}
+      </div>
+    </div>
+  )
+}
+
 export default function LevelsPage() {
   const router = useRouter()
   const [loading, setLoading] = useState(true)
@@ -74,12 +129,32 @@ export default function LevelsPage() {
   }
 
   const visibleBoxes = map.filter((node) => node.total > 0)
+  const clearedBoxes = visibleBoxes.filter((n) => n.status === 'cleared').length
+  const overallPct = visibleBoxes.length > 0 ? Math.round((clearedBoxes / visibleBoxes.length) * 100) : 0
+  // The first box that isn't finished is where the patient is "up to".
+  const currentId = visibleBoxes.find((n) => n.status !== 'cleared')?.group.id ?? null
 
   return (
     <>
+      <style>{`
+        .lvl-card {
+          transition: transform var(--dur-fast) var(--ease-out), box-shadow var(--dur-fast) var(--ease-out), border-color var(--dur-fast) var(--ease-out);
+          outline: none;
+        }
+        .lvl-link:hover .lvl-card { transform: translateY(-3px); box-shadow: 0 12px 28px rgba(74, 107, 90, 0.16); }
+        .lvl-link:focus-visible .lvl-card { box-shadow: 0 0 0 3px rgba(74, 107, 90, 0.45); }
+        .lvl-link:active .lvl-card { transform: translateY(-1px); }
+        .lvl-cta svg { transition: transform var(--dur-fast) var(--ease-out); }
+        .lvl-link:hover .lvl-cta svg { transform: translateX(3px); }
+        @media (prefers-reduced-motion: reduce) {
+          .lvl-card, .lvl-cta svg { transition: none; }
+          .lvl-link:hover .lvl-card { transform: none; }
+        }
+      `}</style>
+
       <main
         className="min-h-screen max-w-4xl mx-auto px-4 py-8 pb-24"
-        style={{ background: 'linear-gradient(180deg, rgba(74, 107, 90, 0.07), transparent 360px)' }}
+        style={{ background: 'linear-gradient(180deg, rgba(74, 107, 90, 0.08), transparent 340px)' }}
       >
         {/* Header */}
         <div className="mb-8 animate-fadeIn">
@@ -88,11 +163,38 @@ export default function LevelsPage() {
               <path d="M3 11l9-8 9 8" />
               <path d="M5 9v11h5v-6h4v6h5V9" />
             </svg>
-            <h1 style={{ color: 'var(--primary)' }}>Choose your path</h1>
+            <h1 style={{ color: 'var(--primary)' }}>Your path</h1>
           </div>
           <p style={{ color: 'var(--muted)' }}>
-            Clear every pose in a box to unlock the next one
+            Work through each box of poses at your own pace
           </p>
+
+          {/* Overall progress */}
+          {visibleBoxes.length > 0 && (
+            <div
+              className="card"
+              style={{
+                marginTop: 'var(--space-4)',
+                display: 'flex',
+                alignItems: 'center',
+                gap: 'var(--space-4)',
+                background: 'linear-gradient(160deg, rgba(74, 107, 90, 0.10), var(--surface) 70%)',
+                borderColor: 'rgba(74, 107, 90, 0.22)',
+              }}
+            >
+              <RingBadge pct={overallPct} cleared={overallPct === 100} locked={false} size={56}>
+                <span style={{ fontSize: 'var(--text-sm)', fontWeight: 700 }}>{overallPct}%</span>
+              </RingBadge>
+              <div>
+                <p style={{ fontWeight: 700, color: 'var(--ink)', fontSize: 'var(--text-base)' }}>
+                  {clearedBoxes} of {visibleBoxes.length} boxes complete
+                </p>
+                <p style={{ color: 'var(--muted)', fontSize: 'var(--text-sm)' }}>
+                  {overallPct === 100 ? 'Every box cleared — beautiful work.' : 'Keep going, one pose at a time.'}
+                </p>
+              </div>
+            </div>
+          )}
         </div>
 
         {visibleBoxes.length === 0 ? (
@@ -105,107 +207,143 @@ export default function LevelsPage() {
             </Link>
           </div>
         ) : (
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(240px, 300px))', gap: 'var(--space-4)', justifyContent: 'center' }}>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 320px))', gap: 'var(--space-5)', justifyContent: 'center' }}>
             {visibleBoxes.map((node, index) => {
               const locked = node.status === 'locked'
               const cleared = node.status === 'cleared'
+              const isCurrent = node.group.id === currentId
               const pct = node.total > 0 ? Math.round((node.clearedCount / node.total) * 100) : 0
+              const cta = cleared ? 'Review' : node.clearedCount > 0 ? 'Continue' : 'Start'
+              const statusLabel = locked ? 'Locked' : cleared ? 'Complete' : isCurrent ? 'Current' : 'Open'
 
               const card = (
                 <div
-                  className="card animate-scaleIn"
+                  className="lvl-card card animate-scaleIn"
                   style={{
                     animationDelay: `${index * 60}ms`,
                     height: '100%',
                     display: 'flex',
                     flexDirection: 'column',
-                    gap: 'var(--space-3)',
+                    gap: 'var(--space-4)',
                     background: cleared
-                      ? 'linear-gradient(160deg, rgba(201, 184, 138, 0.20), var(--surface) 70%)'
+                      ? 'linear-gradient(160deg, rgba(201, 184, 138, 0.22), var(--surface) 72%)'
                       : locked
                       ? 'var(--surface)'
-                      : 'linear-gradient(160deg, rgba(74, 107, 90, 0.14), var(--surface) 70%)',
-                    borderColor: locked ? 'var(--border)' : 'rgba(74, 107, 90, 0.35)',
+                      : 'linear-gradient(160deg, rgba(74, 107, 90, 0.13), var(--surface) 72%)',
+                    borderColor: cleared
+                      ? 'rgba(201, 184, 138, 0.55)'
+                      : isCurrent
+                      ? 'var(--primary)'
+                      : locked
+                      ? 'var(--border)'
+                      : 'rgba(74, 107, 90, 0.30)',
+                    borderWidth: isCurrent ? '2px' : '1px',
                     opacity: locked ? 0.6 : 1,
                     filter: locked ? 'grayscale(0.4)' : 'none',
                     cursor: locked ? 'default' : 'pointer',
                   }}
                 >
+                  {/* Top: ring + status chip */}
                   <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 'var(--space-2)' }}>
+                    <RingBadge pct={pct} cleared={cleared} locked={locked}>
+                      {cleared ? (
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
+                          <path d="M5 12l5 5L19 7" />
+                        </svg>
+                      ) : locked ? (
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                          <rect x="5" y="11" width="14" height="9" rx="2" />
+                          <path d="M8 11V7a4 4 0 0 1 8 0v4" />
+                        </svg>
+                      ) : (
+                        <span style={{ fontSize: 'var(--text-base)', fontWeight: 800 }}>{index + 1}</span>
+                      )}
+                    </RingBadge>
+
+                    <span
+                      style={{
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: 'var(--space-1)',
+                        fontSize: 'var(--text-xs)',
+                        fontWeight: 700,
+                        letterSpacing: '0.04em',
+                        textTransform: 'uppercase',
+                        padding: 'var(--space-1) var(--space-3)',
+                        borderRadius: 'var(--radius-full)',
+                        background: cleared
+                          ? 'rgba(201, 184, 138, 0.28)'
+                          : isCurrent
+                          ? 'rgba(74, 107, 90, 0.16)'
+                          : 'rgba(0,0,0,0.04)',
+                        color: cleared ? '#8A7A4E' : isCurrent ? 'var(--primary)' : 'var(--muted)',
+                      }}
+                    >
+                      {statusLabel}
+                    </span>
+                  </div>
+
+                  {/* Title + description */}
+                  <div style={{ flex: 1 }}>
                     <span
                       style={{
                         fontSize: 'var(--text-xs)',
                         fontWeight: 700,
-                        color: locked ? 'var(--muted)' : 'var(--primary)',
-                        letterSpacing: '0.06em',
+                        color: 'var(--muted)',
+                        letterSpacing: '0.08em',
                         textTransform: 'uppercase',
                       }}
                     >
                       Box {index + 1}
                     </span>
-                    {locked ? (
-                      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--muted)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                        <rect x="5" y="11" width="14" height="9" rx="2" />
-                        <path d="M8 11V7a4 4 0 0 1 8 0v4" />
-                      </svg>
-                    ) : cleared ? (
-                      <span className="star-badge" style={{ fontSize: 'var(--text-xs)', padding: 'var(--space-1) var(--space-2)' }}>
-                        <svg width="12" height="12" viewBox="0 0 20 20" fill="currentColor">
-                          <path d="M10 0l2.5 6.5H19l-5.5 4 2 6.5L10 13l-5.5 4 2-6.5-5.5-4h6.5z" />
-                        </svg>
-                        <span>Complete</span>
-                      </span>
-                    ) : (
-                      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--primary)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                        <circle cx="12" cy="12" r="10" />
-                        <path d="M10 8l6 4-6 4z" fill="var(--primary)" stroke="none" />
-                      </svg>
-                    )}
-                  </div>
-
-                  <div>
-                    <h2 style={{ fontSize: 'var(--text-lg)', fontWeight: 600, color: 'var(--ink)', marginBottom: 'var(--space-1)' }}>
+                    <h2 style={{ fontSize: 'var(--text-xl)', fontWeight: 600, color: 'var(--ink)', margin: 'var(--space-1) 0' }}>
                       {node.group.name}
                     </h2>
                     {node.group.description && (
-                      <p style={{ fontSize: 'var(--text-sm)', color: 'var(--muted)' }}>{node.group.description}</p>
+                      <p style={{ fontSize: 'var(--text-sm)', color: 'var(--muted)', lineHeight: 1.5 }}>{node.group.description}</p>
                     )}
                   </div>
 
-                  <div style={{ marginTop: 'auto' }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 'var(--space-1)' }}>
-                      <span style={{ fontSize: 'var(--text-xs)', color: 'var(--muted)', fontWeight: 600 }}>
-                        {node.clearedCount}/{node.total} poses
-                      </span>
-                      <span style={{ fontSize: 'var(--text-xs)', color: locked ? 'var(--muted)' : 'var(--primary)', fontWeight: 700 }}>
-                        {pct}%
-                      </span>
-                    </div>
-                    <div style={{ height: '6px', borderRadius: 'var(--radius-full)', background: 'var(--border)', overflow: 'hidden' }}>
-                      <div
+                  {/* Footer: pose count + CTA */}
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 'var(--space-2)', borderTop: '1px solid var(--border)', paddingTop: 'var(--space-3)' }}>
+                    <span style={{ fontSize: 'var(--text-sm)', color: 'var(--muted)', fontWeight: 600 }}>
+                      {node.clearedCount}/{node.total} poses
+                    </span>
+                    {locked ? (
+                      <span style={{ fontSize: 'var(--text-xs)', color: 'var(--muted)' }}>Clear the previous box</span>
+                    ) : (
+                      <span
+                        className="lvl-cta"
                         style={{
-                          height: '100%',
-                          width: `${pct}%`,
-                          borderRadius: 'var(--radius-full)',
-                          background: cleared
-                            ? 'linear-gradient(90deg, #C9B88A, #B8A56F)'
-                            : 'linear-gradient(90deg, var(--primary), #6B8F7A)',
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          gap: 'var(--space-1)',
+                          fontSize: 'var(--text-sm)',
+                          fontWeight: 700,
+                          color: cleared ? '#8A7A4E' : 'var(--primary)',
                         }}
-                      />
-                    </div>
-                    {locked && (
-                      <p style={{ fontSize: 'var(--text-xs)', color: 'var(--muted)', marginTop: 'var(--space-2)' }}>
-                        Clear the previous box to unlock
-                      </p>
+                      >
+                        {cta}
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                          <path d="M5 12h14" />
+                          <path d="M13 6l6 6-6 6" />
+                        </svg>
+                      </span>
                     )}
                   </div>
                 </div>
               )
 
               return locked ? (
-                <div key={node.group.id}>{card}</div>
+                <div key={node.group.id} aria-label={`${node.group.name} — locked`}>{card}</div>
               ) : (
-                <Link key={node.group.id} href={`/levels/${node.group.id}`} style={{ textDecoration: 'none' }}>
+                <Link
+                  key={node.group.id}
+                  href={`/levels/${node.group.id}`}
+                  className="lvl-link"
+                  aria-label={`${node.group.name}, box ${index + 1}, ${pct}% complete, ${statusLabel.toLowerCase()}`}
+                  style={{ textDecoration: 'none', borderRadius: 'var(--radius-lg)' }}
+                >
                   {card}
                 </Link>
               )

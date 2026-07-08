@@ -341,10 +341,28 @@ export default function AdminGroupsPage() {
   const unassigned = exercises.filter((e) => !e.group_id || !groups.some((g) => g.id === e.group_id))
 
   return (
-    <div style={{
+    <div className="admin-scope" style={{
       minHeight: '100vh',
       background: 'var(--background)',
     }}>
+      <style>{`
+        .admin-scope button, .admin-scope a.pill-btn { min-height: 40px; }
+        .admin-scope button, .admin-scope a.pill-btn, .admin-scope input, .admin-scope select {
+          transition: filter var(--dur-fast) var(--ease-out), box-shadow var(--dur-fast) var(--ease-out), transform var(--dur-fast) var(--ease-out), border-color var(--dur-fast) var(--ease-out);
+        }
+        .admin-scope button:not(:disabled):hover, .admin-scope a.pill-btn:hover { filter: brightness(0.96); }
+        .admin-scope button:not(:disabled):active, .admin-scope a.pill-btn:active { transform: translateY(1px); }
+        .admin-scope button:focus-visible, .admin-scope a:focus-visible {
+          outline: none; box-shadow: 0 0 0 3px rgba(74, 107, 90, 0.45);
+        }
+        .admin-scope input:focus, .admin-scope select:focus {
+          outline: none; border-color: var(--primary); box-shadow: 0 0 0 3px rgba(74, 107, 90, 0.18);
+        }
+        @media (prefers-reduced-motion: reduce) {
+          .admin-scope button, .admin-scope a, .admin-scope input, .admin-scope select { transition: none; }
+          .admin-scope button:active, .admin-scope a.pill-btn:active { transform: none; }
+        }
+      `}</style>
       <div style={{
         background: 'linear-gradient(180deg, rgba(74, 107, 90, 0.10), rgba(107, 143, 122, 0.04) 240px, transparent 420px)',
         padding: 'var(--space-6)',
@@ -657,8 +675,15 @@ export default function AdminGroupsPage() {
                 borderTop: '1px solid var(--border)',
                 fontSize: 'var(--text-sm)',
                 color: 'var(--muted)',
+                display: 'flex',
+                alignItems: 'center',
+                gap: 'var(--space-2)',
               }}>
-                Every pose is in a box. 🌱
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--primary)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M11 20A7 7 0 0 1 9.8 6.1C15.5 5 17 4.48 19 2c1 2 2 4.18 2 8 0 5.5-4.78 10-10 10Z" />
+                  <path d="M2 21c0-3 1.85-5.36 5.08-6C9.5 14.52 12 13 13 12" />
+                </svg>
+                Every pose is in a box.
               </p>
             )}
           </div>

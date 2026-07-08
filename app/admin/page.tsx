@@ -147,10 +147,27 @@ export default function AdminDashboard() {
   }
 
   return (
-    <div style={{
+    <div className="admin-scope" style={{
       minHeight: '100vh',
       background: 'var(--background)',
     }}>
+      <style>{`
+        .admin-scope button, .admin-scope a.pill-btn { min-height: 40px; }
+        .admin-scope button, .admin-scope a.pill-btn, .admin-scope a[href] {
+          transition: filter var(--dur-fast) var(--ease-out), box-shadow var(--dur-fast) var(--ease-out), transform var(--dur-fast) var(--ease-out);
+        }
+        .admin-scope button:not(:disabled):hover, .admin-scope a.pill-btn:hover { filter: brightness(0.96); }
+        .admin-scope button:not(:disabled):active, .admin-scope a.pill-btn:active { transform: translateY(1px); }
+        .admin-scope button:focus-visible, .admin-scope a:focus-visible {
+          outline: none; box-shadow: 0 0 0 3px rgba(74, 107, 90, 0.45);
+        }
+        .admin-scope table tbody tr { transition: background var(--dur-fast) var(--ease-out); }
+        .admin-scope table tbody tr:hover { background: rgba(74, 107, 90, 0.05); }
+        @media (prefers-reduced-motion: reduce) {
+          .admin-scope button, .admin-scope a, .admin-scope table tbody tr { transition: none; }
+          .admin-scope button:active, .admin-scope a.pill-btn:active { transform: none; }
+        }
+      `}</style>
       <div style={{
         background: 'linear-gradient(180deg, rgba(74, 107, 90, 0.10), rgba(107, 143, 122, 0.04) 240px, transparent 420px)',
         padding: 'var(--space-6)',

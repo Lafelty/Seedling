@@ -379,7 +379,7 @@ export default function NewExercisePage() {
                     />
                     <canvas
                       ref={canvasRef}
-                      className="absolute inset-0 w-full h-full scale-x-[-1]"
+                      className="absolute inset-0 w-full h-full object-cover scale-x-[-1]"
                     />
 
                     {/* Model status — no keypoints can appear until this clears */}

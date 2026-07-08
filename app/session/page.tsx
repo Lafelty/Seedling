@@ -775,6 +775,7 @@ export default function SessionPage() {
         <svg
           className="absolute inset-0 pointer-events-none"
           viewBox={`0 0 ${videoRef.current.videoWidth} ${videoRef.current.videoHeight}`}
+          preserveAspectRatio="xMidYMid slice"
           style={{ width: '100%', height: '100%', transform: 'scaleX(-1)' }}
         >
 

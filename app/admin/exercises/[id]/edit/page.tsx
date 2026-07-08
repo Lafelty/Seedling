@@ -890,7 +890,7 @@ export default function EditExercisePage({ params }: { params: Promise<{ id: str
                     />
                     <canvas
                       ref={testCanvasRef}
-                      className="absolute inset-0 w-full h-full scale-x-[-1]"
+                      className="absolute inset-0 w-full h-full object-cover scale-x-[-1]"
                     />
                     {testFeedback && (
                       <div

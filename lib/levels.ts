@@ -7,8 +7,9 @@
 // model produces form_quality_score during the session, so no extra
 // analysis pass is needed here.
 //
-// Boxes unlock in sort_order: a box opens once every earlier box is fully
-// cleared. Empty boxes (no published poses yet) never block the chain.
+// Every box is open — patients can enter any box in any order. Progression
+// still applies inside a box: poses unlock in rank_in_group order as earlier
+// poses are cleared.
 
 export interface LevelGroup {
   id: string;
@@ -79,7 +80,6 @@ export function buildLevelMap(
   );
 
   const out: GroupNode[] = [];
-  let chainUnlocked = true; // true until the first box that isn't fully cleared
 
   for (const group of sortedGroups) {
     const groupExercises = exercises
@@ -101,9 +101,7 @@ export function buildLevelMap(
         }
       }
 
-      const status: NodeStatus = !chainUnlocked
-        ? 'locked'
-        : cleared
+      const status: NodeStatus = cleared
         ? 'cleared'
         : prevCleared
         ? 'unlocked'
@@ -115,14 +113,11 @@ export function buildLevelMap(
     }
 
     const groupCleared = groupExercises.length === 0 || clearedCount === groupExercises.length;
-    const status: NodeStatus = !chainUnlocked
-      ? 'locked'
-      : groupCleared && groupExercises.length > 0
+    const status: NodeStatus = groupCleared && groupExercises.length > 0
       ? 'cleared'
       : 'unlocked';
 
     out.push({ group, exercises: nodes, status, clearedCount, total: groupExercises.length });
-    chainUnlocked = chainUnlocked && groupCleared;
   }
 
   return out;

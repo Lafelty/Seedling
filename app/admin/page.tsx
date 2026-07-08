@@ -107,6 +107,24 @@ export default function AdminDashboard() {
     }
   }
 
+  async function deleteExercise(id: string, name: string) {
+    if (!window.confirm(`Delete "${name}"? This cannot be undone.`)) return
+
+    const supabase = createClient()
+    const { error } = await supabase
+      .from('exercises')
+      .delete()
+      .eq('id', id)
+
+    if (error) {
+      console.error('Error deleting exercise:', error)
+      window.alert(`Could not delete exercise: ${error.message}`)
+      return
+    }
+
+    setExercises(exercises.filter(ex => ex.id !== id))
+  }
+
   if (loading) {
     return (
       <div style={{
@@ -448,27 +466,52 @@ export default function AdminDashboard() {
                             </button>
                           </td>
                           <td style={{ padding: 'var(--space-3) var(--space-4)' }}>
-                            <Link
-                              href={`/admin/exercises/${exercise.id}/edit`}
-                              style={{
-                                display: 'inline-flex',
-                                alignItems: 'center',
-                                gap: 'var(--space-1)',
-                                padding: 'var(--space-1) var(--space-3)',
-                                fontSize: 'var(--text-xs)',
-                                fontWeight: 600,
-                                color: 'var(--primary)',
-                                background: 'rgba(74, 107, 90, 0.10)',
-                                border: '1px solid rgba(74, 107, 90, 0.25)',
-                                borderRadius: 'var(--radius-full)',
-                                textDecoration: 'none',
-                              }}
-                            >
-                              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                                <path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z" />
-                              </svg>
-                              Edit
-                            </Link>
+                            <div style={{ display: 'inline-flex', alignItems: 'center', gap: 'var(--space-2)' }}>
+                              <Link
+                                href={`/admin/exercises/${exercise.id}/edit`}
+                                style={{
+                                  display: 'inline-flex',
+                                  alignItems: 'center',
+                                  gap: 'var(--space-1)',
+                                  padding: 'var(--space-1) var(--space-3)',
+                                  fontSize: 'var(--text-xs)',
+                                  fontWeight: 600,
+                                  color: 'var(--primary)',
+                                  background: 'rgba(74, 107, 90, 0.10)',
+                                  border: '1px solid rgba(74, 107, 90, 0.25)',
+                                  borderRadius: 'var(--radius-full)',
+                                  textDecoration: 'none',
+                                }}
+                              >
+                                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                  <path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z" />
+                                </svg>
+                                Edit
+                              </Link>
+                              <button
+                                onClick={() => deleteExercise(exercise.id, exercise.name)}
+                                style={{
+                                  display: 'inline-flex',
+                                  alignItems: 'center',
+                                  gap: 'var(--space-1)',
+                                  padding: 'var(--space-1) var(--space-3)',
+                                  fontSize: 'var(--text-xs)',
+                                  fontWeight: 600,
+                                  color: '#C62828',
+                                  background: '#FFEBEE',
+                                  border: '1px solid rgba(198, 40, 40, 0.25)',
+                                  borderRadius: 'var(--radius-full)',
+                                  cursor: 'pointer',
+                                }}
+                              >
+                                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                  <path d="M3 6h18" />
+                                  <path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+                                  <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
+                                </svg>
+                                Delete
+                              </button>
+                            </div>
                           </td>
                         </tr>
                       )

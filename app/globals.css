@@ -407,6 +407,25 @@
     animation: starShine 1.5s ease-in-out infinite;
   }
 
+  @keyframes countdownPop {
+    0% {
+      opacity: 0;
+      transform: scale(0.4);
+    }
+    55% {
+      opacity: 1;
+      transform: scale(1.15);
+    }
+    100% {
+      opacity: 1;
+      transform: scale(1);
+    }
+  }
+
+  .animate-countdownPop {
+    animation: countdownPop 0.85s var(--ease-out);
+  }
+
   /* Loading skeleton */
   @keyframes shimmer {
     0% {

@@ -46,6 +46,8 @@ interface Exercise {
   recorded_paths?: Array<{ frames: Array<{ pose: Pose }> }> | null
   // Absent until hand_tracking_migration.sql has run — treat as 'body'.
   tracking_mode?: TrackingMode | null
+  // Absent until demo_images_migration.sql has run — treated as no pictures.
+  demo_images?: string[] | null
 }
 
 export default function SessionPage() {
@@ -115,7 +117,7 @@ export default function SessionPage() {
 
         let query = supabase
           .from('exercises')
-          .select('id, name, description, exercise_type, pose_criteria, target_reps, hold_duration_ms, feedback_messages, recorded_paths, tracking_mode')
+          .select('id, name, description, exercise_type, pose_criteria, target_reps, hold_duration_ms, feedback_messages, recorded_paths, tracking_mode, demo_images')
           .eq('is_active', true)
 
         if (requestedId) {
@@ -880,7 +882,7 @@ export default function SessionPage() {
                 ? 'Hold your hand up so it fills the frame, palm facing the camera'
                 : 'Place your phone where your upper body is in frame'}
             </p>
-            <ExerciseDemo frames={DEMO_FRAMES} />
+            <ExerciseDemo frames={exercise?.demo_images ?? []} />
             <button
               onClick={() => {
                 unlockSpeech()
@@ -1281,24 +1283,43 @@ export default function SessionPage() {
   )
 }
 
-// Demo frames for the pre-session picture holder. Both images stay mounted and
-// swap by opacity so the exchange is seamless — a two-frame "video" loop.
-// TODO: load per-exercise frames from the database once demo photos exist
-// for every exercise.
-const DEMO_FRAMES = [
-  '/exercise-demo/wrist-up.jpg',
-  '/exercise-demo/wrist-down.jpg',
-]
-
+// Pre-session picture holder. Shows the exercise's own demo pictures (uploaded
+// in the admin editor, stored in exercises.demo_images). All images stay
+// mounted and swap by opacity so the exchange is seamless — a two-frame
+// "video" loop. No pictures → an explicit placeholder, not a broken image.
 function ExerciseDemo({ frames, intervalMs = 700 }: { frames: string[]; intervalMs?: number }) {
   const [frame, setFrame] = useState(0)
 
   useEffect(() => {
+    if (frames.length < 2) return // nothing to alternate
     const id = setInterval(() => {
       setFrame(f => (f + 1) % frames.length)
     }, intervalMs)
     return () => clearInterval(id)
   }, [frames.length, intervalMs])
+
+  if (frames.length === 0) {
+    return (
+      <div
+        style={{
+          width: '100%',
+          aspectRatio: '4 / 3',
+          margin: '0 auto var(--space-6)',
+          borderRadius: 'var(--radius-xl)',
+          border: '1px dashed rgba(255,255,255,0.35)',
+          background: 'rgba(255,255,255,0.06)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          padding: 'var(--space-4)',
+        }}
+      >
+        <span style={{ color: 'rgba(255,255,255,0.65)', fontSize: 'var(--text-sm)', textAlign: 'center' }}>
+          No demonstration pictures for this exercise yet
+        </span>
+      </div>
+    )
+  }
 
   return (
     <div

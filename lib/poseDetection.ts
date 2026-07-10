@@ -1,11 +1,20 @@
 // Client-side only imports
 let poseDetection: typeof import('@tensorflow-models/pose-detection') | null = null;
 let detector: any = null;
-let handPoseDetection: typeof import('@tensorflow-models/hand-pose-detection') | null = null;
-let handDetector: any = null;
-// Reused frame buffer for hand detection — see detectHand for why video frames
-// are copied onto a canvas before estimateHands.
-let handInputCanvas: HTMLCanvasElement | null = null;
+// Hand tracking uses MediaPipe Tasks HandLandmarker (self-hosted wasm + model in
+// /public/mediapipe) — the old tfjs-runtime MediaPipeHands 'lite' model guessed
+// badly under self-occlusion (fists) and re-detected the palm every frame with
+// no temporal tracking, which is why fist/release tracking looked broken.
+let handLandmarker: import('@mediapipe/tasks-vision').HandLandmarker | null = null;
+// Light exponential smoothing over hand landmarks. Derived tolerance bands come
+// from smoothed recordings, so raw per-frame jitter during a live test overshoots
+// them — smoothing the live stream the same way keeps the two comparable (and
+// steadies the overlay). One slot per detected hand, reset when the hand
+// teleports (identity swap / re-entry) or drops out.
+let smoothedHands: Array<
+  Array<{ x: number; y: number; world?: { x: number; y: number; z: number } }>
+> = [];
+const SMOOTH_ALPHA = 0.55; // share of the new frame kept; ~1 frame of lag at 25 fps
 
 // Generation counters, bumped on every dispose. Model loads take seconds; a
 // dispose (mode switch, unmount, HMR) can land while createDetector is still
@@ -21,19 +30,25 @@ let warnedHandNotReady = false;
 /** Which landmark model an exercise is tracked with. */
 export type TrackingMode = 'body' | 'hand';
 
+export interface Keypoint {
+  x: number;
+  y: number;
+  score?: number;
+  name?: string;
+  // Metric 3D coordinates (meters, origin at the hand/body center) when the
+  // model provides them — MediaPipe hand world landmarks. Angles measured in
+  // this space don't change when the patient rotates relative to the camera.
+  world?: { x: number; y: number; z: number };
+}
+
 export interface Pose {
-  keypoints: Array<{
-    x: number;
-    y: number;
-    score?: number;
-    name?: string;
-  }>;
+  keypoints: Keypoint[];
   score?: number;
   // Hand mode only: any additional detected hands beyond the primary one, for
   // overlay drawing. The validation/derivation engine ignores this and works off
   // `keypoints`, so a two-hand recording still derives criteria from the primary.
   extraHands?: Array<{
-    keypoints: Array<{ x: number; y: number; score?: number; name?: string }>;
+    keypoints: Keypoint[];
     score?: number;
   }>;
 }
@@ -281,8 +296,10 @@ export function disposePoseDetector() {
 }
 
 /**
- * Initialize the MediaPipeHands detector (client-side only, tfjs runtime —
- * no external WASM/CDN assets, same WebGL backend as MoveNet).
+ * Initialize the MediaPipe Tasks HandLandmarker (client-side only). Wasm and the
+ * full-accuracy model are self-hosted under /public/mediapipe — no CDN at runtime.
+ * VIDEO running mode tracks landmarks between frames instead of re-detecting the
+ * palm each frame, which is what keeps a closing fist stable.
  */
 export async function initHandDetector(): Promise<boolean> {
   try {
@@ -291,40 +308,49 @@ export async function initHandDetector(): Promise<boolean> {
       return false;
     }
 
-    if (handDetector) return true;
+    if (handLandmarker) return true;
     const gen = handGen;
 
-    if (!handPoseDetection) {
-      const tf = await import('@tensorflow/tfjs-core');
-      await import('@tensorflow/tfjs-backend-webgl');
-      await tf.ready();
-      console.log('TensorFlow.js backend ready:', tf.getBackend());
-      handPoseDetection = await import('@tensorflow-models/hand-pose-detection');
-    }
+    console.log('Loading hand landmarker (~8 MB model on first use)…');
+    const { FilesetResolver, HandLandmarker } = await import('@mediapipe/tasks-vision');
+    const vision = await FilesetResolver.forVisionTasks('/mediapipe/wasm');
 
-    console.log('Loading hand model (~10 MB on first use)…');
-    const model = handPoseDetection.SupportedModels.MediaPipeHands;
-    const created = await handPoseDetection.createDetector(model, {
-      runtime: 'tfjs',
-      // 'lite' over 'full': the full model runs ~6 s/frame on webgl — far too
-      // slow for a live preview. lite keeps all 21 landmarks at real-time speed.
-      modelType: 'lite',
-      maxHands: 2,
-    });
+    const createWith = (delegate: 'GPU' | 'CPU') =>
+      HandLandmarker.createFromOptions(vision, {
+        baseOptions: {
+          modelAssetPath: '/mediapipe/hand_landmarker.task',
+          delegate,
+        },
+        runningMode: 'VIDEO',
+        numHands: 2,
+        minHandDetectionConfidence: 0.5,
+        minHandPresenceConfidence: 0.5,
+        minTrackingConfidence: 0.5,
+      });
+
+    let created: import('@mediapipe/tasks-vision').HandLandmarker;
+    try {
+      created = await createWith('GPU');
+    } catch {
+      // Some machines/browsers can't create the GPU delegate — CPU still runs
+      // the full model in real time.
+      console.warn('GPU delegate unavailable for hand landmarker, falling back to CPU');
+      created = await createWith('CPU');
+    }
 
     if (gen !== handGen) {
       // Disposed while loading (mode switch / unmount) — don't resurrect.
-      created.dispose();
+      created.close();
       return false;
     }
-    if (handDetector) {
+    if (handLandmarker) {
       // A concurrent init already won (StrictMode double-mount).
-      created.dispose();
+      created.close();
       return true;
     }
-    handDetector = created;
+    handLandmarker = created;
     warnedHandNotReady = false;
-    console.log('Hand detector initialized successfully');
+    console.log('Hand landmarker initialized successfully');
     return true;
   } catch (error) {
     console.error('Failed to initialize hand detector:', error);
@@ -333,11 +359,11 @@ export async function initHandDetector(): Promise<boolean> {
 }
 
 /**
- * Detect the most confident hand in a video frame, normalized into the same
- * Pose shape MoveNet produces so the whole downstream engine works unchanged.
+ * Detect hands in a video frame, normalized into the same Pose shape MoveNet
+ * produces so the whole downstream engine works unchanged.
  */
 export async function detectHand(video: HTMLVideoElement): Promise<Pose | null> {
-  if (!handDetector) {
+  if (!handLandmarker) {
     if (!warnedHandNotReady) {
       console.warn('Hand detector not initialized yet — frames skipped until the model loads');
       warnedHandNotReady = true;
@@ -346,46 +372,79 @@ export async function detectHand(video: HTMLVideoElement): Promise<Pose | null> 
   }
 
   try {
-    // MediaPipeHands (tfjs runtime) returns NaN keypoint coordinates when given
-    // an HTMLVideoElement directly — MoveNet doesn't, which is why body tracking
-    // worked and hands drew nothing. Copying the current frame onto a canvas
-    // first yields valid pixel coordinates. The canvas is sized to the video's
-    // native resolution, so coords land in the same space the overlay expects.
     const w = video.videoWidth;
     const h = video.videoHeight;
     if (!w || !h) return null;
-    if (!handInputCanvas) handInputCanvas = document.createElement('canvas');
-    if (handInputCanvas.width !== w) handInputCanvas.width = w;
-    if (handInputCanvas.height !== h) handInputCanvas.height = h;
-    const hctx = handInputCanvas.getContext('2d');
-    if (!hctx) return null;
-    hctx.drawImage(video, 0, 0, w, h);
 
-    const hands = await handDetector.estimateHands(handInputCanvas);
-    if (!hands || hands.length === 0) return null;
-    // tfjs runtime reports score: NaN for video inputs (finite only for static
-    // images), and NaN slips through ?? — sanitize before it poisons every
-    // downstream confidence check (NaN > 0.5 is false, NaN is falsy).
-    const scoreOf = (v: any) => (Number.isFinite(v) ? (v as number) : undefined);
-    // The detector only returns hands above its internal palm-detection
-    // confidence, so a missing/NaN score still means "confidently detected".
-    const toSet = (h: any) => {
-      const s = scoreOf(h.score) ?? 1;
+    // detectForVideo requires a monotonically increasing timestamp; it feeds the
+    // internal landmark tracker that carries hands across frames.
+    const result = handLandmarker.detectForVideo(video, performance.now());
+    if (!result.landmarks || result.landmarks.length === 0) {
+      smoothedHands = []; // hand lost — don't smooth across the gap
+      return null;
+    }
+
+    // Landmarks come back normalized [0..1] in canonical MediaPipe order, which
+    // HAND_KEYPOINT_NAMES mirrors — scale to pixels and attach names so the
+    // overlay and the angle engine see the exact shape they always have.
+    const sets = result.landmarks.map((landmarks, i) => {
+      // Handedness classification confidence is the closest thing the task
+      // returns to a per-hand score; landmarks carry no per-point score, and
+      // getKeypoint rejects anything under 0.5, so copy it onto each point.
+      const s = result.handedness?.[i]?.[0]?.score ?? 1;
+      const world = result.worldLandmarks?.[i];
       return {
-        // tfjs-runtime hand keypoints carry no per-keypoint score, but getKeypoint
-        // rejects anything under 0.5 — copy the hand's overall score onto each one.
-        keypoints: h.keypoints.map((kp: any) => ({
-          x: kp.x,
-          y: kp.y,
-          name: kp.name,
-          score: scoreOf(kp.score) ?? s,
+        keypoints: landmarks.map((lm, j) => ({
+          x: lm.x * w,
+          y: lm.y * h,
+          name: HAND_KEYPOINT_NAMES[j],
+          score: s,
+          // Metric 3D — lets validation measure rotation-invariant angles.
+          world: world?.[j]
+            ? { x: world[j].x, y: world[j].y, z: world[j].z }
+            : undefined,
         })),
         score: s,
       };
-    };
+    });
+
     // Most-confident hand is the primary (drives validation/derivation); any
     // others ride along in extraHands purely so the overlay can draw them.
-    const sets = hands.map(toSet).sort((a: any, b: any) => (b.score ?? 0) - (a.score ?? 0));
+    sets.sort((a, b) => (b.score ?? 0) - (a.score ?? 0));
+
+    // EMA-smooth each hand slot; a big wrist jump means the slot changed hands,
+    // so restart that filter instead of dragging points across the screen.
+    const jumpLimit = Math.hypot(w, h) * 0.2;
+    sets.forEach((set, i) => {
+      const prev = smoothedHands[i];
+      const wrist = set.keypoints[0];
+      if (!prev || Math.hypot(wrist.x - prev[0].x, wrist.y - prev[0].y) > jumpLimit) {
+        smoothedHands[i] = set.keypoints.map((kp) => ({
+          x: kp.x,
+          y: kp.y,
+          world: kp.world ? { ...kp.world } : undefined,
+        }));
+        return;
+      }
+      set.keypoints.forEach((kp, j) => {
+        const p = prev[j];
+        kp.x = p.x + (kp.x - p.x) * SMOOTH_ALPHA;
+        kp.y = p.y + (kp.y - p.y) * SMOOTH_ALPHA;
+        p.x = kp.x;
+        p.y = kp.y;
+        // Smooth world coords the same way so 3D angles are as steady as 2D ones.
+        if (kp.world && p.world) {
+          kp.world.x = p.world.x + (kp.world.x - p.world.x) * SMOOTH_ALPHA;
+          kp.world.y = p.world.y + (kp.world.y - p.world.y) * SMOOTH_ALPHA;
+          kp.world.z = p.world.z + (kp.world.z - p.world.z) * SMOOTH_ALPHA;
+          p.world = { ...kp.world };
+        } else {
+          p.world = kp.world ? { ...kp.world } : undefined;
+        }
+      });
+    });
+    if (smoothedHands.length > sets.length) smoothedHands.length = sets.length;
+
     const [primary, ...rest] = sets;
     return { ...primary, extraHands: rest.length > 0 ? rest : undefined };
   } catch (error) {
@@ -395,10 +454,11 @@ export async function detectHand(video: HTMLVideoElement): Promise<Pose | null> 
 }
 
 export function disposeHandDetector() {
-  handGen++; // invalidate any createDetector still in flight
-  if (handDetector) {
-    handDetector.dispose();
-    handDetector = null;
+  handGen++; // invalidate any createFromOptions still in flight
+  smoothedHands = [];
+  if (handLandmarker) {
+    handLandmarker.close();
+    handLandmarker = null;
   }
 }
 
@@ -444,6 +504,10 @@ export interface LevelingRule {
   message: string;
 }
 
+/** Which coordinate space the stored angles were measured in. Bands derived in
+ * one space are only valid when validated in the same space. */
+export type AngleSpace = '2d' | '3d';
+
 export interface PoseCriteria {
   targetBodyParts: string[];
   criteria: AngleCriterion[];
@@ -451,6 +515,9 @@ export interface PoseCriteria {
   // Difficulty dial: scales every angle band and leveling tolerance without
   // touching the stored angles. >1 = more lenient, <1 = stricter. Default 1.
   toleranceMultiplier?: number;
+  // '3d' when the criteria were derived from recordings carrying world
+  // coordinates; absent on older rows (which were measured in 2D).
+  angleSpace?: AngleSpace;
 }
 
 export interface ExerciseAnalysis {
@@ -480,6 +547,39 @@ export function calculateAngle(
     angle = 360 - angle;
   }
   return angle;
+}
+
+/**
+ * Measure the angle at `joint` in the requested space. '3d' uses the metric
+ * world coordinates when all three points carry them — invariant to how the
+ * hand is rotated relative to the camera, which 2D screen angles are not —
+ * and silently falls back to 2D when world coords are missing (old
+ * recordings, body mode).
+ */
+export function measureAngle(
+  pointA: Keypoint,
+  joint: Keypoint,
+  pointC: Keypoint,
+  space: AngleSpace = '2d'
+): number {
+  if (space === '3d' && pointA.world && joint.world && pointC.world) {
+    const v1 = {
+      x: pointA.world.x - joint.world.x,
+      y: pointA.world.y - joint.world.y,
+      z: pointA.world.z - joint.world.z,
+    };
+    const v2 = {
+      x: pointC.world.x - joint.world.x,
+      y: pointC.world.y - joint.world.y,
+      z: pointC.world.z - joint.world.z,
+    };
+    const m1 = Math.hypot(v1.x, v1.y, v1.z);
+    const m2 = Math.hypot(v2.x, v2.y, v2.z);
+    if (m1 === 0 || m2 === 0) return 0;
+    const cos = (v1.x * v2.x + v1.y * v2.y + v1.z * v2.z) / (m1 * m2);
+    return Math.acos(Math.min(1, Math.max(-1, cos))) * (180 / Math.PI);
+  }
+  return calculateAngle(pointA, joint, pointC);
 }
 
 /**
@@ -546,6 +646,8 @@ export function analyzeExercise(
 
   // Difficulty dial — widens (or tightens) every band around its target
   const m = poseCriteria?.toleranceMultiplier ?? 1;
+  // Measure in the same space the bands were derived in, or they don't compare.
+  const space: AngleSpace = poseCriteria?.angleSpace === '3d' ? '3d' : '2d';
 
   // Check angle criteria, tracking the rest zone alongside the target band
   let restEligible = 0;
@@ -563,7 +665,7 @@ export function analyzeExercise(
       continue;
     }
 
-    const angle = calculateAngle(pointA, joint, pointB);
+    const angle = measureAngle(pointA, joint, pointB, space);
     const minAngle = criterion.targetAngle - (criterion.targetAngle - criterion.minAngle) * m;
     const maxAngle = criterion.targetAngle + (criterion.maxAngle - criterion.targetAngle) * m;
 
@@ -806,6 +908,16 @@ const MIN_VISIBLE_RATIO = 0.4; // joint must be measurable in this share of all 
 // occupy far fewer pixels than a body, so their thresholds are tighter.
 const MOVING_ROM_THRESHOLD: Record<TrackingMode, number> = { body: 25, hand: 15 };
 const MOVING_DISPLACEMENT_PX: Record<TrackingMode, number> = { body: 40, hand: 25 };
+// A fist sweeps nearly every hand joint past the ROM threshold; requiring all
+// 15 to sit in-band on the same frame made validation almost impossible to
+// pass. Keep only the widest-sweeping joints — they define the movement, the
+// rest is correlated noise. Body mode has 8 candidate joints at most and
+// rarely more than a few movers, so it keeps them all.
+const MAX_CRITERIA_JOINTS: Record<TrackingMode, number> = { body: 8, hand: 4 };
+// Hand angles jitter more than body angles (small joints, self-occlusion), so
+// their tolerance bands get a wider floor and ceiling.
+const BAND_FLOOR_DEG: Record<TrackingMode, number> = { body: 10, hand: 15 };
+const BAND_CAP_DEG: Record<TrackingMode, number> = { body: 20, hand: 28 };
 
 /** Centered moving average — MoveNet angles jitter several degrees frame to frame. */
 function smoothSeries(values: number[], windowSize = 5): number[] {
@@ -841,7 +953,8 @@ interface JointDemoStats {
 function collectJointStats(
   demo: RecordedDemoFrames,
   joint: string,
-  refs: [string, string]
+  refs: [string, string],
+  space: AngleSpace
 ): JointDemoStats | null {
   const series: number[] = [];
   for (const frame of demo.frames) {
@@ -849,7 +962,7 @@ function collectJointStats(
     const a = getKeypoint(frame.pose, refs[0]);
     const b = getKeypoint(frame.pose, refs[1]);
     if (!j || !a || !b) continue;
-    series.push(calculateAngle(a, j, b));
+    series.push(measureAngle(a, j, b, space));
   }
   if (series.length < 5) return null;
 
@@ -920,6 +1033,15 @@ export function deriveCriteriaFromRecordings(
   const usable = demos.filter((d) => d.frames.length >= 2);
   const totalFrames = usable.reduce((sum, d) => sum + d.frames.length, 0);
 
+  // Derive in 3D only when the recordings actually carry world coordinates
+  // (hand recordings made after the HandLandmarker switch). The flag is stored
+  // on the result so validation measures in the same space.
+  const worldFrames = usable.reduce(
+    (sum, d) => sum + d.frames.filter((f) => f.pose.keypoints?.[0]?.world).length,
+    0
+  );
+  const space: AngleSpace = totalFrames > 0 && worldFrames / totalFrames > 0.5 ? '3d' : '2d';
+
   // Pool per-demo stats into one weighted view per joint, keeping the
   // per-demo stats around: the spread between demos is the therapist's own
   // natural variation, which sizes the tolerance bands below.
@@ -928,7 +1050,7 @@ export function deriveCriteriaFromRecordings(
   if (totalFrames > 0) {
     for (const [joint, refs] of Object.entries(refTable)) {
       const perDemo = usable
-        .map((d) => collectJointStats(d, joint, refs))
+        .map((d) => collectJointStats(d, joint, refs, space))
         .filter((s): s is JointDemoStats => s !== null);
       const count = perDemo.reduce((sum, s) => sum + s.count, 0);
       if (count < MIN_VISIBLE_FRAMES || count / totalFrames < MIN_VISIBLE_RATIO) continue;
@@ -949,7 +1071,8 @@ export function deriveCriteriaFromRecordings(
   const criteria: AngleCriterion[] = [];
   const movingJoints = Object.entries(jointStats)
     .filter(([, s]) => s.p95 - s.p5 >= MOVING_ROM_THRESHOLD[mode])
-    .sort(([, a], [, b]) => b.p95 - b.p5 - (a.p95 - a.p5)); // widest sweep first
+    .sort(([, a], [, b]) => b.p95 - b.p5 - (a.p95 - a.p5)) // widest sweep first
+    .slice(0, MAX_CRITERIA_JOINTS[mode]);
 
   if (movingJoints.length > 0) {
     for (const [joint, s] of movingJoints) {
@@ -959,7 +1082,10 @@ export function deriveCriteriaFromRecordings(
       // rest pose outside the band.
       const usesP95 = Math.abs(s.p95 - s.start) >= Math.abs(s.p5 - s.start);
       const target = usesP95 ? s.p95 : s.p5;
-      let halfBand = Math.min(20, Math.max(10, Math.abs(target - s.start) * 0.4));
+      let halfBand = Math.min(
+        BAND_CAP_DEG[mode],
+        Math.max(BAND_FLOOR_DEG[mode], Math.abs(target - s.start) * 0.4)
+      );
 
       // With 2+ demos, widen the band to cover the therapist's own demo-to-demo
       // variation at the target — capped so the rest pose stays outside it.
@@ -967,7 +1093,10 @@ export function deriveCriteriaFromRecordings(
       if (demos.length >= 2) {
         const extremes = demos.map((d) => (usesP95 ? d.p95 : d.p5));
         const spread = Math.max(...extremes) - Math.min(...extremes);
-        const cap = Math.max(10, Math.min(25, Math.abs(target - s.start) * 0.7));
+        const cap = Math.max(
+          BAND_FLOOR_DEG[mode],
+          Math.min(BAND_CAP_DEG[mode] + 5, Math.abs(target - s.start) * 0.7)
+        );
         halfBand = Math.min(cap, Math.max(halfBand, spread / 2 + 8));
       }
 
@@ -983,7 +1112,7 @@ export function deriveCriteriaFromRecordings(
   } else {
     // Static hold: the whole recording is the target pose.
     for (const [joint, s] of Object.entries(jointStats)) {
-      let halfBand = Math.max(10, (s.p95 - s.p5) / 2 + 5);
+      let halfBand = Math.max(BAND_FLOOR_DEG[mode], (s.p95 - s.p5) / 2 + 5);
 
       // With 2+ demos, cover the drift between the demos' median poses too.
       const demos = perDemoStats[joint] ?? [];
@@ -1012,7 +1141,7 @@ export function deriveCriteriaFromRecordings(
     targetBodyParts.add(c.relativeTo[1]);
   }
 
-  return { targetBodyParts: [...targetBodyParts], criteria, levelingRules: [] };
+  return { targetBodyParts: [...targetBodyParts], criteria, levelingRules: [], angleSpace: space };
 }
 
 /**
@@ -1032,6 +1161,7 @@ export function pickReferencePose(
   const crit = poseCriteria?.criteria?.[0];
   if (!crit) return middle;
 
+  const refSpace: AngleSpace = poseCriteria?.angleSpace === '3d' ? '3d' : '2d';
   let best: Pose | null = null;
   let bestDiff = Infinity;
   for (const frame of demo.frames) {
@@ -1039,13 +1169,70 @@ export function pickReferencePose(
     const a = getKeypoint(frame.pose, crit.relativeTo[0]);
     const b = getKeypoint(frame.pose, crit.relativeTo[1]);
     if (!joint || !a || !b) continue;
-    const diff = Math.abs(calculateAngle(a, joint, b) - crit.targetAngle);
+    const diff = Math.abs(measureAngle(a, joint, b, refSpace) - crit.targetAngle);
     if (diff < bestDiff) {
       bestDiff = diff;
       best = frame.pose;
     }
   }
   return best ?? middle;
+}
+
+// ---- Auto-trim of recorded demos ----
+
+// Mean per-keypoint pixel travel between consecutive frames that counts as
+// "moving" (camera is 640×480). Hands cover fewer pixels, so a lower bar.
+const TRIM_ENERGY_PX: Record<TrackingMode, number> = { body: 4, hand: 2.5 };
+const TRIM_MARGIN_MS = 400; // rest kept on both sides of the active span
+
+/**
+ * Drop idle frames from the start and end of a recording — the dead seconds
+ * between pressing Record and actually moving (and after finishing). Keeps a
+ * short rest margin on both sides so derivation still sees the rest pose.
+ * Static holds (no frame ever crosses the energy bar) are returned untouched,
+ * as are recordings where trimming would leave too little data. Timestamps of
+ * the kept frames are rebased to start at 0.
+ */
+export function trimIdleFrames<T extends { timestamp: number; pose: Pose }>(
+  frames: T[],
+  mode: TrackingMode
+): T[] {
+  if (frames.length < 20) return frames;
+
+  // Movement energy per frame: mean displacement of confidently-seen keypoints.
+  const energy: number[] = [0];
+  for (let i = 1; i < frames.length; i++) {
+    const prev = new Map(
+      frames[i - 1].pose.keypoints
+        .filter((k) => k.name && (k.score ?? 0) > 0.5)
+        .map((k) => [k.name as string, k])
+    );
+    let sum = 0;
+    let n = 0;
+    for (const kp of frames[i].pose.keypoints) {
+      if (!kp.name || (kp.score ?? 0) <= 0.5) continue;
+      const p = prev.get(kp.name);
+      if (!p) continue;
+      sum += Math.hypot(kp.x - p.x, kp.y - p.y);
+      n++;
+    }
+    energy.push(n > 0 ? sum / n : 0);
+  }
+
+  const smoothed = smoothSeries(energy, 5);
+  const thr = TRIM_ENERGY_PX[mode];
+  const first = smoothed.findIndex((e) => e > thr);
+  if (first === -1) return frames; // static hold — nothing to trim
+  let last = smoothed.length - 1;
+  while (last > first && smoothed[last] <= thr) last--;
+
+  const startTs = frames[first].timestamp - TRIM_MARGIN_MS;
+  const endTs = frames[last].timestamp + TRIM_MARGIN_MS;
+  const kept = frames.filter((f) => f.timestamp >= startTs && f.timestamp <= endTs);
+  if (kept.length < 10 || kept.length === frames.length) return frames;
+
+  const base = kept[0].timestamp;
+  return kept.map((f) => ({ ...f, timestamp: f.timestamp - base }));
 }
 
 /**

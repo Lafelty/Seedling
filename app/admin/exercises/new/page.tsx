@@ -10,6 +10,7 @@ import {
   disposeDetector,
   deriveCriteriaFromRecordings,
   connectionsForMode,
+  trimIdleFrames,
   type TrackingMode,
   type Pose,
 } from '@/lib/poseDetection'
@@ -263,12 +264,17 @@ export default function NewExercisePage() {
   }
 
   const stopRecording = () => {
-    const frames = recordedFramesRef.current
-    if (frames.length === 0) {
+    const rawFrames = recordedFramesRef.current
+    if (rawFrames.length === 0) {
       alert('No frames recorded. Try again.')
       setRecordingState('setup')
       return
     }
+
+    // Cut the idle seconds before the movement starts and after it ends —
+    // dead frames drag the derived rest pose and tolerances toward "standing
+    // still". Static holds come back untouched.
+    const frames = trimIdleFrames(rawFrames, trackingMode)
 
     const demo: RecordedDemo = {
       id: `demo-${Date.now()}`,
@@ -410,8 +416,17 @@ export default function NewExercisePage() {
 
                     {/* Countdown overlay */}
                     {recordingState === 'countdown' && (
-                      <div className="absolute inset-0 flex items-center justify-center bg-black/50">
-                        <div className="text-8xl font-bold text-white">{countdown}</div>
+                      <div className="absolute inset-0 flex flex-col items-center justify-center gap-4 bg-black/60">
+                        <span className="text-sm font-medium uppercase tracking-[0.2em] text-white/80">
+                          Get ready
+                        </span>
+                        {/* key forces remount each tick so the pop replays 3 → 2 → 1 */}
+                        <div
+                          key={countdown}
+                          className="animate-countdownPop flex h-32 w-32 items-center justify-center rounded-full border-4 border-white/40 text-7xl font-bold text-white"
+                        >
+                          {countdown}
+                        </div>
                       </div>
                     )}
 

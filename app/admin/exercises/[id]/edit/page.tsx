@@ -1,11 +1,21 @@
 'use client'
 
-import { use, useEffect, useRef, useState } from 'react'
+import { use, useEffect, useMemo, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
+import {
+  LineChart,
+  Line,
+  XAxis,
+  YAxis,
+  Tooltip,
+  ReferenceArea,
+  ReferenceLine,
+  ResponsiveContainer,
+} from 'recharts'
 import { createClient } from '@/lib/supabase/client'
 import {
-  calculateAngle,
+  measureAngle,
   deriveCriteriaFromRecordings,
   initDetector,
   detect,
@@ -21,6 +31,7 @@ import {
   type PoseCriteria,
   type ExerciseAnalysis,
   type CyclePhase,
+  type AngleSpace,
 } from '@/lib/poseDetection'
 
 interface RecordedFrame {
@@ -84,6 +95,15 @@ export default function EditExercisePage({ params }: { params: Promise<{ id: str
   const [exercise, setExercise] = useState<Exercise | null>(null)
   // Display-only: recordings are mode-specific, so the mode is fixed at creation.
   const mode: TrackingMode = exercise?.tracking_mode ?? 'body'
+
+  // Editable metadata — same fields the creation page sets.
+  const [exerciseName, setExerciseName] = useState('')
+  const [exerciseDescription, setExerciseDescription] = useState('')
+  const [exerciseType, setExerciseType] = useState<'static' | 'dynamic'>('dynamic')
+  const [difficulty, setDifficulty] = useState<'beginner' | 'intermediate' | 'advanced'>('beginner')
+  // The two demo pictures patients see on the pre-session "Ready?" screen.
+  const [demoImages, setDemoImages] = useState<(string | null)[]>([null, null])
+  const [uploadingSlot, setUploadingSlot] = useState<number | null>(null)
   const [selectedDemo, setSelectedDemo] = useState<number>(0)
   const [currentFrame, setCurrentFrame] = useState<number>(0)
   const [isPlaying, setIsPlaying] = useState(false)
@@ -92,6 +112,10 @@ export default function EditExercisePage({ params }: { params: Promise<{ id: str
   const [angleCriteria, setAngleCriteria] = useState<AngleCriterion[]>([])
   const [levelingRules, setLevelingRules] = useState<LevelingRule[]>([])
   const [autoFilled, setAutoFilled] = useState(false)
+  // Coordinate space the criteria's angles live in — must ride along with them.
+  const [angleSpace, setAngleSpace] = useState<AngleSpace>('2d')
+  // Which criterion the timeline chart plots
+  const [chartCriterionIdx, setChartCriterionIdx] = useState(0)
 
   // Test mode: therapist performs the exercise against the current (unsaved) criteria
   const [testMode, setTestMode] = useState(false)
@@ -141,6 +165,7 @@ export default function EditExercisePage({ params }: { params: Promise<{ id: str
       joints: [r.joints[0], r.joints[1]] as [string, string],
     })),
     toleranceMultiplier,
+    angleSpace,
   }
   const testMessagesRef = useRef(feedbackMessages)
   testMessagesRef.current = feedbackMessages
@@ -175,7 +200,7 @@ export default function EditExercisePage({ params }: { params: Promise<{ id: str
         drawSkeleton(demo.frames[currentFrame].pose)
       }
     }
-  }, [currentFrame, exercise, selectedDemo, angleCriteria])
+  }, [currentFrame, exercise, selectedDemo, angleCriteria, angleSpace])
 
   // Test loop: camera + the exact validation engine the patient session runs.
   useEffect(() => {
@@ -200,9 +225,10 @@ export default function EditExercisePage({ params }: { params: Promise<{ id: str
           setTestCameraError('Failed to load pose detection model')
           return
         }
-        // Same counter selection the patient session makes
+        // Same counter selection the patient session makes — against the type
+        // as currently edited, not the saved one.
         const cyclic =
-          exercise?.exercise_type === 'dynamic' &&
+          exerciseType === 'dynamic' &&
           testCriteriaRef.current.criteria.some((c) => typeof c.restAngle === 'number')
         testRepCounterRef.current = cyclic
           ? new CycleRepCounter(holdDuration)
@@ -284,7 +310,7 @@ export default function EditExercisePage({ params }: { params: Promise<{ id: str
       if (stream) stream.getTracks().forEach((t) => t.stop())
       disposeDetector()
     }
-  }, [testMode, holdDuration])
+  }, [testMode, holdDuration, exerciseType])
 
   async function loadExercise() {
     const supabase = createClient()
@@ -301,6 +327,17 @@ export default function EditExercisePage({ params }: { params: Promise<{ id: str
     }
 
     setExercise(data as Exercise)
+    setExerciseName(data.name ?? '')
+    setExerciseDescription(data.description ?? '')
+    if (data.exercise_type === 'static' || data.exercise_type === 'dynamic') {
+      setExerciseType(data.exercise_type)
+    }
+    if (['beginner', 'intermediate', 'advanced'].includes(data.difficulty)) {
+      setDifficulty(data.difficulty)
+    }
+    if (Array.isArray(data.demo_images)) {
+      setDemoImages([data.demo_images[0] ?? null, data.demo_images[1] ?? null])
+    }
     const exMode: TrackingMode = (data.tracking_mode as TrackingMode) ?? 'body'
     const exRefs = referencesForMode(exMode)
 
@@ -329,8 +366,12 @@ export default function EditExercisePage({ params }: { params: Promise<{ id: str
       if (derived.criteria.length > 0) {
         setAngleCriteria(derived.criteria)
         derivedParts = derived.targetBodyParts
+        setAngleSpace(derived.angleSpace ?? '2d')
         setAutoFilled(true)
       }
+    }
+    if (data.pose_criteria?.angleSpace === '3d') {
+      setAngleSpace('3d')
     }
     if (data.pose_criteria?.levelingRules) {
       setLevelingRules(
@@ -478,7 +519,9 @@ export default function EditExercisePage({ params }: { params: Promise<{ id: str
       ctx.fillStyle = '#C4612F'
       ctx.font = 'bold 13px sans-serif'
       ctx.textAlign = 'center'
-      ctx.fillText(`${Math.round(Math.abs(sweep) * (180 / Math.PI))}°`, -lx, ly)
+      // Label with the angle as validation measures it (3D when available) —
+      // the arc itself stays a 2D screen approximation of where it sits.
+      ctx.fillText(`${Math.round(measureAngle(refA, joint, refB, angleSpace))}°`, -lx, ly)
       ctx.restore()
     })
   }
@@ -562,8 +605,32 @@ export default function EditExercisePage({ params }: { params: Promise<{ id: str
     const pointA = getFrameKeypoint(currentFramePose, criterion.relativeTo[0])
     const pointB = getFrameKeypoint(currentFramePose, criterion.relativeTo[1])
     if (!joint || !pointA || !pointB) return null
-    return Math.round(calculateAngle(pointA, joint, pointB))
+    // Same space the criteria live in, so the readout matches validation
+    return Math.round(measureAngle(pointA, joint, pointB, angleSpace))
   }
+
+  // ---- Angle timeline: the plotted criterion's angle across the whole demo ----
+
+  const chartCriterion =
+    angleCriteria[Math.min(chartCriterionIdx, Math.max(0, angleCriteria.length - 1))]
+
+  const chartData = useMemo(() => {
+    const demo = exercise?.recorded_paths[selectedDemo]
+    if (!demo || !chartCriterion) return []
+    return demo.frames.map((f, i) => {
+      const joint = getFrameKeypoint(f.pose, chartCriterion.joint)
+      const pointA = getFrameKeypoint(f.pose, chartCriterion.relativeTo[0])
+      const pointB = getFrameKeypoint(f.pose, chartCriterion.relativeTo[1])
+      return {
+        frame: i,
+        angle:
+          joint && pointA && pointB
+            ? Math.round(measureAngle(pointA, joint, pointB, angleSpace))
+            : null,
+      }
+    })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [exercise, selectedDemo, chartCriterion, angleSpace])
 
   const getFrameLevelDiff = (rule: LevelingRule): number | null => {
     if (!currentFramePose) return null
@@ -588,6 +655,7 @@ export default function EditExercisePage({ params }: { params: Promise<{ id: str
     }
     setAngleCriteria(derived.criteria)
     setTargetBodyParts(derived.targetBodyParts)
+    setAngleSpace(derived.angleSpace ?? '2d')
     setAutoFilled(true)
   }
 
@@ -642,20 +710,56 @@ export default function EditExercisePage({ params }: { params: Promise<{ id: str
     setLevelingRules(levelingRules.filter((_, i) => i !== index))
   }
 
+  // Upload straight to storage on file pick; the URL lands in the exercises
+  // row when the therapist hits Save Changes / Publish.
+  const uploadDemoImage = async (slot: number, file: File) => {
+    if (!exercise) return
+    setUploadingSlot(slot)
+    try {
+      const supabase = createClient()
+      const ext = file.name.split('.').pop()?.toLowerCase() || 'jpg'
+      const path = `${exercise.id}/slot${slot}-${Date.now()}.${ext}`
+      const { error } = await supabase.storage
+        .from('exercise-demos')
+        .upload(path, file, { upsert: true })
+      if (error) throw error
+      const { data } = supabase.storage.from('exercise-demos').getPublicUrl(path)
+      setDemoImages((prev) => prev.map((u, i) => (i === slot ? data.publicUrl : u)))
+    } catch (err: any) {
+      alert('Image upload failed: ' + (err?.message ?? err))
+    } finally {
+      setUploadingSlot(null)
+    }
+  }
+
+  const removeDemoImage = (slot: number) => {
+    setDemoImages((prev) => prev.map((u, i) => (i === slot ? null : u)))
+  }
+
   const saveRefinedCriteria = async () => {
     if (!exercise) return
+    if (!exerciseName.trim()) {
+      alert('Exercise name cannot be empty')
+      return
+    }
 
     const refinedCriteria = {
       targetBodyParts,
       criteria: angleCriteria,
       levelingRules,
       toleranceMultiplier,
+      angleSpace,
     }
 
     const supabase = createClient()
     const { error } = await supabase
       .from('exercises')
       .update({
+        name: exerciseName.trim(),
+        description: exerciseDescription.trim() || null,
+        exercise_type: exerciseType,
+        difficulty,
+        demo_images: demoImages.filter((u): u is string => !!u),
         pose_criteria: refinedCriteria,
         feedback_messages: feedbackMessages,
         target_reps: targetReps,
@@ -673,6 +777,10 @@ export default function EditExercisePage({ params }: { params: Promise<{ id: str
 
   const publishExercise = async () => {
     if (!exercise) return
+    if (!exerciseName.trim()) {
+      alert('Exercise name cannot be empty')
+      return
+    }
 
     // Never publish an unconfigured exercise — the session engine can't validate
     // reps without at least one angle criterion or leveling rule.
@@ -687,7 +795,12 @@ export default function EditExercisePage({ params }: { params: Promise<{ id: str
     const { error } = await supabase
       .from('exercises')
       .update({
-        pose_criteria: { targetBodyParts, criteria: angleCriteria, levelingRules, toleranceMultiplier },
+        name: exerciseName.trim(),
+        description: exerciseDescription.trim() || null,
+        exercise_type: exerciseType,
+        difficulty,
+        demo_images: demoImages.filter((u): u is string => !!u),
+        pose_criteria: { targetBodyParts, criteria: angleCriteria, levelingRules, toleranceMultiplier, angleSpace },
         feedback_messages: feedbackMessages,
         target_reps: targetReps,
         hold_duration_ms: holdDuration,
@@ -731,7 +844,7 @@ export default function EditExercisePage({ params }: { params: Promise<{ id: str
               ← Back to Admin
             </Link>
             <h1 className="text-3xl font-serif text-[#1F2421]">
-              Refine <em className="text-[#C4612F]">{exercise.name}</em>
+              Refine <em className="text-[#C4612F]">{exerciseName || exercise.name}</em>
             </h1>
             <p className="text-sm text-[#5C635D] mt-1">
               {exercise.is_active ? '✓ Published' : 'Draft'}
@@ -830,6 +943,91 @@ export default function EditExercisePage({ params }: { params: Promise<{ id: str
                 />
               </div>
             </div>
+
+            {/* Angle timeline: criterion angle across the demo, band shaded */}
+            {chartCriterion && chartData.length > 0 && (
+              <div className="bg-white rounded-2xl p-6 border border-[#E7E1D7]">
+                <div className="flex items-center justify-between mb-2">
+                  <h3 className="text-lg font-serif text-[#1F2421]">Angle Timeline</h3>
+                  {angleCriteria.length > 1 && (
+                    <select
+                      value={Math.min(chartCriterionIdx, angleCriteria.length - 1)}
+                      onChange={(e) => setChartCriterionIdx(parseInt(e.target.value, 10))}
+                      className="px-2 py-1 text-sm border border-[#E7E1D7] rounded bg-white focus:outline-none focus:ring-1 focus:ring-[#C4612F]"
+                    >
+                      {angleCriteria.map((c, i) => (
+                        <option key={i} value={i}>
+                          {formatJointName(c.joint)}
+                        </option>
+                      ))}
+                    </select>
+                  )}
+                </div>
+                <p className="text-xs text-[#5C635D] mb-3">
+                  {formatJointName(chartCriterion.joint)} angle across Demo {selectedDemo + 1}.
+                  Green band = accepted range{typeof chartCriterion.restAngle === 'number' ? ', dashed line = rest' : ''}. Click the chart to jump the
+                  playback to that frame.
+                </p>
+                <ResponsiveContainer width="100%" height={200}>
+                  <LineChart
+                    data={chartData}
+                    margin={{ top: 4, right: 8, bottom: 0, left: -16 }}
+                    onClick={(st: any) => {
+                      const label = st?.activeLabel
+                      if (label != null && !Number.isNaN(Number(label))) {
+                        setCurrentFrame(Number(label))
+                        setIsPlaying(false)
+                      }
+                    }}
+                  >
+                    <XAxis
+                      dataKey="frame"
+                      type="number"
+                      domain={[0, chartData.length - 1]}
+                      tick={{ fontSize: 11, fill: '#5C635D' }}
+                      tickLine={false}
+                    />
+                    <YAxis
+                      domain={[0, 180]}
+                      ticks={[0, 45, 90, 135, 180]}
+                      tick={{ fontSize: 11, fill: '#5C635D' }}
+                      tickLine={false}
+                      unit="°"
+                    />
+                    <Tooltip
+                      formatter={(v: any) => [`${v}°`, formatJointName(chartCriterion.joint)]}
+                      labelFormatter={(l: any) => `Frame ${Number(l) + 1}`}
+                    />
+                    <ReferenceArea
+                      y1={chartCriterion.minAngle}
+                      y2={chartCriterion.maxAngle}
+                      fill="#10b981"
+                      fillOpacity={0.12}
+                      stroke="#10b981"
+                      strokeOpacity={0.35}
+                      strokeDasharray="4 4"
+                    />
+                    {typeof chartCriterion.restAngle === 'number' && (
+                      <ReferenceLine
+                        y={chartCriterion.restAngle}
+                        stroke="#5C635D"
+                        strokeDasharray="6 4"
+                      />
+                    )}
+                    <ReferenceLine x={currentFrame} stroke="#C4612F" strokeWidth={1.5} />
+                    <Line
+                      type="monotone"
+                      dataKey="angle"
+                      stroke="#C4612F"
+                      strokeWidth={2}
+                      dot={false}
+                      connectNulls={false}
+                      isAnimationActive={false}
+                    />
+                  </LineChart>
+                </ResponsiveContainer>
+              </div>
+            )}
 
             {/* Difficulty: one dial that scales every tolerance band */}
             <div className="bg-white rounded-2xl p-6 border border-[#E7E1D7]">
@@ -1004,6 +1202,121 @@ export default function EditExercisePage({ params }: { params: Promise<{ id: str
 
           {/* Right: Criteria Editor */}
           <div className="space-y-4">
+            {/* Exercise Details — editable metadata, saved with Save Changes / Publish */}
+            <div className="bg-white rounded-2xl p-6 border border-[#E7E1D7]">
+              <h3 className="text-lg font-serif text-[#1F2421] mb-4">Exercise Details</h3>
+
+              <div className="space-y-4">
+                <div>
+                  <label className="block text-sm font-medium text-[#1F2421] mb-1">
+                    Exercise Name *
+                  </label>
+                  <input
+                    type="text"
+                    value={exerciseName}
+                    onChange={(e) => setExerciseName(e.target.value)}
+                    placeholder="e.g. Shoulder Raise"
+                    className="w-full px-3 py-2 border border-[#E7E1D7] rounded-lg focus:outline-none focus:ring-2 focus:ring-[#C4612F]"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-[#1F2421] mb-1">
+                    Description
+                  </label>
+                  <textarea
+                    value={exerciseDescription}
+                    onChange={(e) => setExerciseDescription(e.target.value)}
+                    placeholder="Brief description of the exercise"
+                    rows={2}
+                    className="w-full px-3 py-2 border border-[#E7E1D7] rounded-lg focus:outline-none focus:ring-2 focus:ring-[#C4612F]"
+                  />
+                </div>
+
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-sm font-medium text-[#1F2421] mb-1">
+                      Exercise Type
+                    </label>
+                    <select
+                      value={exerciseType}
+                      onChange={(e) => setExerciseType(e.target.value as 'static' | 'dynamic')}
+                      className="w-full px-3 py-2 border border-[#E7E1D7] rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-[#C4612F]"
+                    >
+                      <option value="dynamic">Dynamic (with movement)</option>
+                      <option value="static">Static (hold position)</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-[#1F2421] mb-1">
+                      Difficulty
+                    </label>
+                    <select
+                      value={difficulty}
+                      onChange={(e) =>
+                        setDifficulty(e.target.value as 'beginner' | 'intermediate' | 'advanced')
+                      }
+                      className="w-full px-3 py-2 border border-[#E7E1D7] rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-[#C4612F]"
+                    >
+                      <option value="beginner">Beginner</option>
+                      <option value="intermediate">Intermediate</option>
+                      <option value="advanced">Advanced</option>
+                    </select>
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-[#1F2421] mb-1">
+                    Demo Pictures
+                  </label>
+                  <p className="text-xs text-[#5C635D] mb-2">
+                    Two photos of the movement (e.g. start and end position) — patients see
+                    them alternating on the &quot;Ready?&quot; screen before the exercise starts.
+                  </p>
+                  <div className="grid grid-cols-2 gap-3">
+                    {[0, 1].map((slot) => (
+                      <div key={slot}>
+                        {demoImages[slot] ? (
+                          <div className="relative aspect-[4/3] rounded-lg overflow-hidden border border-[#E7E1D7] group">
+                            {/* eslint-disable-next-line @next/next/no-img-element */}
+                            <img
+                              src={demoImages[slot] as string}
+                              alt={`Demo picture ${slot + 1}`}
+                              className="absolute inset-0 w-full h-full object-cover"
+                            />
+                            <button
+                              onClick={() => removeDemoImage(slot)}
+                              className="absolute top-1.5 right-1.5 px-2 py-0.5 rounded-full text-xs font-medium bg-black/60 text-white hover:bg-red-600 transition-colors"
+                            >
+                              Remove
+                            </button>
+                          </div>
+                        ) : (
+                          <label
+                            className={`flex flex-col items-center justify-center aspect-[4/3] rounded-lg border-2 border-dashed border-[#E7E1D7] text-[#5C635D] text-sm cursor-pointer hover:border-[#C4612F] hover:text-[#C4612F] transition-colors ${
+                              uploadingSlot === slot ? 'opacity-60 pointer-events-none' : ''
+                            }`}
+                          >
+                            <input
+                              type="file"
+                              accept="image/*"
+                              className="hidden"
+                              onChange={(e) => {
+                                const file = e.target.files?.[0]
+                                if (file) uploadDemoImage(slot, file)
+                                e.target.value = ''
+                              }}
+                            />
+                            {uploadingSlot === slot ? 'Uploading…' : `+ Picture ${slot + 1}`}
+                          </label>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            </div>
+
             {/* Angle Criteria */}
             <div className="bg-white rounded-2xl p-6 border border-[#E7E1D7]">
               <div className="flex items-center justify-between mb-4">

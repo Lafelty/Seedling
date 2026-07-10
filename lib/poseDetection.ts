@@ -1,57 +1,21 @@
-// Client-side only imports
-let poseDetection: typeof import('@tensorflow-models/pose-detection') | null = null;
-let detector: any = null;
-// Hand tracking uses MediaPipe Tasks HandLandmarker (self-hosted wasm + model in
-// /public/mediapipe) — the old tfjs-runtime MediaPipeHands 'lite' model guessed
-// badly under self-occlusion (fists) and re-detected the palm every frame with
-// no temporal tracking, which is why fist/release tracking looked broken.
-let handLandmarker: import('@mediapipe/tasks-vision').HandLandmarker | null = null;
-// Light exponential smoothing over hand landmarks. Derived tolerance bands come
-// from smoothed recordings, so raw per-frame jitter during a live test overshoots
-// them — smoothing the live stream the same way keeps the two comparable (and
-// steadies the overlay). One slot per detected hand, reset when the hand
-// teleports (identity swap / re-entry) or drops out.
-let smoothedHands: Array<
-  Array<{ x: number; y: number; world?: { x: number; y: number; z: number } }>
-> = [];
-const SMOOTH_ALPHA = 0.55; // share of the new frame kept; ~1 frame of lag at 25 fps
+// The inference engine itself lives in lib/detectionCore.ts and normally runs
+// inside a Web Worker (lib/detection.worker.ts) so model execution never
+// blocks the UI thread — main-thread inference was the root cause of phone
+// jank. This module keeps the page-facing facade (initDetector / detect /
+// disposeDetector) plus everything that consumes poses: the validation
+// engine, criteria derivation, and rep counters.
+import {
+  initCore,
+  detectCore,
+  disposeCore,
+  HAND_KEYPOINT_NAMES,
+  type TrackingMode,
+  type Keypoint,
+  type Pose,
+} from './detectionCore';
 
-// Generation counters, bumped on every dispose. Model loads take seconds; a
-// dispose (mode switch, unmount, HMR) can land while createDetector is still
-// in flight, and without this check the late resolver would assign a zombie
-// detector next to the other mode's model.
-let poseGen = 0;
-let handGen = 0;
-
-// The detect loops run per-frame while models load — warn once, not 200×.
-let warnedPoseNotReady = false;
-let warnedHandNotReady = false;
-
-/** Which landmark model an exercise is tracked with. */
-export type TrackingMode = 'body' | 'hand';
-
-export interface Keypoint {
-  x: number;
-  y: number;
-  score?: number;
-  name?: string;
-  // Metric 3D coordinates (meters, origin at the hand/body center) when the
-  // model provides them — MediaPipe hand world landmarks. Angles measured in
-  // this space don't change when the patient rotates relative to the camera.
-  world?: { x: number; y: number; z: number };
-}
-
-export interface Pose {
-  keypoints: Keypoint[];
-  score?: number;
-  // Hand mode only: any additional detected hands beyond the primary one, for
-  // overlay drawing. The validation/derivation engine ignores this and works off
-  // `keypoints`, so a two-hand recording still derives criteria from the primary.
-  extraHands?: Array<{
-    keypoints: Keypoint[];
-    score?: number;
-  }>;
-}
+export { HAND_KEYPOINT_NAMES };
+export type { TrackingMode, Keypoint, Pose };
 
 export interface ShoulderRaiseAnalysis {
   leftArmRaised: boolean;
@@ -59,77 +23,6 @@ export interface ShoulderRaiseAnalysis {
   bothArmsRaised: boolean;
   feedback: 'good' | 'adjust' | 'analyzing';
   message: string;
-}
-
-/**
- * Initialize the MoveNet pose detector (client-side only)
- */
-export async function initPoseDetector(): Promise<boolean> {
-  try {
-    if (typeof window === 'undefined') {
-      console.warn('Pose detection only works in browser');
-      return false;
-    }
-
-    if (detector) return true;
-    const gen = poseGen;
-
-    // Dynamically import TensorFlow only in browser
-    if (!poseDetection) {
-      const tf = await import('@tensorflow/tfjs-core');
-      await import('@tensorflow/tfjs-backend-webgl');
-
-      // Wait for backend to be ready
-      await tf.ready();
-      console.log('TensorFlow.js backend ready:', tf.getBackend());
-
-      poseDetection = await import('@tensorflow-models/pose-detection');
-    }
-
-    const model = poseDetection.SupportedModels.MoveNet;
-    const created = await poseDetection.createDetector(model, {
-      modelType: poseDetection.movenet.modelType.SINGLEPOSE_THUNDER,
-    });
-
-    if (gen !== poseGen) {
-      // Disposed while loading (mode switch / unmount) — don't resurrect.
-      created.dispose();
-      return false;
-    }
-    if (detector) {
-      // A concurrent init already won (StrictMode double-mount).
-      created.dispose();
-      return true;
-    }
-    detector = created;
-    warnedPoseNotReady = false;
-    console.log('Pose detector initialized successfully');
-    return true;
-  } catch (error) {
-    console.error('Failed to initialize pose detector:', error);
-    return false;
-  }
-}
-
-/**
- * Detect poses in a video frame
- */
-export async function detectPose(video: HTMLVideoElement): Promise<Pose | null> {
-  if (!detector) {
-    if (!warnedPoseNotReady) {
-      console.warn('Pose detector not initialized yet — frames skipped until the model loads');
-      warnedPoseNotReady = true;
-    }
-    return null;
-  }
-
-  try {
-    const poses = await detector.estimatePoses(video);
-    return poses.length > 0 ? poses[0] : null;
-  } catch (error) {
-    console.error('Pose detection error:', error);
-    return null;
-  }
 }
 
 /**
@@ -284,203 +177,139 @@ export class RepCounter {
   }
 }
 
-/**
- * Cleanup detector resources
- */
-export function disposePoseDetector() {
-  poseGen++; // invalidate any createDetector still in flight
-  if (detector) {
-    detector.dispose();
-    detector = null;
-  }
-}
-
-/**
- * Initialize the MediaPipe Tasks HandLandmarker (client-side only). Wasm and the
- * full-accuracy model are self-hosted under /public/mediapipe — no CDN at runtime.
- * VIDEO running mode tracks landmarks between frames instead of re-detecting the
- * palm each frame, which is what keeps a closing fist stable.
- */
-export async function initHandDetector(): Promise<boolean> {
-  try {
-    if (typeof window === 'undefined') {
-      console.warn('Hand detection only works in browser');
-      return false;
-    }
-
-    if (handLandmarker) return true;
-    const gen = handGen;
-
-    console.log('Loading hand landmarker (~8 MB model on first use)…');
-    const { FilesetResolver, HandLandmarker } = await import('@mediapipe/tasks-vision');
-    const vision = await FilesetResolver.forVisionTasks('/mediapipe/wasm');
-
-    const createWith = (delegate: 'GPU' | 'CPU') =>
-      HandLandmarker.createFromOptions(vision, {
-        baseOptions: {
-          modelAssetPath: '/mediapipe/hand_landmarker.task',
-          delegate,
-        },
-        runningMode: 'VIDEO',
-        numHands: 2,
-        minHandDetectionConfidence: 0.5,
-        minHandPresenceConfidence: 0.5,
-        minTrackingConfidence: 0.5,
-      });
-
-    let created: import('@mediapipe/tasks-vision').HandLandmarker;
-    try {
-      created = await createWith('GPU');
-    } catch {
-      // Some machines/browsers can't create the GPU delegate — CPU still runs
-      // the full model in real time.
-      console.warn('GPU delegate unavailable for hand landmarker, falling back to CPU');
-      created = await createWith('CPU');
-    }
-
-    if (gen !== handGen) {
-      // Disposed while loading (mode switch / unmount) — don't resurrect.
-      created.close();
-      return false;
-    }
-    if (handLandmarker) {
-      // A concurrent init already won (StrictMode double-mount).
-      created.close();
-      return true;
-    }
-    handLandmarker = created;
-    warnedHandNotReady = false;
-    console.log('Hand landmarker initialized successfully');
-    return true;
-  } catch (error) {
-    console.error('Failed to initialize hand detector:', error);
-    return false;
-  }
-}
-
-/**
- * Detect hands in a video frame, normalized into the same Pose shape MoveNet
- * produces so the whole downstream engine works unchanged.
- */
-export async function detectHand(video: HTMLVideoElement): Promise<Pose | null> {
-  if (!handLandmarker) {
-    if (!warnedHandNotReady) {
-      console.warn('Hand detector not initialized yet — frames skipped until the model loads');
-      warnedHandNotReady = true;
-    }
-    return null;
-  }
-
-  try {
-    const w = video.videoWidth;
-    const h = video.videoHeight;
-    if (!w || !h) return null;
-
-    // detectForVideo requires a monotonically increasing timestamp; it feeds the
-    // internal landmark tracker that carries hands across frames.
-    const result = handLandmarker.detectForVideo(video, performance.now());
-    if (!result.landmarks || result.landmarks.length === 0) {
-      smoothedHands = []; // hand lost — don't smooth across the gap
-      return null;
-    }
-
-    // Landmarks come back normalized [0..1] in canonical MediaPipe order, which
-    // HAND_KEYPOINT_NAMES mirrors — scale to pixels and attach names so the
-    // overlay and the angle engine see the exact shape they always have.
-    const sets = result.landmarks.map((landmarks, i) => {
-      // Handedness classification confidence is the closest thing the task
-      // returns to a per-hand score; landmarks carry no per-point score, and
-      // getKeypoint rejects anything under 0.5, so copy it onto each point.
-      const s = result.handedness?.[i]?.[0]?.score ?? 1;
-      const world = result.worldLandmarks?.[i];
-      return {
-        keypoints: landmarks.map((lm, j) => ({
-          x: lm.x * w,
-          y: lm.y * h,
-          name: HAND_KEYPOINT_NAMES[j],
-          score: s,
-          // Metric 3D — lets validation measure rotation-invariant angles.
-          world: world?.[j]
-            ? { x: world[j].x, y: world[j].y, z: world[j].z }
-            : undefined,
-        })),
-        score: s,
-      };
-    });
-
-    // Most-confident hand is the primary (drives validation/derivation); any
-    // others ride along in extraHands purely so the overlay can draw them.
-    sets.sort((a, b) => (b.score ?? 0) - (a.score ?? 0));
-
-    // EMA-smooth each hand slot; a big wrist jump means the slot changed hands,
-    // so restart that filter instead of dragging points across the screen.
-    const jumpLimit = Math.hypot(w, h) * 0.2;
-    sets.forEach((set, i) => {
-      const prev = smoothedHands[i];
-      const wrist = set.keypoints[0];
-      if (!prev || Math.hypot(wrist.x - prev[0].x, wrist.y - prev[0].y) > jumpLimit) {
-        smoothedHands[i] = set.keypoints.map((kp) => ({
-          x: kp.x,
-          y: kp.y,
-          world: kp.world ? { ...kp.world } : undefined,
-        }));
-        return;
-      }
-      set.keypoints.forEach((kp, j) => {
-        const p = prev[j];
-        kp.x = p.x + (kp.x - p.x) * SMOOTH_ALPHA;
-        kp.y = p.y + (kp.y - p.y) * SMOOTH_ALPHA;
-        p.x = kp.x;
-        p.y = kp.y;
-        // Smooth world coords the same way so 3D angles are as steady as 2D ones.
-        if (kp.world && p.world) {
-          kp.world.x = p.world.x + (kp.world.x - p.world.x) * SMOOTH_ALPHA;
-          kp.world.y = p.world.y + (kp.world.y - p.world.y) * SMOOTH_ALPHA;
-          kp.world.z = p.world.z + (kp.world.z - p.world.z) * SMOOTH_ALPHA;
-          p.world = { ...kp.world };
-        } else {
-          p.world = kp.world ? { ...kp.world } : undefined;
-        }
-      });
-    });
-    if (smoothedHands.length > sets.length) smoothedHands.length = sets.length;
-
-    const [primary, ...rest] = sets;
-    return { ...primary, extraHands: rest.length > 0 ? rest : undefined };
-  } catch (error) {
-    console.error('Hand detection error:', error);
-    return null;
-  }
-}
-
-export function disposeHandDetector() {
-  handGen++; // invalidate any createFromOptions still in flight
-  smoothedHands = [];
-  if (handLandmarker) {
-    handLandmarker.close();
-    handLandmarker = null;
-  }
-}
-
 // ---- Mode facade: the only detector API pages should call ----
+//
+// Worker-first: frames are shipped to lib/detection.worker.ts as transferred
+// ImageBitmaps and inference happens there, so the main thread only pays for
+// the bitmap grab. If the browser can't (no Worker/createImageBitmap) or the
+// worker's model fails to initialize (e.g. no OffscreenCanvas WebGL), the same
+// engine runs on the main thread instead — identical results, just blocking.
+
+let worker: Worker | null = null;
+// Sticky per-page-load: once the worker path fails we stop retrying it.
+let workerBroken = false;
+let usingWorker = false;
+let msgSeq = 1;
+const pending = new Map<number, (value: any) => void>();
+// Bumped on every dispose so an initDetector still awaiting its worker (or
+// main-thread model) load doesn't resurrect a disposed session.
+let facadeGen = 0;
+let lastWorkerPose: Pose | null = null;
+let detectInFlight = false;
+
+function workerSupported(): boolean {
+  return (
+    typeof window !== 'undefined' &&
+    typeof Worker !== 'undefined' &&
+    typeof createImageBitmap === 'function'
+  );
+}
+
+function getWorker(): Worker {
+  if (!worker) {
+    worker = new Worker(new URL('./detection.worker.ts', import.meta.url));
+    worker.onmessage = (e: MessageEvent) => {
+      const id = e.data?.id;
+      const resolve = pending.get(id);
+      if (resolve) {
+        pending.delete(id);
+        resolve(e.data);
+      }
+    };
+    worker.onerror = (e: ErrorEvent) => {
+      // Worker script failed to load or crashed — unblock every waiter and
+      // route this page's detection to the main thread from here on.
+      console.error('Detection worker error, falling back to main thread:', e.message);
+      workerBroken = true;
+      usingWorker = false;
+      for (const resolve of pending.values()) resolve(null);
+      pending.clear();
+      worker?.terminate();
+      worker = null;
+    };
+  }
+  return worker;
+}
+
+function callWorker(msg: Record<string, unknown>, transfer?: Transferable[]): Promise<any> {
+  const w = getWorker();
+  const id = msgSeq++;
+  return new Promise((resolve) => {
+    pending.set(id, resolve);
+    w.postMessage({ ...msg, id }, transfer ?? []);
+  });
+}
 
 /** Init the detector for a mode, disposing the other model first (one model resident at a time). */
 export async function initDetector(mode: TrackingMode): Promise<boolean> {
-  if (mode === 'hand') {
-    disposePoseDetector();
-    return initHandDetector();
+  const gen = facadeGen;
+  lastWorkerPose = null;
+
+  if (!workerBroken && workerSupported()) {
+    try {
+      const res = await callWorker({ type: 'init', mode });
+      if (gen !== facadeGen) return false;
+      if (res?.ok) {
+        usingWorker = true;
+        return true;
+      }
+      // Model couldn't start inside the worker — retire it and fall through
+      // to the main-thread engine.
+      workerBroken = true;
+      worker?.terminate();
+      worker = null;
+      pending.clear();
+    } catch (error) {
+      console.error('Detection worker init failed, falling back to main thread:', error);
+      workerBroken = true;
+    }
   }
-  disposeHandDetector();
-  return initPoseDetector();
+
+  usingWorker = false;
+  if (gen !== facadeGen) return false;
+  const ok = await initCore(mode);
+  return gen === facadeGen ? ok : false;
 }
 
 export async function detect(video: HTMLVideoElement, mode: TrackingMode): Promise<Pose | null> {
-  return mode === 'hand' ? detectHand(video) : detectPose(video);
+  if (usingWorker && worker) {
+    if (!video.videoWidth || !video.videoHeight) return null;
+    // Never queue frames behind a slow inference — reuse the last result so
+    // callers keep a steady pose while the worker catches up.
+    if (detectInFlight) return lastWorkerPose;
+    detectInFlight = true;
+    try {
+      const bitmap = await createImageBitmap(video);
+      const res = await callWorker(
+        // detectForVideo needs a monotonically increasing timestamp; taking it
+        // here (not in the worker) keeps it monotonic across worker restarts.
+        { type: 'detect', mode, bitmap, timestamp: performance.now() },
+        [bitmap]
+      );
+      lastWorkerPose = (res?.pose as Pose | null) ?? null;
+      return lastWorkerPose;
+    } catch (error) {
+      console.error('Worker detection error:', error);
+      return null;
+    } finally {
+      detectInFlight = false;
+    }
+  }
+  return detectCore(video, mode, performance.now());
 }
 
 export function disposeDetector() {
-  disposePoseDetector();
-  disposeHandDetector();
+  facadeGen++; // invalidate any initDetector still in flight
+  if (worker) {
+    worker.terminate(); // frees the worker's models with it
+    worker = null;
+  }
+  for (const resolve of pending.values()) resolve(null);
+  pending.clear();
+  usingWorker = false;
+  detectInFlight = false;
+  lastWorkerPose = null;
+  disposeCore();
 }
 
 // ============================================================================
@@ -780,31 +609,6 @@ export const ANATOMICAL_REFERENCES: Record<string, [string, string]> = {
   right_knee: ['right_hip', 'right_ankle'],
 };
 
-/** The 21 landmarks MediaPipeHands (tfjs runtime) detects. */
-export const HAND_KEYPOINT_NAMES: readonly string[] = [
-  'wrist',
-  'thumb_cmc',
-  'thumb_mcp',
-  'thumb_ip',
-  'thumb_tip',
-  'index_finger_mcp',
-  'index_finger_pip',
-  'index_finger_dip',
-  'index_finger_tip',
-  'middle_finger_mcp',
-  'middle_finger_pip',
-  'middle_finger_dip',
-  'middle_finger_tip',
-  'ring_finger_mcp',
-  'ring_finger_pip',
-  'ring_finger_dip',
-  'ring_finger_tip',
-  'pinky_finger_mcp',
-  'pinky_finger_pip',
-  'pinky_finger_dip',
-  'pinky_finger_tip',
-];
-
 /**
  * Reference points for measuring the angle at each hand joint: MCPs measure
  * knuckle flexion against the wrist, PIPs measure finger curl (mcp → tip),
@@ -919,8 +723,9 @@ const MAX_CRITERIA_JOINTS: Record<TrackingMode, number> = { body: 8, hand: 4 };
 const BAND_FLOOR_DEG: Record<TrackingMode, number> = { body: 10, hand: 15 };
 const BAND_CAP_DEG: Record<TrackingMode, number> = { body: 20, hand: 28 };
 
-/** Centered moving average — MoveNet angles jitter several degrees frame to frame. */
-function smoothSeries(values: number[], windowSize = 5): number[] {
+/** Centered moving average — MoveNet angles jitter several degrees frame to frame.
+ * Exported for lib/trajectory.ts, which smooths live angle curves the same way. */
+export function smoothSeries(values: number[], windowSize = 5): number[] {
   if (values.length <= windowSize) return [...values];
   const half = Math.floor(windowSize / 2);
   return values.map((_, i) => {

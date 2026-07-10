@@ -22,7 +22,13 @@ import {
   type Pose,
   type PoseCriteria,
   type ExerciseAnalysis,
+  type CyclePhase,
 } from '@/lib/poseDetection'
+import {
+  createTrajectoryTracker,
+  type TrajectoryTracker,
+  type TrajectoryScore,
+} from '@/lib/trajectory'
 
 type SessionState = 'loading' | 'ready' | 'countdown' | 'active' | 'paused' | 'completed'
 type PostureFeedback = 'good' | 'adjust' | 'analyzing'
@@ -55,6 +61,10 @@ export default function SessionPage() {
   const videoRef = useRef<HTMLVideoElement>(null)
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const repCounterRef = useRef<GenericRepCounter | CycleRepCounter | null>(null)
+  // DTW path scoring for cyclic exercises — null when the exercise has no
+  // usable demo curves (feature silently off).
+  const trajectoryRef = useRef<TrajectoryTracker | null>(null)
+  const prevPhaseRef = useRef<CyclePhase | null>(null)
   const animationFrameRef = useRef<number | undefined>(undefined)
 
   // Exercise state
@@ -87,6 +97,8 @@ export default function SessionPage() {
   const [isDetecting, setIsDetecting] = useState(false)
   const [repJustCompleted, setRepJustCompleted] = useState(false)
   const [holdProgress, setHoldProgress] = useState(0)
+  // Last rep's DTW path-match result, shown as a badge until the next rep.
+  const [pathScore, setPathScore] = useState<TrajectoryScore | null>(null)
   const [holdMissed, setHoldMissed] = useState(false)
   // One spoken "now lower" cue per earned hold (cycle exercises)
   const holdCueSpokenRef = useRef(false)
@@ -149,6 +161,11 @@ export default function SessionPage() {
           repCounterRef.current = cyclic
             ? new CycleRepCounter(data.hold_duration_ms)
             : new GenericRepCounter(data.hold_duration_ms)
+          // Cyclic reps have a clear start/end, so each one can be DTW-scored
+          // against the therapist's recorded movement curve.
+          trajectoryRef.current = cyclic
+            ? createTrajectoryTracker(data.recorded_paths, data.pose_criteria)
+            : null
           console.log('✅ Loaded exercise:', data.name)
         }
       } catch (err) {
@@ -397,8 +414,18 @@ export default function SessionPage() {
 
       // Count reps first so cycle-phase coaching can override the raw feedback
       const rep = repCounterRef.current.count(analysis)
-      const phase = 'phase' in rep ? rep.phase : null
+      const phase: CyclePhase | null = 'phase' in rep ? (rep.phase as CyclePhase) : null
       setHoldProgress(rep.holdProgress)
+
+      // Trajectory matching: collect the live angle curve, opening a rep
+      // window whenever the movement leaves the rest pose.
+      if (trajectoryRef.current && phase) {
+        trajectoryRef.current.addSample(pose, now)
+        if (prevPhaseRef.current === 'rest' && phase !== 'rest') {
+          trajectoryRef.current.markRepStart()
+        }
+        prevPhaseRef.current = phase
+      }
 
       let displayFeedback = analysis.feedback
       let displayMessage = analysis.message
@@ -444,11 +471,17 @@ export default function SessionPage() {
       if (rep.justCompleted) {
         const newCount = rep.repCount
         console.log(`✅ Rep ${newCount} completed!`)
-        // A completed cycle is good form by definition; hold-only reps keep
-        // scoring by the form at the moment the hold ended.
-        const formScore = phase
-          ? 100
-          : analysis.feedback === 'good' ? 100 : analysis.feedback === 'adjust' ? 50 : 0
+        // DTW path match against the therapist's demo curve is the best form
+        // signal when available. Otherwise: a completed cycle is good form by
+        // definition; hold-only reps keep scoring by the form at the moment
+        // the hold ended.
+        const traj = trajectoryRef.current?.scoreRep() ?? null
+        setPathScore(traj)
+        const formScore = traj
+          ? traj.score
+          : phase
+            ? 100
+            : analysis.feedback === 'good' ? 100 : analysis.feedback === 'adjust' ? 50 : 0
 
         // Save rep data
         const repData: RepData = {
@@ -463,7 +496,11 @@ export default function SessionPage() {
         repCountRef.current = newCount
         setRepCount(newCount)
         setRepJustCompleted(true)
-        speak(`Rep ${newCount} completed! ${TARGET_REPS - newCount} more to go.`)
+        // Low path match = rep counted but movement strayed from the demo —
+        // coach it right away, while the next rep can still improve.
+        const pathCoaching =
+          traj && traj.score < 60 ? ' Try to follow the demonstrated movement more closely.' : ''
+        speak(`Rep ${newCount} completed! ${TARGET_REPS - newCount} more to go.${pathCoaching}`)
         setTimeout(() => setRepJustCompleted(false), 300)
 
         if (newCount >= TARGET_REPS) {
@@ -1047,6 +1084,30 @@ export default function SessionPage() {
                 }}>{repCount}</span> / {TARGET_REPS}
               </p>
             </div>
+
+            {/* DTW path match of the last rep — how closely the movement
+                followed the therapist's recorded curve */}
+            {pathScore && (
+              <div style={{
+                background: 'rgba(255, 255, 255, 0.9)',
+                backdropFilter: 'blur(8px)',
+                padding: 'var(--space-2) var(--space-4)',
+                borderRadius: 'var(--radius-full)',
+                display: 'flex',
+                alignItems: 'center',
+                gap: 'var(--space-2)',
+              }}>
+                <div style={{
+                  width: '8px',
+                  height: '8px',
+                  borderRadius: '50%',
+                  background: pathScore.score >= 80 ? '#10b981' : pathScore.score >= 60 ? '#f97316' : '#ef4444',
+                }} />
+                <span className="text-xs" style={{ color: 'var(--muted)' }}>
+                  Path {pathScore.score}%
+                </span>
+              </div>
+            )}
 
             {/* Detection status indicator */}
             {isDetecting && (

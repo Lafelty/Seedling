@@ -66,6 +66,7 @@ function RingBadge({
 export default function LevelsPage() {
   const router = useRouter()
   const [loading, setLoading] = useState(true)
+  const [loadError, setLoadError] = useState(false)
   const [map, setMap] = useState<GroupNode[]>([])
 
   useEffect(() => {
@@ -97,15 +98,12 @@ export default function LevelsPage() {
     ])
 
     if (groupsRes.error || exercisesRes.error) {
-      // Groups table missing until levels_migration.sql runs — fall back to
-      // the classic single-exercise session so patients are never blocked.
-      console.error(
-        'Error loading level map (run supabase/levels_migration.sql?):',
-        groupsRes.error || exercisesRes.error
-      )
-      router.push('/session')
+      console.error('Error loading level map:', groupsRes.error || exercisesRes.error)
+      setLoadError(true)
+      setLoading(false)
       return
     }
+    setLoadError(false)
 
     setMap(
       buildLevelMap(
@@ -123,6 +121,27 @@ export default function LevelsPage() {
         <div className="text-center">
           <div className="w-12 h-12 border-4 border-[var(--primary)] border-t-transparent rounded-full animate-spin mx-auto mb-4" />
           <p style={{ color: 'var(--muted)' }}>Loading your path...</p>
+        </div>
+      </div>
+    )
+  }
+
+  if (loadError) {
+    return (
+      <div className="min-h-screen flex items-center justify-center px-4">
+        <div className="card text-center" style={{ maxWidth: '420px' }}>
+          <p style={{ fontWeight: 700, color: 'var(--primary)', marginBottom: 'var(--space-2)' }}>
+            Couldn&apos;t load your path
+          </p>
+          <p style={{ color: 'var(--muted)', fontSize: 'var(--text-sm)', marginBottom: 'var(--space-4)' }}>
+            Check your connection and try again.
+          </p>
+          <button
+            className="btn btn-primary"
+            onClick={() => { setLoading(true); loadMap() }}
+          >
+            Try again
+          </button>
         </div>
       </div>
     )
@@ -367,6 +386,13 @@ export default function LevelsPage() {
             <path d="M7 16l4-8 4 4 4-12" />
           </svg>
           <span>Progress</span>
+        </Link>
+        <Link href="/profile" className="nav-item">
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" />
+            <circle cx="12" cy="7" r="4" />
+          </svg>
+          <span>Profile</span>
         </Link>
       </nav>
     </>

@@ -58,15 +58,13 @@ export default function AdminDashboard() {
       setExercises(exercisesData as Exercise[])
     }
 
-    // Load users (requires supabase/stars_migration.sql: total_stars column
-    // + admin visibility on all profiles)
     const { data: profilesData, error: profilesError } = await supabase
       .from('profiles')
       .select('id, email, name, total_stars, is_admin, created_at')
       .order('created_at', { ascending: false })
 
     if (profilesError) {
-      console.error('Error loading profiles (run stars_migration.sql?):', profilesError)
+      console.error('Error loading profiles:', profilesError)
     } else if (profilesData) {
       setProfiles(profilesData as Profile[])
     }

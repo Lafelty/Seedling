@@ -46,7 +46,7 @@ Three tables with Row Level Security:
 
 1. In Supabase dashboard, go to **SQL Editor**
 2. Click **"New Query"**
-3. Copy ALL content from `supabase/schema.sql`
+3. Run every file in `supabase/migrations/` in filename order (see `supabase/README.md`)
 4. Paste and click **"Run"**
 
 This creates your database tables and security policies.
@@ -172,7 +172,7 @@ lib/
     └── types.ts            ✅ TypeScript database types
 
 supabase/
-└── schema.sql              ✅ Database schema + RLS policies
+└── migrations/             ✅ Ordered schema migrations + RLS policies
 
 .env.local.example          ✅ Environment template
 SETUP_AUTH.md              ✅ Setup guide

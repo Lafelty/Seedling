@@ -145,11 +145,8 @@ export default function AdminGroupsPage() {
     ])
 
     if (groupsRes.error || exercisesRes.error) {
-      console.error(
-        'Error loading groups (run supabase/levels_migration.sql?):',
-        groupsRes.error || exercisesRes.error
-      )
-      flash('Load failed — has levels_migration.sql been run?')
+      console.error('Error loading groups:', groupsRes.error || exercisesRes.error)
+      flash('Failed to load groups. Refresh to retry.')
       return
     }
 

@@ -23,7 +23,7 @@ This guide will help you set up the complete user authentication and progress tr
 
 1. In your Supabase project dashboard, go to **SQL Editor**
 2. Click "New Query"
-3. Copy the entire contents of `supabase/schema.sql` in this repo
+3. Run every file in `supabase/migrations/` in filename order (see `supabase/README.md`)
 4. Paste it into the SQL editor
 5. Click **"Run"** to execute the SQL
 
@@ -134,7 +134,7 @@ lib/
 └── poseDetection.ts        # Pose detection (existing)
 
 supabase/
-└── schema.sql              # Database schema
+└── migrations/             # Ordered schema migrations
 ```
 
 ## 🚀 Next Steps
@@ -154,7 +154,7 @@ Should I continue building these components?
 - Restart the dev server after adding environment variables
 
 **"RLS policy violation" error:**
-- Make sure you ran the entire `schema.sql` file
+- Make sure you ran every file in `supabase/migrations/` in order
 - Check that you're logged in
 - Verify the SQL trigger created the profile row
 

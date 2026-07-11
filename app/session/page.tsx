@@ -114,7 +114,6 @@ export default function SessionPage() {
   const { showToast, ToastComponent } = useToast()
 
   const TARGET_REPS = exercise?.target_reps ?? 10
-  // Null-safe pre-migration: rows without tracking_mode are body exercises.
   const mode: TrackingMode = exercise?.tracking_mode ?? 'body'
 
   // Load exercise from database

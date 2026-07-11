@@ -14,12 +14,12 @@
 --                          also meet (null = no time requirement)
 --
 -- 3. RLS: any signed-in user can read groups; only admins manage them
---    (uses public.is_admin() from stars_migration.sql).
+--    (uses public.is_admin() from 20260706000000_stars.sql).
 --
 -- 4. Backfill: a default 'Basics' box adopts every unassigned exercise,
 --    ranked easy-first by difficulty then age.
 --
--- Run in the Supabase SQL editor AFTER stars_migration.sql.
+-- Run in the Supabase SQL editor AFTER 20260706000000_stars.sql.
 -- Idempotent: safe to re-run.
 
 -- ---------------------------------------------------------------------------

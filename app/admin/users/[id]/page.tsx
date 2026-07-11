@@ -73,7 +73,7 @@ export default function AdminUserPage() {
 
     if (error) {
       console.error('Error updating stars:', error)
-      setMessage('Failed to save. Check that stars_migration.sql has been run.')
+      setMessage('Failed to save stars. Please try again.')
     } else {
       setStars(cleanStars)
       setProfile({ ...profile, total_stars: cleanStars })

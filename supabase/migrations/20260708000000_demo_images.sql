@@ -17,7 +17,7 @@ VALUES ('exercise-demos', 'exercise-demos', true)
 ON CONFLICT (id) DO NOTHING;
 
 -- Only admins (therapists) may write; everyone may read.
--- Uses public.is_admin() from stars_migration.sql.
+-- Uses public.is_admin() from 20260706000000_stars.sql.
 CREATE POLICY "Admins upload exercise demo images" ON storage.objects
   FOR INSERT TO authenticated
   WITH CHECK (bucket_id = 'exercise-demos' AND (SELECT public.is_admin()));

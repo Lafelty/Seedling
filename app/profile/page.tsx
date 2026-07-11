@@ -58,18 +58,8 @@ export default function ProfilePage() {
       .single()
 
     if (error) {
-      // Columns missing until profile_info_migration.sql runs — still let the
-      // patient edit their name.
-      console.error('Error loading profile (run profile_info_migration.sql?):', error)
-      const { data: fallback } = await supabase
-        .from('profiles')
-        .select('email, name')
-        .eq('id', user.id)
-        .single()
-      if (fallback) {
-        setEmail(fallback.email ?? '')
-        setName(fallback.name ?? '')
-      }
+      console.error('Error loading profile:', error)
+      setMessage('Failed to load profile. Check your connection and refresh.')
       setLoading(false)
       return
     }
@@ -135,7 +125,7 @@ export default function ProfilePage() {
 
     if (error) {
       console.error('Error saving profile:', error)
-      setMessage('Failed to save. Has profile_info_migration.sql been run?')
+      setMessage('Failed to save. Please try again.')
     } else {
       setMessage('Profile saved!')
     }

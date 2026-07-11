@@ -52,15 +52,7 @@ export default function DashboardPage() {
               .single();
 
             if (profileError) {
-              // total_stars doesn't exist until supabase/stars_migration.sql
-              // has run — fall back to the pre-migration admin check.
-              console.error('Error loading profile (run stars_migration.sql?):', profileError);
-              const { data: fallback } = await supabase
-                .from('profiles')
-                .select('is_admin')
-                .eq('id', user.id)
-                .single();
-              if (fallback?.is_admin) setIsAdmin(true);
+              console.error('Error loading profile:', profileError);
               return;
             }
 

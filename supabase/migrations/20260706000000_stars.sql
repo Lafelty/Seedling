@@ -10,13 +10,13 @@
 -- 3. Profiles SELECT/UPDATE policies extended so admins can list all users
 --    and edit their stars. Kept as one permissive policy per action to avoid
 --    multiple_permissive_policies linter warnings (same approach as
---    perf_rls_fixes.sql). is_admin stays UPDATE-revoked from client roles,
+--    20260705000000_perf_rls_fixes.sql). is_admin stays UPDATE-revoked from client roles,
 --    so this adds no privilege-escalation path.
 --
 -- 4. public.award_stars() RPC — atomic increment on session completion,
 --    avoiding read-modify-write races when a patient uses two devices.
 --
--- Run in the Supabase SQL editor AFTER perf_rls_fixes.sql.
+-- Run in the Supabase SQL editor AFTER 20260705000000_perf_rls_fixes.sql.
 -- Idempotent: safe to re-run.
 
 -- ---------------------------------------------------------------------------

@@ -13,7 +13,7 @@
 -- 3. SECURITY: profiles UPDATE policy had no column restriction, so any user
 --    could set is_admin = true on their own row. Column-level UPDATE on
 --    is_admin is revoked from client roles; only service_role / SQL editor
---    can grant admin (see set-admin.sql).
+--    can grant admin (see supabase/scripts/set-admin.sql).
 --
 -- Run in the Supabase SQL editor. Idempotent: safe to re-run.
 

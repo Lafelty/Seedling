@@ -41,15 +41,13 @@ export default function StarConfigPage() {
 
     setIsAdmin(true)
 
-    // Load users (requires supabase/stars_migration.sql: total_stars column
-    // + admin visibility on all profiles)
     const { data: profilesData, error: profilesError } = await supabase
       .from('profiles')
       .select('id, email, name, total_stars, is_admin, created_at')
       .order('created_at', { ascending: false })
 
     if (profilesError) {
-      console.error('Error loading profiles (run stars_migration.sql?):', profilesError)
+      console.error('Error loading profiles:', profilesError)
     } else if (profilesData) {
       setProfiles(profilesData as Profile[])
     }
@@ -139,7 +137,7 @@ export default function StarConfigPage() {
 
           {profiles.length === 0 ? (
             <p style={{ color: 'var(--muted)', textAlign: 'center', padding: 'var(--space-8)' }}>
-              No users found. If patients exist, run supabase/stars_migration.sql first.
+              No users found.
             </p>
           ) : (
             <div style={{ overflowX: 'auto' }}>

@@ -1,6 +1,6 @@
 // Hand-maintained schema types (no Supabase CLI in this environment). Mirrors
-// the SQL under supabase/*.sql — schema.sql plus the additive migrations
-// (exercises, stars, profile_info, levels, hand_tracking, demo_images). JSONB
+// the SQL under supabase/migrations/*.sql, applied in filename order (see
+// supabase/README.md for the deploy-order rule and migration index). JSONB
 // columns are typed to the real shapes the app stores, not `Json`, so queries
 // are checked end to end. Keep in sync when a migration adds/changes a column.
 

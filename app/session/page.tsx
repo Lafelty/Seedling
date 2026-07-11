@@ -159,8 +159,8 @@ export default function SessionPage() {
               (c: { restAngle?: number }) => typeof c.restAngle === 'number'
             )
           repCounterRef.current = cyclic
-            ? new CycleRepCounter(data.hold_duration_ms)
-            : new GenericRepCounter(data.hold_duration_ms)
+            ? new CycleRepCounter(data.hold_duration_ms ?? 500)
+            : new GenericRepCounter(data.hold_duration_ms ?? 500)
           // Cyclic reps have a clear start/end, so each one can be DTW-scored
           // against the therapist's recorded movement curve.
           trajectoryRef.current = cyclic
@@ -557,9 +557,10 @@ export default function SessionPage() {
       console.log('✅ Session updated:', { durationSeconds, formQualityScore, completed })
     }
 
-    if (repDataListRef.current.length > 0) {
+    const sessionId = sessionIdRef.current
+    if (sessionId && repDataListRef.current.length > 0) {
       const repInserts = repDataListRef.current.map(rep => ({
-        session_id: sessionIdRef.current,
+        session_id: sessionId,
         rep_number: rep.repNumber,
         hold_duration_ms: rep.holdDuration,
         form_score: rep.formScore,

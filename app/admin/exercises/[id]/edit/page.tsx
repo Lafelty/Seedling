@@ -332,8 +332,8 @@ export default function EditExercisePage({ params }: { params: Promise<{ id: str
     if (data.exercise_type === 'static' || data.exercise_type === 'dynamic') {
       setExerciseType(data.exercise_type)
     }
-    if (['beginner', 'intermediate', 'advanced'].includes(data.difficulty)) {
-      setDifficulty(data.difficulty)
+    if (data.difficulty && ['beginner', 'intermediate', 'advanced'].includes(data.difficulty)) {
+      setDifficulty(data.difficulty as 'beginner' | 'intermediate' | 'advanced')
     }
     if (Array.isArray(data.demo_images)) {
       setDemoImages([data.demo_images[0] ?? null, data.demo_images[1] ?? null])
@@ -388,8 +388,9 @@ export default function EditExercisePage({ params }: { params: Promise<{ id: str
       setTargetBodyParts(derivedParts)
     } else if (data.pose_criteria?.targetBodyParts) {
       setTargetBodyParts(data.pose_criteria.targetBodyParts)
-    } else if (data.pose_criteria?.detectedMovingParts) {
-      setTargetBodyParts(data.pose_criteria.detectedMovingParts)
+    } else if ((data.pose_criteria as unknown as { detectedMovingParts?: string[] })?.detectedMovingParts) {
+      // Legacy rows stored the moving parts under a different key.
+      setTargetBodyParts((data.pose_criteria as unknown as { detectedMovingParts: string[] }).detectedMovingParts)
     }
 
     if (data.feedback_messages) {
@@ -760,7 +761,7 @@ export default function EditExercisePage({ params }: { params: Promise<{ id: str
         exercise_type: exerciseType,
         difficulty,
         demo_images: demoImages.filter((u): u is string => !!u),
-        pose_criteria: refinedCriteria,
+        pose_criteria: refinedCriteria as PoseCriteria,
         feedback_messages: feedbackMessages,
         target_reps: targetReps,
         hold_duration_ms: holdDuration,
@@ -800,7 +801,7 @@ export default function EditExercisePage({ params }: { params: Promise<{ id: str
         exercise_type: exerciseType,
         difficulty,
         demo_images: demoImages.filter((u): u is string => !!u),
-        pose_criteria: { targetBodyParts, criteria: angleCriteria, levelingRules, toleranceMultiplier, angleSpace },
+        pose_criteria: { targetBodyParts, criteria: angleCriteria, levelingRules, toleranceMultiplier, angleSpace } as PoseCriteria,
         feedback_messages: feedbackMessages,
         target_reps: targetReps,
         hold_duration_ms: holdDuration,

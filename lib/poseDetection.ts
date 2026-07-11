@@ -456,14 +456,85 @@ export function analyzeExercise(
     };
   }
 
-  const failedCriteria: string[] = [];
+  // Every detected hand must do the exercise: evaluate the criteria against
+  // the primary keypoints AND each extra hand, so a two-hand patient isn't
+  // validated on whichever hand happens to be primary. Body mode never sets
+  // extraHands, so this stays the single-set path it always was.
+  const sets: Pose[] = [pose, ...(pose.extraHands ?? [])];
 
-  // Check if all target body parts are visible
-  const missingParts = targetBodyParts.filter(
-    (part) => !getKeypoint(pose, part)
-  );
+  // Difficulty dial — widens (or tightens) every band around its target
+  const m = poseCriteria?.toleranceMultiplier ?? 1;
+  // Measure in the same space the bands were derived in, or they don't compare.
+  const space: AngleSpace = poseCriteria?.angleSpace === '3d' ? '3d' : '2d';
 
-  if (missingParts.length > 0) {
+  const failedSet = new Set<string>();
+  let anyMissingParts = false;
+  let allAtRest = true;
+
+  for (const set of sets) {
+    // Check if all target body parts are visible on this hand/body
+    const missingParts = targetBodyParts.filter((part) => !getKeypoint(set, part));
+    if (missingParts.length > 0) {
+      anyMissingParts = true;
+      allAtRest = false;
+      continue;
+    }
+
+    // Check angle criteria, tracking the rest zone alongside the target band
+    let restEligible = 0;
+    let restMet = 0;
+    for (const criterion of criteria) {
+      const joint = getKeypoint(set, criterion.joint);
+      const pointA = getKeypoint(set, criterion.relativeTo[0]);
+      const pointB = getKeypoint(set, criterion.relativeTo[1]);
+      const hasRest = typeof criterion.restAngle === 'number';
+      if (hasRest) restEligible++;
+
+      if (!joint || !pointA || !pointB) {
+        // Invisible joint: can't confirm the rest pose either
+        failedSet.add(criterion.joint);
+        continue;
+      }
+
+      const angle = measureAngle(pointA, joint, pointB, space);
+      const minAngle = criterion.targetAngle - (criterion.targetAngle - criterion.minAngle) * m;
+      const maxAngle = criterion.targetAngle + (criterion.maxAngle - criterion.targetAngle) * m;
+
+      if (angle < minAngle) {
+        failedSet.add(`${criterion.joint}_tooLow`);
+      } else if (angle > maxAngle) {
+        failedSet.add(`${criterion.joint}_tooHigh`);
+      }
+
+      if (hasRest) {
+        // "Back at rest" = within the first 35% of the excursion from rest toward
+        // target — generous on purpose; it only has to detect the return, and the
+        // derivation guarantees the target band sits well outside it.
+        const rest = criterion.restAngle as number;
+        const restLimit = rest + 0.35 * (criterion.targetAngle - rest);
+        const inRestZone =
+          criterion.targetAngle >= rest ? angle <= restLimit : angle >= restLimit;
+        if (inRestZone) restMet++;
+      }
+    }
+
+    if (!(restEligible > 0 && restMet === restEligible)) allAtRest = false;
+
+    // Check leveling rules (symmetry)
+    for (const rule of levelingRules) {
+      const joint1 = getKeypoint(set, rule.joints[0]);
+      const joint2 = getKeypoint(set, rule.joints[1]);
+
+      if (joint1 && joint2) {
+        const diff = Math.abs(joint1.y - joint2.y);
+        if (diff > rule.maxDifference * m) {
+          failedSet.add(`leveling_${rule.joints[0]}_${rule.joints[1]}`);
+        }
+      }
+    }
+  }
+
+  if (anyMissingParts) {
     return {
       meetsAllCriteria: false,
       atRest: false,
@@ -473,63 +544,8 @@ export function analyzeExercise(
     };
   }
 
-  // Difficulty dial — widens (or tightens) every band around its target
-  const m = poseCriteria?.toleranceMultiplier ?? 1;
-  // Measure in the same space the bands were derived in, or they don't compare.
-  const space: AngleSpace = poseCriteria?.angleSpace === '3d' ? '3d' : '2d';
-
-  // Check angle criteria, tracking the rest zone alongside the target band
-  let restEligible = 0;
-  let restMet = 0;
-  for (const criterion of criteria) {
-    const joint = getKeypoint(pose, criterion.joint);
-    const pointA = getKeypoint(pose, criterion.relativeTo[0]);
-    const pointB = getKeypoint(pose, criterion.relativeTo[1]);
-    const hasRest = typeof criterion.restAngle === 'number';
-    if (hasRest) restEligible++;
-
-    if (!joint || !pointA || !pointB) {
-      // Invisible joint: can't confirm the rest pose either
-      failedCriteria.push(criterion.joint);
-      continue;
-    }
-
-    const angle = measureAngle(pointA, joint, pointB, space);
-    const minAngle = criterion.targetAngle - (criterion.targetAngle - criterion.minAngle) * m;
-    const maxAngle = criterion.targetAngle + (criterion.maxAngle - criterion.targetAngle) * m;
-
-    if (angle < minAngle) {
-      failedCriteria.push(`${criterion.joint}_tooLow`);
-    } else if (angle > maxAngle) {
-      failedCriteria.push(`${criterion.joint}_tooHigh`);
-    }
-
-    if (hasRest) {
-      // "Back at rest" = within the first 35% of the excursion from rest toward
-      // target — generous on purpose; it only has to detect the return, and the
-      // derivation guarantees the target band sits well outside it.
-      const rest = criterion.restAngle as number;
-      const restLimit = rest + 0.35 * (criterion.targetAngle - rest);
-      const inRestZone =
-        criterion.targetAngle >= rest ? angle <= restLimit : angle >= restLimit;
-      if (inRestZone) restMet++;
-    }
-  }
-
-  const atRest = restEligible > 0 && restMet === restEligible;
-
-  // Check leveling rules (symmetry)
-  for (const rule of levelingRules) {
-    const joint1 = getKeypoint(pose, rule.joints[0]);
-    const joint2 = getKeypoint(pose, rule.joints[1]);
-
-    if (joint1 && joint2) {
-      const diff = Math.abs(joint1.y - joint2.y);
-      if (diff > rule.maxDifference * m) {
-        failedCriteria.push(`leveling_${rule.joints[0]}_${rule.joints[1]}`);
-      }
-    }
-  }
+  const atRest = allAtRest;
+  const failedCriteria = [...failedSet];
 
   // Generate feedback
   const meetsAllCriteria = failedCriteria.length === 0;

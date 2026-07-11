@@ -25,9 +25,10 @@ export interface Keypoint {
 export interface Pose {
   keypoints: Keypoint[];
   score?: number;
-  // Hand mode only: any additional detected hands beyond the primary one, for
-  // overlay drawing. The validation/derivation engine ignores this and works off
-  // `keypoints`, so a two-hand recording still derives criteria from the primary.
+  // Hand mode only: any additional detected hands beyond the primary one.
+  // Validation checks these too — a two-hand exercise must pass on every
+  // detected hand — and overlays draw them. Criteria derivation still works
+  // off the primary `keypoints` only.
   extraHands?: Array<{
     keypoints: Keypoint[];
     score?: number;
@@ -271,9 +272,12 @@ async function detectHandCore(source: FrameSource, timestampMs: number): Promise
       };
     });
 
-    // Most-confident hand is the primary (drives validation/derivation); any
-    // others ride along in extraHands purely so the overlay can draw them.
-    sets.sort((a, b) => (b.score ?? 0) - (a.score ?? 0));
+    // Order hands left-to-right in the frame (wrist x). Confidence flaps
+    // between hands frame to frame, which would swap which hand is "primary"
+    // mid-rep and feed the trajectory sampler alternating hands; screen
+    // position is stable. Validation checks every set, so primary choice only
+    // matters for derivation and trajectory sampling.
+    sets.sort((a, b) => a.keypoints[0].x - b.keypoints[0].x);
 
     // EMA-smooth each hand slot; a big wrist jump means the slot changed hands,
     // so restart that filter instead of dragging points across the screen.

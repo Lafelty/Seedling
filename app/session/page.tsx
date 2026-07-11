@@ -880,29 +880,37 @@ export default function SessionPage() {
 
             const lineColor = feedbackColor[postureFeedback];
 
-            return connections.map(([start, end], i) => {
-              const startKp = detectedPose.keypoints.find((kp) => kp.name === start);
-              const endKp   = detectedPose.keypoints.find((kp) => kp.name === end);
+            // Hand mode: draw every detected hand, not just the primary —
+            // both hands are validated, so both get the live skeleton.
+            const keypointSets = mode === 'hand'
+              ? [detectedPose.keypoints, ...(detectedPose.extraHands?.map((h) => h.keypoints) ?? [])]
+              : [detectedPose.keypoints];
 
-              if (
-                startKp && endKp &&
-                (startKp.score ?? 0) > 0.5 &&
-                (endKp.score   ?? 0) > 0.5
-              ) {
-                return (
-                  <line
-                    key={i}
-                    x1={startKp.x} y1={startKp.y}
-                    x2={endKp.x}   y2={endKp.y}
-                    stroke={lineColor}
-                    strokeWidth={mode === 'hand' ? 4 : 8}
-                    strokeLinecap="round"
-                    opacity="0.85"
-                  />
-                );
-              }
-              return null;
-            });
+            return keypointSets.flatMap((keypoints, h) =>
+              connections.map(([start, end], i) => {
+                const startKp = keypoints.find((kp) => kp.name === start);
+                const endKp   = keypoints.find((kp) => kp.name === end);
+
+                if (
+                  startKp && endKp &&
+                  (startKp.score ?? 0) > 0.5 &&
+                  (endKp.score   ?? 0) > 0.5
+                ) {
+                  return (
+                    <line
+                      key={`${h}-${i}`}
+                      x1={startKp.x} y1={startKp.y}
+                      x2={endKp.x}   y2={endKp.y}
+                      stroke={lineColor}
+                      strokeWidth={mode === 'hand' ? 4 : 8}
+                      strokeLinecap="round"
+                      opacity="0.85"
+                    />
+                  );
+                }
+                return null;
+              })
+            );
           })()}
         </svg>
       )}

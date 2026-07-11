@@ -2,7 +2,6 @@
 
 import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
-import Link from 'next/link'
 import { createClient } from '@/lib/supabase/client'
 import { LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts'
 
@@ -289,22 +288,6 @@ export default function DashboardPage() {
           gap: 'var(--space-4)',
           justifyContent: 'center',
         }}>
-          <Link
-            href="/session"
-            style={{
-              padding: 'var(--space-4) var(--space-8)',
-              fontSize: 'var(--text-lg)',
-              fontWeight: 600,
-              color: 'white',
-              background: 'var(--primary)',
-              border: 'none',
-              borderRadius: 'var(--radius-full)',
-              textDecoration: 'none',
-              display: 'inline-block',
-            }}
-          >
-            Start Session
-          </Link>
           <button
             onClick={async () => {
               const supabase = createClient()

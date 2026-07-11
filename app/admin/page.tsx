@@ -4,28 +4,9 @@ import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { createClient } from '@/lib/supabase/client'
+import type { ExerciseRow as Exercise, ProfileSummary as Profile } from '@/lib/supabase/types'
 
 export const dynamic = 'force-dynamic'
-
-interface Exercise {
-  id: string
-  name: string
-  description: string
-  exercise_type: string
-  difficulty: string
-  target_reps: number
-  is_active: boolean
-  created_at: string
-}
-
-interface Profile {
-  id: string
-  email: string
-  name: string | null
-  total_stars: number
-  is_admin: boolean
-  created_at: string
-}
 
 const DIFFICULTY_STYLES: Record<string, { bg: string; fg: string }> = {
   beginner: { bg: '#E8F5E9', fg: '#2E7D32' },
@@ -428,7 +409,7 @@ export default function AdminDashboard() {
                   </thead>
                   <tbody>
                     {exercises.map((exercise) => {
-                      const diffStyle = DIFFICULTY_STYLES[exercise.difficulty] ?? DIFFICULTY_STYLES.beginner
+                      const diffStyle = DIFFICULTY_STYLES[exercise.difficulty ?? 'beginner'] ?? DIFFICULTY_STYLES.beginner
                       return (
                         <tr key={exercise.id} style={{ borderTop: '1px solid var(--border)' }}>
                           <td style={{ padding: 'var(--space-3) var(--space-4)' }}>

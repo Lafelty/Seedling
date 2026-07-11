@@ -20,7 +20,6 @@ import {
   anchorPairForMode,
   type TrackingMode,
   type Pose,
-  type PoseCriteria,
   type ExerciseAnalysis,
   type CyclePhase,
 } from '@/lib/poseDetection'
@@ -29,6 +28,7 @@ import {
   type TrajectoryTracker,
   type TrajectoryScore,
 } from '@/lib/trajectory'
+import type { ExerciseRow } from '@/lib/supabase/types'
 
 type SessionState = 'loading' | 'ready' | 'countdown' | 'active' | 'paused' | 'completed'
 type PostureFeedback = 'good' | 'adjust' | 'analyzing'
@@ -40,21 +40,21 @@ interface RepData {
   timestamp: Date
 }
 
-interface Exercise {
-  id: string
-  name: string
-  description: string
-  exercise_type: 'static' | 'dynamic'
-  pose_criteria: PoseCriteria
-  target_reps: number
-  hold_duration_ms: number
-  feedback_messages: Record<string, string>
-  recorded_paths?: Array<{ frames: Array<{ pose: Pose }> }> | null
-  // Absent until hand_tracking_migration.sql has run — treat as 'body'.
-  tracking_mode?: TrackingMode | null
-  // Absent until demo_images_migration.sql has run — treated as no pictures.
-  demo_images?: string[] | null
-}
+// Exactly the columns the session query selects, derived from the schema.
+type Exercise = Pick<
+  ExerciseRow,
+  | 'id'
+  | 'name'
+  | 'description'
+  | 'exercise_type'
+  | 'pose_criteria'
+  | 'target_reps'
+  | 'hold_duration_ms'
+  | 'feedback_messages'
+  | 'recorded_paths'
+  | 'tracking_mode'
+  | 'demo_images'
+>
 
 export default function SessionPage() {
   const router = useRouter()
@@ -486,7 +486,8 @@ export default function SessionPage() {
         // Save rep data
         const repData: RepData = {
           repNumber: newCount,
-          holdDuration: exercise.hold_duration_ms,
+          // Same 500ms default the rep counters were constructed with.
+          holdDuration: exercise.hold_duration_ms ?? 500,
           formScore,
           timestamp: new Date(),
         }

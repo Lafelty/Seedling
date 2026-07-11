@@ -33,34 +33,11 @@ import {
   type CyclePhase,
   type AngleSpace,
 } from '@/lib/poseDetection'
+import type { ExerciseRow, RecordedDemo } from '@/lib/supabase/types'
 
-interface RecordedFrame {
-  timestamp: number
-  pose: Pose
-}
-
-interface RecordedDemo {
-  id: string
-  frames: RecordedFrame[]
-  duration: number
-  recordedAt: string
-}
-
-interface Exercise {
-  id: string
-  name: string
-  description: string
-  exercise_type: string
-  difficulty: string
-  recorded_paths: RecordedDemo[]
-  pose_criteria: any
-  target_reps: number
-  hold_duration_ms: number
-  feedback_messages: any
-  is_active: boolean
-  // Absent until hand_tracking_migration.sql has run — treat as 'body'.
-  tracking_mode?: TrackingMode | null
-}
+// Row with recorded_paths normalized to a real array at load time — the
+// editor's playback and criteria-derivation logic indexes it throughout.
+type Exercise = Omit<ExerciseRow, 'recorded_paths'> & { recorded_paths: RecordedDemo[] }
 
 interface AngleCriterion {
   joint: string
@@ -326,7 +303,7 @@ export default function EditExercisePage({ params }: { params: Promise<{ id: str
       return
     }
 
-    setExercise(data as Exercise)
+    setExercise({ ...data, recorded_paths: data.recorded_paths ?? [] })
     setExerciseName(data.name ?? '')
     setExerciseDescription(data.description ?? '')
     if (data.exercise_type === 'static' || data.exercise_type === 'dynamic') {

@@ -4,17 +4,9 @@ import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { createClient } from '@/lib/supabase/client'
+import type { ProfileSummary as Profile } from '@/lib/supabase/types'
 
 export const dynamic = 'force-dynamic'
-
-interface Profile {
-  id: string
-  email: string
-  name: string | null
-  total_stars: number
-  is_admin: boolean
-  created_at: string
-}
 
 export default function StarConfigPage() {
   const router = useRouter()

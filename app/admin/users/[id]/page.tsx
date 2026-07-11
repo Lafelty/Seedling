@@ -5,17 +5,9 @@ import { useParams, useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { createClient } from '@/lib/supabase/client'
 import { getTreeStage } from '@/lib/progress'
+import type { ProfileSummary as Profile } from '@/lib/supabase/types'
 
 export const dynamic = 'force-dynamic'
-
-interface Profile {
-  id: string
-  email: string
-  name: string | null
-  total_stars: number
-  is_admin: boolean
-  created_at: string
-}
 
 export default function AdminUserPage() {
   const router = useRouter()

@@ -222,6 +222,12 @@ export interface Database {
 
 // ---- Row aliases for convenient imports across the app ----
 export type ProfileRow = Database['public']['Tables']['profiles']['Row'];
+
+/** Columns the admin/starconfig pages select when listing patients. */
+export type ProfileSummary = Pick<
+  ProfileRow,
+  'id' | 'email' | 'name' | 'total_stars' | 'is_admin' | 'created_at'
+>;
 export type TherapySessionRow = Database['public']['Tables']['therapy_sessions']['Row'];
 export type RepDataRow = Database['public']['Tables']['rep_data']['Row'];
 export type ExerciseRow = Database['public']['Tables']['exercises']['Row'];

@@ -4,16 +4,13 @@
  *
  * The artwork (public/garden/stage00.png … stage13.png, extracted from
  * GardenPack.pdf) is a single scene that fills in cumulatively: stage 0 is
- * an empty plot, stage 13 the full garden. Each threshold below reveals the
- * next element. Early thresholds are close together for quick first rewards;
- * later ones stretch out and line up with the tree stages (6 = sapling,
- * 16 = young, 31 = mature, ~50 = forest begins).
+ * an empty plot, stage 13 the full garden. One star reveals the next stage.
  */
 
 export const GARDEN_STAGE_COUNT = 14;
 
 /** Stars required to reach stage i+1 (stage 0 is the empty plot). */
-export const GARDEN_THRESHOLDS = [1, 2, 4, 6, 9, 12, 16, 20, 25, 31, 38, 45, 52] as const;
+export const GARDEN_THRESHOLDS = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13] as const;
 
 /** What appears at each stage 1..13, shown as the stage caption. */
 export const GARDEN_STAGE_NAMES = [

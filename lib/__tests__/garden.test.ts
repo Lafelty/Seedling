@@ -40,7 +40,7 @@ describe('getGardenStage', () => {
   });
 
   it('caps at the final stage', () => {
-    expect(getGardenStage(52)).toBe(13);
+    expect(getGardenStage(13)).toBe(13);
     expect(getGardenStage(1000)).toBe(13);
   });
 });
@@ -49,12 +49,12 @@ describe('getStarsToNextBloom', () => {
   it('counts down to the next threshold', () => {
     expect(getStarsToNextBloom(0)).toBe(1);
     expect(getStarsToNextBloom(1)).toBe(1);
-    expect(getStarsToNextBloom(2)).toBe(2);
-    expect(getStarsToNextBloom(30)).toBe(1);
+    expect(getStarsToNextBloom(2)).toBe(1);
+    expect(getStarsToNextBloom(9)).toBe(1);
   });
 
   it('returns 0 once the garden is complete', () => {
-    expect(getStarsToNextBloom(52)).toBe(0);
+    expect(getStarsToNextBloom(13)).toBe(0);
     expect(getStarsToNextBloom(100)).toBe(0);
   });
 });
@@ -62,14 +62,13 @@ describe('getStarsToNextBloom', () => {
 describe('getGardenProgressPercent', () => {
   it('is 0 at a fresh threshold and 100 when complete', () => {
     expect(getGardenProgressPercent(0)).toBe(0);
-    expect(getGardenProgressPercent(52)).toBe(100);
+    expect(getGardenProgressPercent(13)).toBe(100);
   });
 
   it('is halfway between thresholds', () => {
-    // stage 4 spans 6..9, so 7.5 stars would be 50%; 6 -> 0%
+    // each stage spans exactly 1 star, so progress is always 0% or 100%
     expect(getGardenProgressPercent(6)).toBe(0);
-    // stage 7 spans 16..20; 18 stars -> 50%
-    expect(getGardenProgressPercent(18)).toBe(50);
+    expect(getGardenProgressPercent(7)).toBe(0);
   });
 });
 

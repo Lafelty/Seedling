@@ -143,9 +143,9 @@ export function updateProgress(starsEarned: number): ProgressData {
 }
 
 export function getTreeStage(totalStars: number): 'seed' | 'sapling' | 'young' | 'mature' {
-  if (totalStars >= 31) return 'mature';
-  if (totalStars >= 16) return 'young';
-  if (totalStars >= 6) return 'sapling';
+  if (totalStars >= 3) return 'mature';
+  if (totalStars >= 2) return 'young';
+  if (totalStars >= 1) return 'sapling';
   return 'seed';
 }
 

@@ -786,10 +786,10 @@ function getGreeting(): string {
 function getStageProgressPercent(stage: string, totalStars: number): number {
   // Star ranges per stage, matching getTreeStage thresholds in lib/progress
   const ranges: Record<string, [number, number]> = {
-    seed: [0, 6],
-    sapling: [6, 16],
-    young: [16, 31],
-    mature: [31, 50],
+    seed: [0, 1],
+    sapling: [1, 2],
+    young: [2, 3],
+    mature: [3, 4],
   };
   const range = ranges[stage];
   if (!range) return 0;
@@ -819,10 +819,10 @@ function getNextStageName(stage: string): string {
 
 function getStarsNeededForNextStage(stage: string, totalStars: number): number {
   switch (stage) {
-    case 'seed': return Math.max(0, 6 - totalStars);
-    case 'sapling': return Math.max(0, 16 - totalStars);
-    case 'young': return Math.max(0, 31 - totalStars);
-    case 'mature': return Math.max(0, 50 - totalStars);
+    case 'seed': return Math.max(0, 1 - totalStars);
+    case 'sapling': return Math.max(0, 2 - totalStars);
+    case 'young': return Math.max(0, 3 - totalStars);
+    case 'mature': return 0;
     default: return 0;
   }
 }

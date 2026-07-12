@@ -99,12 +99,12 @@ export default function ProgressPage() {
   const selectedCompleted = progress.completedDates.includes(selectedDay)
     || selectedSessions.some(s => s.completed_at);
 
-  // Thresholds match getTreeStage() in lib/progress.ts (sapling 6, young 16, mature 31).
+  // Thresholds match getTreeStage() in lib/progress.ts (sapling 1, young 2, mature 3).
   const milestones = [
-    { stars: 6, label: 'Sapling unlocked', icon: '🌱', reached: progress.totalStars >= 6 },
-    { stars: 16, label: 'Growing tree', icon: '🌿', reached: progress.totalStars >= 16 },
-    { stars: 31, label: 'Mature tree', icon: '🌳', reached: progress.totalStars >= 31 },
-    { stars: 50, label: 'Real tree planted! 🌳', icon: '🏞️', reached: progress.totalStars >= 50 },
+    { stars: 1, label: 'Sapling unlocked', icon: '🌱', reached: progress.totalStars >= 1 },
+    { stars: 2, label: 'Growing tree', icon: '🌿', reached: progress.totalStars >= 2 },
+    { stars: 3, label: 'Mature tree', icon: '🌳', reached: progress.totalStars >= 3 },
+    { stars: 4, label: 'Real tree planted! 🌳', icon: '🏞️', reached: progress.totalStars >= 4 },
   ];
 
   return (

@@ -1,10 +1,13 @@
 'use client';
 
 import Link from 'next/link';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { createClient } from '@/lib/supabase/client';
 import { getProgress, getDayStrip, markOnboardingComplete, setProgressUid, reconcileStars, type ProgressData, type DayStatus } from '@/lib/progress';
+import { getGardenStage, getGardenStageName, getGardenImagePath, getStarsToNextBloom, getGardenProgressPercent } from '@/lib/garden';
+import { playBloomSparkle, vibrate } from '@/lib/rewardFx';
+import confetti from 'canvas-confetti';
 import { format, startOfDay, subDays } from 'date-fns';
 import { DayFace, MOOD_BG, computeDayMood } from '@/components/DayFace';
 
@@ -13,6 +16,9 @@ interface WeekSession {
   completed_at: string | null;
   form_quality_score: number | null;
 }
+
+type HomeView = 'tree' | 'garden';
+const HOME_VIEW_KEY = 'medproj_home_view';
 
 export const dynamic = 'force-dynamic';
 
@@ -23,7 +29,35 @@ export default function DashboardPage() {
   const [showEmptyState, setShowEmptyState] = useState(false);
   const [user, setUser] = useState<any>(null);
   const [isAdmin, setIsAdmin] = useState(false);
+  const [homeView, setHomeView] = useState<HomeView>('tree');
+  // Garden stage to animate into when arriving right after a session that
+  // revealed a new element (set by the session page via sessionStorage).
+  const [bloomReveal, setBloomReveal] = useState<number | null>(null);
   const router = useRouter();
+
+  useEffect(() => {
+    let reveal: string | null = null;
+    try {
+      reveal = sessionStorage.getItem('medproj_bloom_reveal');
+      if (reveal != null) sessionStorage.removeItem('medproj_bloom_reveal');
+    } catch { /* private mode */ }
+
+    if (reveal != null) {
+      // Fresh bloom: land on the garden so the user sees it grow.
+      setBloomReveal(Number(reveal));
+      setHomeView('garden');
+      localStorage.setItem(HOME_VIEW_KEY, 'garden');
+      return;
+    }
+
+    const saved = localStorage.getItem(HOME_VIEW_KEY);
+    if (saved === 'garden' || saved === 'tree') setHomeView(saved);
+  }, []);
+
+  const switchView = (view: HomeView) => {
+    setHomeView(view);
+    localStorage.setItem(HOME_VIEW_KEY, view);
+  };
 
   useEffect(() => {
     // Check if user is logged in (only in browser)
@@ -255,58 +289,41 @@ export default function DashboardPage() {
           </div>
         </header>
 
-        {/* Garden State */}
+        {/* Growth view: tree or garden */}
         <section className="px-6 py-12 animate-fadeInUp" style={{ animationDelay: '150ms' }}>
           <div className="max-w-2xl mx-auto text-center">
-            {/* Soil/Garden Illustration */}
-            <div className="mb-8 animate-treeGrow" style={{ animationDelay: '200ms' }}>
-              <SoilIllustration stage={progress.treeStage} />
-            </div>
-
-            {showEmptyState ? (
+            {homeView === 'tree' ? (
               <>
-                <h2 style={{ fontSize: 'var(--text-2xl)', fontWeight: 600, marginBottom: 'var(--space-2)' }}>
-                  Your garden awaits 🌱
-                </h2>
-                <p style={{ color: 'var(--muted)', fontSize: 'var(--text-base)', marginBottom: 'var(--space-4)' }}>
-                  Complete your first session to plant your seed and begin your journey
-                </p>
-                <p style={{ color: 'var(--muted)', fontSize: 'var(--text-sm)' }}>
-                  Each session you complete earns a star and helps your tree grow stronger
-                </p>
+                {/* Soil/Garden Illustration */}
+                <div className="mb-8 animate-treeGrow" style={{ animationDelay: '200ms' }}>
+                  <SoilIllustration stage={progress.treeStage} />
+                </div>
+
+                {showEmptyState ? (
+                  <EmptyStateCopy />
+                ) : (
+                  <>
+                    <h2 style={{ fontSize: 'var(--text-2xl)', fontWeight: 600, marginBottom: 'var(--space-2)' }}>
+                      {getStageName(progress.treeStage)}
+                    </h2>
+                    <p style={{ color: 'var(--muted)', fontSize: 'var(--text-base)' }}>
+                      {starsNeeded} more stars until "{getNextStageName(progress.treeStage)}"
+                    </p>
+
+                    <StageProgressBar percent={getStageProgressPercent(progress.treeStage, progress.totalStars)} />
+                  </>
+                )}
               </>
             ) : (
-              <>
-                <h2 style={{ fontSize: 'var(--text-2xl)', fontWeight: 600, marginBottom: 'var(--space-2)' }}>
-                  {getStageName(progress.treeStage)}
-                </h2>
-                <p style={{ color: 'var(--muted)', fontSize: 'var(--text-base)' }}>
-                  {starsNeeded} more stars until "{getNextStageName(progress.treeStage)}"
-                </p>
-
-                {/* Stage progress bar */}
-                <div style={{ maxWidth: '240px', margin: 'var(--space-4) auto 0' }}>
-                  <div
-                    style={{
-                      height: '8px',
-                      borderRadius: 'var(--radius-full)',
-                      background: 'var(--border)',
-                      overflow: 'hidden',
-                    }}
-                  >
-                    <div
-                      style={{
-                        height: '100%',
-                        width: `${getStageProgressPercent(progress.treeStage, progress.totalStars)}%`,
-                        borderRadius: 'var(--radius-full)',
-                        background: 'linear-gradient(90deg, var(--primary), #6B8F7A)',
-                        transition: 'width var(--dur-slow) var(--ease-out)',
-                      }}
-                    />
-                  </div>
-                </div>
-              </>
+              <GardenView totalStars={progress.totalStars} showEmptyState={showEmptyState} revealStage={bloomReveal} />
             )}
+          </div>
+        </section>
+
+        {/* Tree / Garden view toggle */}
+        <section className="px-6 pb-2 animate-fadeInUp" style={{ animationDelay: '250ms' }}>
+          <div className="max-w-2xl mx-auto flex justify-center">
+            <ViewToggle view={homeView} onChange={switchView} />
           </div>
         </section>
 
@@ -437,6 +454,204 @@ export default function DashboardPage() {
           <span>Profile</span>
         </Link>
       </nav>
+    </>
+  );
+}
+
+function ViewToggle({ view, onChange }: { view: HomeView; onChange: (view: HomeView) => void }) {
+  return (
+    <div
+      role="tablist"
+      aria-label="Growth view"
+      style={{
+        position: 'relative',
+        display: 'flex',
+        background: 'var(--surface)',
+        border: '1px solid var(--border)',
+        borderRadius: 'var(--radius-full)',
+        padding: '4px',
+        boxShadow: '0 1px 3px rgba(0, 0, 0, 0.05)',
+      }}
+    >
+      {/* Sliding thumb behind the active tab */}
+      <div
+        aria-hidden
+        style={{
+          position: 'absolute',
+          top: '4px',
+          bottom: '4px',
+          left: '4px',
+          width: 'calc(50% - 4px)',
+          borderRadius: 'var(--radius-full)',
+          background: 'linear-gradient(135deg, var(--primary), #6B8F7A)',
+          boxShadow: '0 2px 8px rgba(74, 107, 90, 0.35)',
+          transform: view === 'garden' ? 'translateX(100%)' : 'translateX(0)',
+          transition: 'transform var(--dur-base) var(--ease-grow)',
+        }}
+      />
+      {(['tree', 'garden'] as const).map((tab) => (
+        <button
+          key={tab}
+          role="tab"
+          aria-selected={view === tab}
+          onClick={() => onChange(tab)}
+          style={{
+            position: 'relative',
+            zIndex: 1,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            gap: '6px',
+            minWidth: '112px',
+            padding: 'var(--space-2) var(--space-4)',
+            borderRadius: 'var(--radius-full)',
+            fontSize: 'var(--text-sm)',
+            fontWeight: 600,
+            border: 'none',
+            background: 'transparent',
+            cursor: 'pointer',
+            color: view === tab ? '#fff' : 'var(--muted)',
+            transition: 'color var(--dur-base) var(--ease-out)',
+          }}
+        >
+          {tab === 'tree' ? (
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M12 13v9" />
+              <path d="M12 3a4.5 4.5 0 0 0-4.47 5A4 4 0 0 0 8.5 15.9h7A4 4 0 0 0 16.47 8 4.5 4.5 0 0 0 12 3z" />
+            </svg>
+          ) : (
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <circle cx="12" cy="12" r="3" />
+              <path d="M12 16.5A4.5 4.5 0 1 1 7.5 12 4.5 4.5 0 1 1 12 7.5a4.5 4.5 0 1 1 4.5 4.5 4.5 4.5 0 1 1-4.5 4.5" />
+            </svg>
+          )}
+          {tab === 'tree' ? 'Tree' : 'Garden'}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+function EmptyStateCopy() {
+  return (
+    <>
+      <h2 style={{ fontSize: 'var(--text-2xl)', fontWeight: 600, marginBottom: 'var(--space-2)' }}>
+        Your garden awaits 🌱
+      </h2>
+      <p style={{ color: 'var(--muted)', fontSize: 'var(--text-base)', marginBottom: 'var(--space-4)' }}>
+        Complete your first session to plant your seed and begin your journey
+      </p>
+      <p style={{ color: 'var(--muted)', fontSize: 'var(--text-sm)' }}>
+        Each session you complete earns a star and helps your tree grow stronger
+      </p>
+    </>
+  );
+}
+
+function StageProgressBar({ percent }: { percent: number }) {
+  return (
+    <div style={{ maxWidth: '240px', margin: 'var(--space-4) auto 0' }}>
+      <div
+        style={{
+          height: '8px',
+          borderRadius: 'var(--radius-full)',
+          background: 'var(--border)',
+          overflow: 'hidden',
+        }}
+      >
+        <div
+          style={{
+            height: '100%',
+            width: `${percent}%`,
+            borderRadius: 'var(--radius-full)',
+            background: 'linear-gradient(90deg, var(--primary), #6B8F7A)',
+            transition: 'width var(--dur-slow) var(--ease-out)',
+          }}
+        />
+      </div>
+    </div>
+  );
+}
+
+function GardenView({
+  totalStars,
+  showEmptyState,
+  revealStage,
+}: {
+  totalStars: number;
+  showEmptyState: boolean;
+  revealStage: number | null;
+}) {
+  const targetStage = getGardenStage(totalStars);
+  // During a bloom reveal, hold the previous stage briefly, then grow into
+  // the new one with sparkle + confetti.
+  const [stage, setStage] = useState(revealStage != null ? Math.max(0, revealStage - 1) : targetStage);
+  const didRevealRef = useRef(false);
+
+  useEffect(() => {
+    if (revealStage != null && !didRevealRef.current) {
+      didRevealRef.current = true;
+      const id = setTimeout(() => {
+        setStage(revealStage);
+        playBloomSparkle();
+        vibrate(40);
+        confetti({
+          particleCount: 35,
+          spread: 80,
+          startVelocity: 25,
+          ticks: 80,
+          scalar: 1,
+          shapes: ['star'],
+          colors: ['#C9B88A', '#E8D9A8', '#F5EAC8'],
+          origin: { x: 0.5, y: 0.35 },
+          zIndex: 50,
+        });
+      }, 1100);
+      return () => clearTimeout(id);
+    }
+    setStage(targetStage);
+  }, [revealStage, targetStage]);
+
+  const starsToNext = getStarsToNextBloom(totalStars);
+  const complete = starsToNext === 0;
+
+  return (
+    <>
+      {/* key remounts the image so the grow animation replays on stage change */}
+      <div key={stage} className="mb-8 animate-treeGrow" style={{ animationDelay: '200ms' }}>
+        <img
+          src={getGardenImagePath(stage)}
+          alt={getGardenStageName(stage)}
+          width={682}
+          height={1023}
+          style={{
+            width: '100%',
+            maxWidth: '240px',
+            height: 'auto',
+            margin: '0 auto',
+            display: 'block',
+            borderRadius: 'var(--radius-lg)',
+            boxShadow: '0 4px 16px rgba(0, 0, 0, 0.08)',
+          }}
+        />
+      </div>
+
+      {showEmptyState ? (
+        <EmptyStateCopy />
+      ) : (
+        <>
+          <h2 style={{ fontSize: 'var(--text-2xl)', fontWeight: 600, marginBottom: 'var(--space-2)' }}>
+            {getGardenStageName(stage)}
+          </h2>
+          <p style={{ color: 'var(--muted)', fontSize: 'var(--text-base)' }}>
+            {complete
+              ? 'Every corner is thriving. Keep it watered with your sessions 🌸'
+              : `${starsToNext} more ${starsToNext === 1 ? 'star' : 'stars'} until the next bloom`}
+          </p>
+
+          {!complete && <StageProgressBar percent={getGardenProgressPercent(totalStars)} />}
+        </>
+      )}
     </>
   );
 }

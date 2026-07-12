@@ -3,7 +3,9 @@
 import Link from 'next/link'
 import { useEffect, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { updateProgress, setProgressUid } from '@/lib/progress'
+import { updateProgress, getProgress, setProgressUid } from '@/lib/progress'
+import { getGardenStage, getGardenStageName, getGardenImagePath, getStarsToNextBloom, getGardenProgressPercent } from '@/lib/garden'
+import { playRepChime, playCompletionFanfare, vibrate } from '@/lib/rewardFx'
 import confetti from 'canvas-confetti'
 import { useToast } from '@/components/Toast'
 import { createClient } from '@/lib/supabase/client'
@@ -38,6 +40,19 @@ interface RepData {
   holdDuration: number
   formScore: number
   timestamp: Date
+}
+
+/** Snapshot taken at completion time so the reward screen can celebrate
+ *  exactly what this session changed (streak, new garden bloom, tree stage). */
+interface SessionReward {
+  totalStars: number
+  streak: number
+  reps: number
+  durationSeconds: number
+  /** Garden stage just reached, or null when no new element was revealed. */
+  newGardenStage: number | null
+  /** Tree stage just reached, or null when the tree did not level up. */
+  newTreeStage: string | null
 }
 
 // Exactly the columns the session query selects, derived from the schema.
@@ -110,6 +125,7 @@ export default function SessionPage() {
   const [isDraggingBox, setIsDraggingBox] = useState(false)
   const [boxDragStart, setBoxDragStart] = useState({ x: 0, y: 0 })
   const [isSpeaking, setIsSpeaking] = useState(false)
+  const [reward, setReward] = useState<SessionReward | null>(null)
 
   const { showToast, ToastComponent } = useToast()
 
@@ -496,6 +512,21 @@ export default function SessionPage() {
         repCountRef.current = newCount
         setRepCount(newCount)
         setRepJustCompleted(true)
+        playRepChime()
+        vibrate(30)
+        // Tiny star sparkle per rep — kept small so it never competes with
+        // pose inference for frame time.
+        confetti({
+          particleCount: 12,
+          spread: 55,
+          startVelocity: 22,
+          ticks: 40,
+          scalar: 0.9,
+          shapes: ['star'],
+          colors: ['#C9B88A', '#E8D9A8', '#FAF9F7'],
+          origin: { x: 0.5, y: 0.35 },
+          zIndex: 50,
+        })
         // Low path match = rep counted but movement strayed from the demo —
         // coach it right away, while the next rep can still improve.
         const pathCoaching =
@@ -616,16 +647,60 @@ export default function SessionPage() {
 
   async function completeSession() {
     setSessionState('completed')
-    updateProgress(1) // Award 1 star locally
+    const before = getProgress()
+    const updated = updateProgress(1) // Award 1 star locally
     // Mirror the star into the database (atomic increment via RPC)
     createClient().rpc('award_stars', { star_count: 1 }).then(({ error }) => {
       if (error) console.error('Error saving star to database:', error)
     })
-    speak('Session complete! Great job!')
+
+    // Did this star reveal a new garden element or grow the tree?
+    const gardenAfter = getGardenStage(updated.totalStars)
+    const bloomed = gardenAfter > getGardenStage(before.totalStars)
+    setReward({
+      totalStars: updated.totalStars,
+      streak: updated.completionStreak,
+      reps: repCountRef.current,
+      durationSeconds: sessionStartTimeRef.current
+        ? Math.floor((Date.now() - sessionStartTimeRef.current.getTime()) / 1000)
+        : 0,
+      newGardenStage: bloomed ? gardenAfter : null,
+      newTreeStage: updated.treeStage !== before.treeStage ? updated.treeStage : null,
+    })
+
+    // Hand the reveal moment to the home page: it plays the garden growing
+    // from the previous stage into the new one when the user lands there.
+    if (bloomed) {
+      try {
+        sessionStorage.setItem('medproj_bloom_reveal', String(gardenAfter))
+      } catch { /* private mode — reveal just won't animate */ }
+    }
+
+    playCompletionFanfare()
+    vibrate([60, 40, 120])
+
+    speak(
+      bloomed
+        ? 'Session complete! Great job! A new bloom appeared in your garden!'
+        : 'Session complete! Great job!'
+    )
 
     await saveSessionToDb(true)
 
     notifyGuardian()
+
+    // Golden star burst front and center, then the falling side confetti
+    confetti({
+      particleCount: 45,
+      spread: 100,
+      startVelocity: 32,
+      scalar: 1.2,
+      ticks: 90,
+      shapes: ['star'],
+      colors: ['#C9B88A', '#E8D9A8', '#F5EAC8'],
+      origin: { x: 0.5, y: 0.4 },
+      zIndex: 50,
+    })
 
     // Trigger confetti celebration
     const duration = 3000;
@@ -758,21 +833,114 @@ export default function SessionPage() {
   if (sessionState === 'completed') {
     return (
       <>
-        <div className="fixed inset-0 flex items-center justify-center pb-24" style={{ background: 'var(--bg)' }}>
-          <div className="text-center max-w-md px-8">
-            <div className="text-6xl mb-6">🌱</div>
-            <h1 className="text-4xl font-display mb-4" style={{ color: 'var(--ink)', fontWeight: 700 }}>
+        <div className="fixed inset-0 flex items-center justify-center pb-24 overflow-y-auto" style={{ background: 'var(--bg)' }}>
+          <div className="text-center max-w-md px-8 py-8">
+            {/* Gold star medal */}
+            <div className="animate-scaleIn mb-6" style={{ display: 'inline-block' }}>
+              <div className="animate-starShine" style={{ filter: 'drop-shadow(0 6px 16px rgba(201, 184, 138, 0.5))' }}>
+                <svg width="88" height="88" viewBox="0 0 20 20">
+                  <defs>
+                    <linearGradient id="starGold" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="0%" stopColor="#E8D9A8" />
+                      <stop offset="100%" stopColor="#C9B88A" />
+                    </linearGradient>
+                  </defs>
+                  <path
+                    d="M10 0l2.5 6.5H19l-5.5 4 2 6.5L10 13l-5.5 4 2-6.5-5.5-4h6.5z"
+                    fill="url(#starGold)"
+                    stroke="#B3A276"
+                    strokeWidth="0.5"
+                  />
+                </svg>
+              </div>
+            </div>
+
+            <h1 className="text-4xl font-display mb-2 animate-fadeInUp" style={{ color: 'var(--ink)', fontWeight: 700, animationDelay: '100ms' }}>
               Session Complete!
             </h1>
-            <p style={{ color: 'var(--muted)', fontSize: 'var(--text-lg)' }} className="mb-8">
-              You earned 1 star
+            <p className="mb-6 animate-fadeInUp" style={{ color: 'var(--muted)', fontSize: 'var(--text-lg)', animationDelay: '150ms' }}>
+              +1 star earned{reward ? ` · ${reward.totalStars} total` : ''}
             </p>
-            <button
-              onClick={() => router.push('/')}
-              className="btn btn-primary"
-            >
-              View My Garden
-            </button>
+
+            {/* Session stats */}
+            <div className="flex justify-center gap-3 mb-6 animate-fadeInUp" style={{ animationDelay: '200ms' }}>
+              <StatChip value={String(reward?.reps ?? TARGET_REPS)} label="reps" />
+              <StatChip value={formatDuration(reward?.durationSeconds ?? 0)} label="time" />
+              <StatChip value={`${reward?.streak ?? 1}🔥`} label="day streak" />
+            </div>
+
+            {/* Streak milestone */}
+            {reward && STREAK_MILESTONES.includes(reward.streak) && (
+              <div
+                className="animate-fadeInUp mb-6"
+                style={{
+                  animationDelay: '250ms',
+                  background: 'linear-gradient(135deg, rgba(201, 184, 138, 0.18), rgba(201, 184, 138, 0.08))',
+                  border: '1px solid rgba(201, 184, 138, 0.5)',
+                  borderRadius: 'var(--radius-lg)',
+                  padding: 'var(--space-3) var(--space-4)',
+                  fontWeight: 700,
+                  color: 'var(--ink)',
+                }}
+              >
+                🔥 {reward.streak}-day streak — incredible consistency!
+              </div>
+            )}
+
+            {/* New garden bloom reveal */}
+            {reward?.newGardenStage != null && (
+              <div
+                className="animate-fadeInUp mb-6"
+                style={{
+                  animationDelay: '300ms',
+                  background: 'var(--surface)',
+                  border: '1px solid var(--border)',
+                  borderRadius: 'var(--radius-lg)',
+                  padding: 'var(--space-4)',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 'var(--space-4)',
+                  textAlign: 'left',
+                }}
+              >
+                <img
+                  src={getGardenImagePath(reward.newGardenStage)}
+                  alt={getGardenStageName(reward.newGardenStage)}
+                  width={72}
+                  height={108}
+                  style={{ borderRadius: 'var(--radius-md)', flexShrink: 0 }}
+                />
+                <div>
+                  <p style={{ fontWeight: 700, color: 'var(--primary)', fontSize: 'var(--text-base)', marginBottom: '2px' }}>
+                    New bloom unlocked! 🌸
+                  </p>
+                  <p style={{ color: 'var(--muted)', fontSize: 'var(--text-sm)' }}>
+                    {getGardenStageName(reward.newGardenStage)}
+                  </p>
+                </div>
+              </div>
+            )}
+
+            {/* Tree stage-up (only when no bloom card, to keep one hero moment) */}
+            {reward?.newTreeStage && reward?.newGardenStage == null && (
+              <p className="mb-6 animate-fadeInUp" style={{ color: 'var(--primary)', fontWeight: 600, animationDelay: '300ms' }}>
+                🌳 Your tree grew to a new stage!
+              </p>
+            )}
+
+            {/* What's coming next — anticipation for the next session */}
+            {reward && reward.newGardenStage == null && (
+              <NextBloomTeaser totalStars={reward.totalStars} />
+            )}
+
+            <div className="animate-fadeInUp" style={{ animationDelay: '400ms' }}>
+              <button
+                onClick={() => router.push('/')}
+                className="btn btn-primary"
+              >
+                {reward?.newGardenStage != null ? 'See My Garden Bloom' : 'View My Garden'}
+              </button>
+            </div>
           </div>
         </div>
 
@@ -1438,6 +1606,104 @@ function ExerciseDemo({ frames, intervalMs = 700 }: { frames: string[]; interval
       >
         Demo
       </span>
+    </div>
+  )
+}
+
+const STREAK_MILESTONES = [3, 5, 7, 14, 21, 30, 60, 100]
+
+function formatDuration(totalSeconds: number): string {
+  const m = Math.floor(totalSeconds / 60)
+  const s = totalSeconds % 60
+  return `${m}:${String(s).padStart(2, '0')}`
+}
+
+/** "Next bloom in N stars" card with a mystery thumbnail of the upcoming
+ *  garden element and a progress bar that animates in the star just earned. */
+function NextBloomTeaser({ totalStars }: { totalStars: number }) {
+  const starsToNext = getStarsToNextBloom(totalStars)
+  // Start the bar where it stood before this session's star, then fill.
+  const [pct, setPct] = useState(getGardenProgressPercent(totalStars - 1))
+
+  useEffect(() => {
+    const id = setTimeout(() => setPct(getGardenProgressPercent(totalStars)), 700)
+    return () => clearTimeout(id)
+  }, [totalStars])
+
+  if (starsToNext === 0) return null // garden already complete
+
+  const nextStage = getGardenStage(totalStars) + 1
+  return (
+    <div
+      className="animate-fadeInUp mb-6"
+      style={{
+        animationDelay: '350ms',
+        background: 'var(--surface)',
+        border: '1px solid var(--border)',
+        borderRadius: 'var(--radius-lg)',
+        padding: 'var(--space-4)',
+        display: 'flex',
+        alignItems: 'center',
+        gap: 'var(--space-4)',
+        textAlign: 'left',
+      }}
+    >
+      <div style={{ position: 'relative', flexShrink: 0 }}>
+        <img
+          src={getGardenImagePath(nextStage)}
+          alt="Next garden bloom (locked)"
+          width={56}
+          height={84}
+          style={{ borderRadius: 'var(--radius-md)', filter: 'grayscale(1) brightness(0.9)', opacity: 0.55, display: 'block' }}
+        />
+        <span
+          style={{
+            position: 'absolute',
+            inset: 0,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            fontSize: 'var(--text-2xl)',
+            fontWeight: 700,
+            color: 'var(--ink)',
+          }}
+        >
+          ?
+        </span>
+      </div>
+      <div style={{ flex: 1 }}>
+        <p style={{ fontWeight: 600, fontSize: 'var(--text-sm)', marginBottom: 'var(--space-2)' }}>
+          Next bloom in {starsToNext} {starsToNext === 1 ? 'star' : 'stars'}
+        </p>
+        <div style={{ height: '8px', borderRadius: 'var(--radius-full)', background: 'var(--border)', overflow: 'hidden' }}>
+          <div
+            style={{
+              height: '100%',
+              width: `${pct}%`,
+              borderRadius: 'var(--radius-full)',
+              background: 'linear-gradient(90deg, var(--primary), #6B8F7A)',
+              transition: 'width var(--dur-grow) var(--ease-out)',
+            }}
+          />
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function StatChip({ value, label }: { value: string; label: string }) {
+  return (
+    <div
+      style={{
+        background: 'var(--surface)',
+        border: '1px solid var(--border)',
+        borderRadius: 'var(--radius-lg)',
+        padding: 'var(--space-3) var(--space-4)',
+        minWidth: '84px',
+      }}
+    >
+      <div style={{ fontSize: 'var(--text-xl)', fontWeight: 700, color: 'var(--ink)' }}>{value}</div>
+      <div style={{ fontSize: 'var(--text-xs)', color: 'var(--muted)', fontWeight: 500 }}>{label}</div>
     </div>
   )
 }

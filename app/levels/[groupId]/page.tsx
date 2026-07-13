@@ -54,6 +54,20 @@ function RingBadge({ pct, cleared, size = 56 }: { pct: number; cleared: boolean;
   )
 }
 
+function PosePathSkeleton() {
+  return (
+    <main className="min-h-screen max-w-2xl mx-auto px-4 py-8 pb-16">
+      <div className="skeleton" style={{ width: '90px', height: '16px', marginBottom: 'var(--space-4)' }} />
+      <div className="skeleton" style={{ height: '104px', borderRadius: 'var(--radius-lg)', marginBottom: 'var(--space-6)' }} />
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-4)' }}>
+        {[0, 1, 2].map((i) => (
+          <div key={i} className="skeleton" style={{ height: '120px', borderRadius: 'var(--radius-lg)' }} />
+        ))}
+      </div>
+    </main>
+  )
+}
+
 export default function LevelGroupPage() {
   const router = useRouter()
   const params = useParams<{ groupId: string }>()
@@ -116,14 +130,7 @@ export default function LevelGroupPage() {
   }
 
   if (loading || !node) {
-    return (
-      <div className="min-h-screen flex items-center justify-center">
-        <div className="text-center">
-          <div className="w-12 h-12 border-4 border-[var(--primary)] border-t-transparent rounded-full animate-spin mx-auto mb-4" />
-          <p style={{ color: 'var(--muted)' }}>Loading poses...</p>
-        </div>
-      </div>
-    )
+    return <PosePathSkeleton />
   }
 
   const pct = node.total > 0 ? Math.round((node.clearedCount / node.total) * 100) : 0

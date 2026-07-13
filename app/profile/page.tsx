@@ -25,6 +25,21 @@ const labelStyle: React.CSSProperties = {
   marginBottom: 'var(--space-1)',
 }
 
+function ProfileSkeleton() {
+  return (
+    <main className="min-h-screen max-w-xl mx-auto px-4 py-8 pb-16">
+      <div className="mb-8">
+        <div className="skeleton" style={{ width: '120px', height: '14px', marginBottom: 'var(--space-3)' }} />
+        <div className="skeleton" style={{ width: '180px', height: '32px', marginBottom: 'var(--space-2)' }} />
+        <div className="skeleton" style={{ width: '220px', height: '16px' }} />
+      </div>
+      <div className="skeleton" style={{ height: '210px', borderRadius: 'var(--radius-lg)', marginBottom: 'var(--space-6)' }} />
+      <div className="skeleton" style={{ height: '200px', borderRadius: 'var(--radius-lg)', marginBottom: 'var(--space-6)' }} />
+      <div className="skeleton" style={{ height: '56px', borderRadius: 'var(--radius-full)' }} />
+    </main>
+  )
+}
+
 export default function ProfilePage() {
   const router = useRouter()
   const [loading, setLoading] = useState(true)
@@ -133,14 +148,7 @@ export default function ProfilePage() {
   }
 
   if (loading) {
-    return (
-      <div className="min-h-screen flex items-center justify-center">
-        <div className="text-center">
-          <div className="w-12 h-12 border-4 border-[var(--primary)] border-t-transparent rounded-full animate-spin mx-auto mb-4" />
-          <p style={{ color: 'var(--muted)' }}>Loading profile...</p>
-        </div>
-      </div>
-    )
+    return <ProfileSkeleton />
   }
 
   return (

@@ -122,6 +122,18 @@
     text-wrap: pretty;
   }
 
+  /* Consistent keyboard focus ring across every interactive element.
+     :focus-visible only fires for keyboard/AT users, never on mouse click.
+     outline-offset respects each element's own border-radius. */
+  :focus-visible {
+    outline: 2px solid var(--primary);
+    outline-offset: 2px;
+  }
+  /* On the dark session screen, use the brighter overlay green for contrast. */
+  .session :focus-visible {
+    outline-color: var(--session-primary);
+  }
+
   /* Session screen styling */
   .session {
     background: var(--session-bg);

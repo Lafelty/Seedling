@@ -63,6 +63,23 @@ function RingBadge({
   )
 }
 
+function LevelsSkeleton() {
+  return (
+    <main className="min-h-screen max-w-4xl mx-auto px-4 py-8 pb-24">
+      <div className="mb-8">
+        <div className="skeleton" style={{ width: '160px', height: '32px', marginBottom: 'var(--space-2)' }} />
+        <div className="skeleton" style={{ width: '280px', height: '16px', marginBottom: 'var(--space-4)' }} />
+        <div className="skeleton" style={{ height: '92px', borderRadius: 'var(--radius-lg)' }} />
+      </div>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 320px))', gap: 'var(--space-5)', justifyContent: 'center' }}>
+        {[0, 1, 2, 3].map((i) => (
+          <div key={i} className="skeleton" style={{ height: '200px', borderRadius: 'var(--radius-lg)' }} />
+        ))}
+      </div>
+    </main>
+  )
+}
+
 export default function LevelsPage() {
   const router = useRouter()
   const [loading, setLoading] = useState(true)
@@ -116,14 +133,7 @@ export default function LevelsPage() {
   }
 
   if (loading) {
-    return (
-      <div className="min-h-screen flex items-center justify-center">
-        <div className="text-center">
-          <div className="w-12 h-12 border-4 border-[var(--primary)] border-t-transparent rounded-full animate-spin mx-auto mb-4" />
-          <p style={{ color: 'var(--muted)' }}>Loading your path...</p>
-        </div>
-      </div>
-    )
+    return <LevelsSkeleton />
   }
 
   if (loadError) {

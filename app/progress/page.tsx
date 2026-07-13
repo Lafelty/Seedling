@@ -80,14 +80,7 @@ export default function ProgressPage() {
   }, [sessions]);
 
   if (!progress) {
-    return (
-      <div className="min-h-screen flex items-center justify-center">
-        <div className="text-center">
-          <div className="w-12 h-12 border-4 border-[var(--primary)] border-t-transparent rounded-full animate-spin mx-auto mb-4" />
-          <p style={{ color: 'var(--muted)' }}>Loading progress...</p>
-        </div>
-      </div>
-    );
+    return <ProgressSkeleton />;
   }
 
   const today = new Date();
@@ -450,6 +443,43 @@ export default function ProgressPage() {
         </Link>
       </nav>
     </>
+  );
+}
+
+function ProgressSkeleton() {
+  return (
+    <main className="min-h-screen max-w-4xl mx-auto px-4 py-8 pb-24">
+      {/* Header */}
+      <div className="mb-8">
+        <div className="skeleton" style={{ width: '190px', height: '32px', marginBottom: 'var(--space-2)' }} />
+        <div className="skeleton" style={{ width: '260px', height: '16px' }} />
+      </div>
+
+      {/* Stats grid */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 'var(--space-3)', marginBottom: 'var(--space-12)' }}>
+        {[0, 1, 2].map((i) => (
+          <div key={i} className="skeleton" style={{ height: '132px', borderRadius: 'var(--radius-lg)' }} />
+        ))}
+      </div>
+
+      {/* Calendar */}
+      <div className="card mb-8">
+        <div className="skeleton" style={{ width: '160px', height: '24px', marginBottom: 'var(--space-6)' }} />
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: 'var(--space-2)' }}>
+          {[...Array(35)].map((_, i) => (
+            <div key={i} className="skeleton" style={{ aspectRatio: '1', borderRadius: '50%' }} />
+          ))}
+        </div>
+      </div>
+
+      {/* Milestones */}
+      <div className="card">
+        <div className="skeleton" style={{ width: '220px', height: '24px', marginBottom: 'var(--space-6)' }} />
+        {[0, 1, 2].map((i) => (
+          <div key={i} className="skeleton" style={{ height: '56px', borderRadius: 'var(--radius-md)', marginBottom: 'var(--space-4)' }} />
+        ))}
+      </div>
+    </main>
   );
 }
 

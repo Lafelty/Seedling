@@ -99,14 +99,6 @@ export default function ProgressPage() {
   const selectedCompleted = progress.completedDates.includes(selectedDay)
     || selectedSessions.some(s => s.completed_at);
 
-  // Thresholds match getTreeStage() in lib/progress.ts (sapling 1, young 2, mature 3).
-  const milestones = [
-    { stars: 1, label: 'Sapling unlocked', icon: '🌱', reached: progress.totalStars >= 1 },
-    { stars: 2, label: 'Growing tree', icon: '🌿', reached: progress.totalStars >= 2 },
-    { stars: 3, label: 'Mature tree', icon: '🌳', reached: progress.totalStars >= 3 },
-    { stars: 4, label: 'Real tree planted! 🌳', icon: '🏞️', reached: progress.totalStars >= 4 },
-  ];
-
   return (
     <>
     <main
@@ -429,63 +421,8 @@ export default function ProgressPage() {
         )}
       </div>
 
-      {/* Milestones */}
-      <div
-        className="card"
-        style={{
-          background: 'linear-gradient(180deg, rgba(107, 143, 122, 0.08), var(--surface) 55%)',
-          borderColor: 'rgba(74, 107, 90, 0.20)',
-        }}
-      >
-        <h2 style={{ marginBottom: 'var(--space-6)', color: 'var(--primary)' }}>Growth Milestones</h2>
-
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-4)' }}>
-          {milestones.map((milestone) => (
-            <div
-              key={milestone.stars}
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: 'var(--space-4)',
-                padding: 'var(--space-4)',
-                borderRadius: 'var(--radius-md)',
-                background: milestone.reached
-                  ? 'linear-gradient(160deg, rgba(74, 107, 90, 0.10), var(--surface) 70%)'
-                  : 'transparent',
-                border: `1px solid var(--border)`,
-              }}
-            >
-              <div
-                style={{
-                  width: '40px',
-                  height: '40px',
-                  borderRadius: 'var(--radius-full)',
-                  background: milestone.reached ? 'var(--primary)' : 'var(--border)',
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  fontSize: 'var(--text-lg)',
-                  flexShrink: 0,
-                  filter: milestone.reached ? 'none' : 'grayscale(1) opacity(0.6)',
-                }}
-              >
-                {milestone.icon}
-              </div>
-              <div style={{ flex: 1 }}>
-                <p style={{ fontWeight: 600, marginBottom: 'var(--space-1)' }}>{milestone.label}</p>
-                <p style={{ fontSize: 'var(--text-sm)', color: 'var(--muted)' }}>
-                  {milestone.reached ? 'Completed!' : `${milestone.stars} stars required`}
-                </p>
-              </div>
-              {milestone.reached && (
-                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="var(--primary)" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                  <path d="M5 12l5 5L19 7" />
-                </svg>
-              )}
-            </div>
-          ))}
-        </div>
-      </div>
+      {/* Milestones — the journey to a real tree */}
+      <MilestoneJourney totalStars={progress.totalStars} />
     </main>
 
       {/* Bottom Navigation */}
@@ -513,5 +450,177 @@ export default function ProgressPage() {
         </Link>
       </nav>
     </>
+  );
+}
+
+const CheckIcon = ({ size = 18, stroke = 'white' }: { size?: number; stroke?: string }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={stroke} strokeWidth="2.6" strokeLinecap="round" strokeLinejoin="round">
+    <path d="M5 12l5 5L19 7" />
+  </svg>
+);
+
+/** A colored spine segment that "grows" (scaleY 0→1) once mounted, so the
+ *  path from one milestone to the next appears to sprout upward. */
+function Connector({ filled, grown, delay, top = false }: { filled: boolean; grown: boolean; delay: string; top?: boolean }) {
+  return (
+    <div
+      aria-hidden
+      style={{
+        width: '3px',
+        ...(top ? { height: '16px' } : { flex: 1, minHeight: '18px' }),
+        background: 'var(--border)',
+        borderRadius: '3px',
+        position: 'relative',
+      }}
+    >
+      <div
+        style={{
+          position: 'absolute',
+          inset: 0,
+          background: 'linear-gradient(180deg, var(--primary), #6B8F7A)',
+          borderRadius: '3px',
+          transformOrigin: 'top',
+          transform: `scaleY(${filled && grown ? 1 : 0})`,
+          transition: 'transform var(--dur-slow) var(--ease-out)',
+          transitionDelay: delay,
+        }}
+      />
+    </div>
+  );
+}
+
+const JOURNEY_NODES = [
+  { stars: 1, label: 'First sapling', sub: 'Your seed takes root', icon: '🌱' },
+  { stars: 2, label: 'Growing tree', sub: 'Branches reach upward', icon: '🌿' },
+  { stars: 3, label: 'Mature tree', sub: 'Full and strong', icon: '🌳' },
+] as const;
+
+const REAL_TREE_STARS = 4;
+
+function MilestoneJourney({ totalStars }: { totalStars: number }) {
+  // Toggle after mount so the spine segments animate in from empty.
+  const [grown, setGrown] = useState(false);
+  useEffect(() => {
+    const id = requestAnimationFrame(() => setGrown(true));
+    return () => cancelAnimationFrame(id);
+  }, []);
+
+  const currentIndex = JOURNEY_NODES.findIndex((n) => totalStars < n.stars);
+  const realTreeReached = totalStars >= REAL_TREE_STARS;
+  const starsToRealTree = Math.max(0, REAL_TREE_STARS - totalStars);
+
+  return (
+    <div
+      className="card"
+      style={{
+        background: 'linear-gradient(180deg, rgba(107, 143, 122, 0.08), var(--surface) 55%)',
+        borderColor: 'rgba(74, 107, 90, 0.20)',
+      }}
+    >
+      <h2 style={{ marginBottom: 'var(--space-1)', color: 'var(--primary)' }}>Your journey to a real tree</h2>
+      <p style={{ color: 'var(--muted)', fontSize: 'var(--text-sm)', marginBottom: 'var(--space-6)' }}>
+        Every star grows your garden. Reach {REAL_TREE_STARS} and our partner NGO plants a real tree in your name.
+      </p>
+
+      {/* Growth stages */}
+      <div>
+        {JOURNEY_NODES.map((node, i) => {
+          const reached = totalStars >= node.stars;
+          const isCurrent = i === currentIndex;
+          const nextReached = i < JOURNEY_NODES.length - 1
+            ? totalStars >= JOURNEY_NODES[i + 1].stars
+            : realTreeReached;
+
+          return (
+            <div key={node.stars} style={{ display: 'flex', gap: 'var(--space-4)', alignItems: 'stretch' }}>
+              {/* Spine column */}
+              <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', width: '44px', flexShrink: 0 }}>
+                {i > 0 && <Connector filled={reached} grown={grown} delay={`${i * 120}ms`} top />}
+                <div
+                  className={isCurrent ? 'gx-node-pulse' : undefined}
+                  style={{
+                    width: '44px',
+                    height: '44px',
+                    borderRadius: 'var(--radius-full)',
+                    flexShrink: 0,
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    fontSize: 'var(--text-lg)',
+                    background: reached ? 'var(--primary)' : 'var(--surface)',
+                    border: isCurrent ? '2px solid var(--primary)' : reached ? 'none' : '2px solid var(--border)',
+                    boxShadow: reached ? '0 2px 8px rgba(74, 107, 90, 0.25)' : 'none',
+                    filter: reached || isCurrent ? 'none' : 'grayscale(1) opacity(0.55)',
+                  }}
+                >
+                  {reached ? <CheckIcon /> : node.icon}
+                </div>
+                {i < JOURNEY_NODES.length - 1 && <Connector filled={nextReached} grown={grown} delay={`${i * 120 + 120}ms`} />}
+              </div>
+
+              {/* Label */}
+              <div style={{ flex: 1, paddingTop: i > 0 ? '16px' : 0, paddingBottom: 'var(--space-5)' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-2)', flexWrap: 'wrap' }}>
+                  <p style={{ fontWeight: 600, color: reached || isCurrent ? 'var(--ink)' : 'var(--muted)' }}>{node.label}</p>
+                  {isCurrent && (
+                    <span
+                      style={{
+                        fontSize: 'var(--text-xs)', fontWeight: 700, color: 'var(--primary)',
+                        background: 'rgba(74, 107, 90, 0.12)', padding: '2px var(--space-2)',
+                        borderRadius: 'var(--radius-full)',
+                      }}
+                    >
+                      You're here
+                    </span>
+                  )}
+                </div>
+                <p style={{ fontSize: 'var(--text-sm)', color: 'var(--muted)', marginTop: '2px' }}>
+                  {reached ? node.sub : `${Math.max(0, node.stars - totalStars)} more ${node.stars - totalStars === 1 ? 'star' : 'stars'}`}
+                </p>
+              </div>
+            </div>
+          );
+        })}
+
+        {/* Real-tree payoff — the hero at the end of the spine */}
+        <div style={{ display: 'flex', gap: 'var(--space-4)', alignItems: 'stretch' }}>
+          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', width: '44px', flexShrink: 0 }}>
+            <Connector filled={realTreeReached} grown={grown} delay={`${JOURNEY_NODES.length * 120}ms`} top />
+          </div>
+          <div style={{ flex: 1, paddingTop: 'var(--space-1)' }}>
+            <div
+              className={realTreeReached ? 'gx-hero-glow' : undefined}
+              style={{
+                borderRadius: 'var(--radius-lg)',
+                padding: 'var(--space-5)',
+                background: realTreeReached
+                  ? 'linear-gradient(135deg, rgba(201, 184, 138, 0.30), rgba(74, 107, 90, 0.14))'
+                  : 'linear-gradient(135deg, rgba(201, 184, 138, 0.12), rgba(107, 143, 122, 0.06))',
+                border: `1px solid ${realTreeReached ? 'rgba(201, 184, 138, 0.7)' : 'rgba(201, 184, 138, 0.4)'}`,
+              }}
+            >
+              <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-3)', marginBottom: 'var(--space-2)' }}>
+                <span style={{ fontSize: '2rem', lineHeight: 1, filter: realTreeReached ? 'none' : 'grayscale(0.4) opacity(0.85)' }}>🌳</span>
+                <div>
+                  <p style={{ fontFamily: 'var(--font-display)', fontSize: 'var(--text-xl)', fontWeight: 700, color: 'var(--ink)', lineHeight: 1.2 }}>
+                    {realTreeReached ? 'A real tree, planted in your name' : 'A real tree, in your name'}
+                  </p>
+                  {realTreeReached && (
+                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', marginTop: '4px', fontSize: 'var(--text-sm)', fontWeight: 700, color: 'var(--primary)' }}>
+                      <CheckIcon size={14} stroke="var(--primary)" /> Planted
+                    </span>
+                  )}
+                </div>
+              </div>
+              <p style={{ fontSize: 'var(--text-sm)', color: realTreeReached ? 'var(--ink)' : 'var(--muted)' }}>
+                {realTreeReached
+                  ? 'Because of your effort, our partner NGO planted a real tree. Your healing left something living behind.'
+                  : `Keep tending your garden — ${starsToRealTree} more ${starsToRealTree === 1 ? 'star' : 'stars'} and a real tree is planted for you.`}
+              </p>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
   );
 }

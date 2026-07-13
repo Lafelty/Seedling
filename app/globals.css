@@ -487,6 +487,38 @@
     animation: gxDrift var(--mote-dur, 9s) ease-in-out infinite;
   }
 
+  /* ─── Session overlay entrances ───
+     Overlays used to snap opaque over the live camera. Backdrop fades, panel
+     settles in. `both` fill holds the start frame so there's no first-paint
+     flash before the animation runs. */
+  @keyframes gxOverlayIn {
+    from { opacity: 0; }
+    to   { opacity: 1; }
+  }
+  @keyframes gxPanelIn {
+    from { opacity: 0; transform: translateY(8px) scale(0.96); }
+    to   { opacity: 1; transform: translateY(0) scale(1); }
+  }
+  .gx-overlay { animation: gxOverlayIn 200ms var(--ease-out) both; }
+  .gx-panel   { animation: gxPanelIn 260ms var(--ease-out-quart) both; }
+
+  /* ─── Milestone journey — active-node ring + real-tree hero glow ───
+     Draws the eye to where the patient is now and to the real-tree payoff.
+     prefers-reduced-motion collapses both to a static resting state; state is
+     also carried by border + label, never by motion alone. */
+  @keyframes gxRing {
+    0%   { box-shadow: 0 0 0 0 rgba(74, 107, 90, 0.45); }
+    70%  { box-shadow: 0 0 0 12px rgba(74, 107, 90, 0); }
+    100% { box-shadow: 0 0 0 0 rgba(74, 107, 90, 0); }
+  }
+  .gx-node-pulse { animation: gxRing 2.6s ease-out infinite; }
+
+  @keyframes gxHeroGlow {
+    0%, 100% { box-shadow: 0 4px 20px rgba(201, 184, 138, 0.30); }
+    50%      { box-shadow: 0 8px 32px rgba(201, 184, 138, 0.55); }
+  }
+  .gx-hero-glow { animation: gxHeroGlow 3.4s ease-in-out infinite; }
+
   /* Loading skeleton */
   @keyframes shimmer {
     0% {

@@ -1086,8 +1086,8 @@ export default function SessionPage() {
 
       {/* Ready overlay — tap unlocks mobile audio, then countdown starts */}
       {sessionState === 'ready' && (
-        <div className="absolute inset-0 flex items-center justify-center z-20" style={{ background: 'rgba(0,0,0,0.7)', backdropFilter: 'blur(8px)' }}>
-          <div className="text-center px-8" style={{ width: '100%', maxWidth: '360px' }}>
+        <div className="gx-overlay absolute inset-0 flex items-center justify-center z-20" style={{ background: 'rgba(0,0,0,0.7)', backdropFilter: 'blur(8px)' }}>
+          <div className="gx-panel text-center px-8" style={{ width: '100%', maxWidth: '360px' }}>
             <p className="font-display text-3xl mb-3" style={{ color: 'white', fontWeight: 600 }}>
               Ready?
             </p>
@@ -1113,12 +1113,12 @@ export default function SessionPage() {
 
       {/* Countdown overlay */}
       {sessionState === 'countdown' && countdown > 0 && (
-        <div className="absolute inset-0 flex items-center justify-center z-20" style={{ background: 'rgba(0,0,0,0.7)', backdropFilter: 'blur(8px)' }}>
-          <div className="text-center px-8">
+        <div className="gx-overlay absolute inset-0 flex items-center justify-center z-20" style={{ background: 'rgba(0,0,0,0.7)', backdropFilter: 'blur(8px)' }}>
+          <div className="gx-panel text-center px-8">
             <p style={{ color: 'var(--muted)', fontSize: 'var(--text-lg)' }} className="mb-4 font-display">
               Starting in
             </p>
-            <p className="text-8xl font-display font-bold mb-8" style={{ color: 'var(--primary)' }}>
+            <p key={countdown} className="animate-countdownPop text-8xl font-display font-bold mb-8" style={{ color: 'var(--primary)' }}>
               {countdown}
             </p>
             <div style={{
@@ -1169,8 +1169,8 @@ export default function SessionPage() {
 
       {/* Exit confirmation prompt */}
       {showExitPrompt && (
-        <div className="absolute inset-0 flex items-center justify-center z-30" style={{ background: 'rgba(0,0,0,0.85)', backdropFilter: 'blur(12px)' }}>
-          <div className="bg-[var(--surface)] p-8 rounded-2xl max-w-md mx-4 text-center">
+        <div className="gx-overlay absolute inset-0 flex items-center justify-center z-30" style={{ background: 'rgba(0,0,0,0.85)', backdropFilter: 'blur(12px)' }}>
+          <div className="gx-panel bg-[var(--surface)] p-8 rounded-2xl max-w-md mx-4 text-center">
             <h3 className="font-display text-2xl mb-4" style={{ color: 'var(--ink)', fontWeight: 600 }}>
               End session?
             </h3>
@@ -1211,8 +1211,8 @@ export default function SessionPage() {
 
       {/* Paused overlay */}
       {sessionState === 'paused' && (
-        <div className="absolute inset-0 flex items-center justify-center z-20" style={{ background: 'rgba(0,0,0,0.8)', backdropFilter: 'blur(12px)' }}>
-          <div className="text-center max-w-md px-8">
+        <div className="gx-overlay absolute inset-0 flex items-center justify-center z-20" style={{ background: 'rgba(0,0,0,0.8)', backdropFilter: 'blur(12px)' }}>
+          <div className="gx-panel text-center max-w-md px-8">
             <h2 className="font-display text-3xl mb-4" style={{ color: 'white', fontWeight: 600 }}>
               Paused
             </h2>
@@ -1256,8 +1256,8 @@ export default function SessionPage() {
                   color: 'var(--primary)',
                   fontWeight: 600,
                   display: 'inline-block',
-                  transition: 'transform 200ms cubic-bezier(0.34, 1.56, 0.64, 1)',
-                  transform: repJustCompleted ? 'scale(1.3)' : 'scale(1)'
+                  transition: 'transform 200ms var(--ease-out-quart)',
+                  transform: repJustCompleted ? 'scale(1.25)' : 'scale(1)'
                 }}>{repCount}</span> / {TARGET_REPS}
               </p>
             </div>

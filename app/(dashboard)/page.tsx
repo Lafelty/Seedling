@@ -619,21 +619,36 @@ function GardenView({
     <>
       {/* key remounts the image so the grow animation replays on stage change */}
       <div key={stage} className="mb-8 animate-treeGrow" style={{ animationDelay: '200ms' }}>
-        <img
-          src={getGardenImagePath(stage)}
-          alt={getGardenStageName(stage)}
-          width={682}
-          height={1023}
-          style={{
-            width: '100%',
-            maxWidth: '240px',
-            height: 'auto',
-            margin: '0 auto',
-            display: 'block',
-            borderRadius: 'var(--radius-lg)',
-            boxShadow: '0 4px 16px rgba(0, 0, 0, 0.08)',
-          }}
-        />
+        <div style={{ position: 'relative', width: '100%', maxWidth: '240px', margin: '0 auto' }}>
+          {/* Ambient warmth breathing behind the scene */}
+          <div
+            className="gx-glow"
+            aria-hidden
+            style={{
+              position: 'absolute',
+              inset: '-14% -10%',
+              background: 'radial-gradient(closest-side, rgba(201, 184, 138, 0.22), rgba(107, 143, 122, 0.08) 65%, transparent)',
+              zIndex: 0,
+            }}
+          />
+          <img
+            className="gx-img-breathe"
+            src={getGardenImagePath(stage)}
+            alt={getGardenStageName(stage)}
+            width={682}
+            height={1023}
+            style={{
+              position: 'relative',
+              zIndex: 1,
+              width: '100%',
+              height: 'auto',
+              display: 'block',
+              borderRadius: 'var(--radius-lg)',
+              boxShadow: '0 4px 16px rgba(0, 0, 0, 0.08)',
+            }}
+          />
+          <GardenMotes />
+        </div>
       </div>
 
       {showEmptyState ? (
@@ -656,11 +671,49 @@ function GardenView({
   );
 }
 
+// A handful of golden pollen motes drifting up over the garden art. Deterministic
+// positions (no random) keep SSR/CSR markup identical. Pure transform/opacity, so
+// prefers-reduced-motion collapses them to nothing.
+const GARDEN_MOTES = [
+  { left: '18%', bottom: '20%', size: 7, dx: '14px',  dy: '-72px', dur: '9s',    delay: '0s',   max: 0.5 },
+  { left: '40%', bottom: '12%', size: 5, dx: '-10px', dy: '-92px', dur: '11s',   delay: '-3s',  max: 0.45 },
+  { left: '62%', bottom: '26%', size: 8, dx: '12px',  dy: '-66px', dur: '10s',   delay: '-6s',  max: 0.55 },
+  { left: '78%', bottom: '16%', size: 5, dx: '-14px', dy: '-82px', dur: '12s',   delay: '-2s',  max: 0.4 },
+  { left: '30%', bottom: '32%', size: 6, dx: '8px',   dy: '-60px', dur: '8.5s',  delay: '-5s',  max: 0.5 },
+  { left: '52%', bottom: '38%', size: 4, dx: '-8px',  dy: '-74px', dur: '13s',   delay: '-8s',  max: 0.42 },
+] as const;
+
+function GardenMotes() {
+  return (
+    <div aria-hidden style={{ position: 'absolute', inset: 0, zIndex: 2, pointerEvents: 'none', overflow: 'hidden' }}>
+      {GARDEN_MOTES.map((m, i) => (
+        <span
+          key={i}
+          className="gx-mote"
+          style={{
+            left: m.left,
+            bottom: m.bottom,
+            width: `${m.size}px`,
+            height: `${m.size}px`,
+            animationDelay: m.delay,
+            ['--mote-dx' as string]: m.dx,
+            ['--mote-dy' as string]: m.dy,
+            ['--mote-dur' as string]: m.dur,
+            ['--mote-max' as string]: String(m.max),
+          }}
+        />
+      ))}
+    </div>
+  );
+}
+
 function SoilIllustration({ stage }: { stage: 'seed' | 'sapling' | 'young' | 'mature' }) {
   return (
     <div className="relative w-full max-w-sm mx-auto" style={{ height: '320px' }}>
-      {/* Soft ambient glow behind the garden */}
+      {/* Soft ambient glow behind the garden, slowly breathing like sunlight */}
       <div
+        className="gx-glow"
+        aria-hidden
         style={{
           position: 'absolute',
           inset: 0,
@@ -710,12 +763,17 @@ function SoilIllustration({ stage }: { stage: 'seed' | 'sapling' | 'young' | 'ma
 function SeedStage() {
   return (
     <svg width="104" height="169" viewBox="0 0 80 130">
-      {/* Sprout stem */}
-      <path d="M40 108 Q40 92 40 80" stroke="#4A6B5A" strokeWidth="3.5" fill="none" strokeLinecap="round" />
-      {/* Left leaf */}
-      <path d="M40 88 Q26 84 22 70 Q37 70 40 86" fill="#6B8F7A" />
-      {/* Right leaf */}
-      <path d="M40 82 Q54 78 58 64 Q43 64 40 80" fill="#4A6B5A" />
+      <g className="gx-sway">
+        {/* Sprout stem */}
+        <path d="M40 108 Q40 92 40 80" stroke="#4A6B5A" strokeWidth="3.5" fill="none" strokeLinecap="round" />
+        {/* Leaves flutter as if catching a breeze */}
+        <g className="gx-leaf">
+          <path d="M40 88 Q26 84 22 70 Q37 70 40 86" fill="#6B8F7A" />
+        </g>
+        <g className="gx-leaf" style={{ animationDelay: '-1.3s' }}>
+          <path d="M40 82 Q54 78 58 64 Q43 64 40 80" fill="#4A6B5A" />
+        </g>
+      </g>
     </svg>
   );
 }
@@ -723,13 +781,17 @@ function SeedStage() {
 function SaplingStage() {
   return (
     <svg width="130" height="195" viewBox="0 0 100 150">
-      {/* Trunk */}
-      <path d="M50 128 L50 74" stroke="#8B6F47" strokeWidth="5" strokeLinecap="round" />
-      {/* Foliage — layered greens */}
-      <circle cx="35" cy="78" r="15" fill="#6B8F7A" />
-      <circle cx="65" cy="78" r="15" fill="#6B8F7A" />
-      <circle cx="50" cy="76" r="13" fill="#5A7D69" />
-      <circle cx="50" cy="62" r="18" fill="#4A6B5A" />
+      <g className="gx-sway">
+        {/* Trunk */}
+        <path d="M50 128 L50 74" stroke="#8B6F47" strokeWidth="5" strokeLinecap="round" />
+        {/* Foliage — layered greens, breathing gently */}
+        <g className="gx-breathe" style={{ animationDelay: '-1.8s' }}>
+          <circle cx="35" cy="78" r="15" fill="#6B8F7A" />
+          <circle cx="65" cy="78" r="15" fill="#6B8F7A" />
+          <circle cx="50" cy="76" r="13" fill="#5A7D69" />
+          <circle cx="50" cy="62" r="18" fill="#4A6B5A" />
+        </g>
+      </g>
     </svg>
   );
 }
@@ -737,16 +799,20 @@ function SaplingStage() {
 function YoungTreeStage() {
   return (
     <svg width="182" height="240" viewBox="0 0 140 185">
-      {/* Trunk and branches */}
-      <path d="M70 163 L70 72" stroke="#8B6F47" strokeWidth="7" strokeLinecap="round" />
-      <path d="M70 118 L46 94" stroke="#8B6F47" strokeWidth="5" strokeLinecap="round" />
-      <path d="M70 118 L94 94" stroke="#8B6F47" strokeWidth="5" strokeLinecap="round" />
-      {/* Canopy — light outer, dark core */}
-      <circle cx="36" cy="88" r="21" fill="#6B8F7A" />
-      <circle cx="104" cy="88" r="21" fill="#6B8F7A" />
-      <circle cx="52" cy="66" r="24" fill="#5A7D69" />
-      <circle cx="88" cy="66" r="24" fill="#5A7D69" />
-      <circle cx="70" cy="50" r="27" fill="#4A6B5A" />
+      <g className="gx-sway">
+        {/* Trunk and branches */}
+        <path d="M70 163 L70 72" stroke="#8B6F47" strokeWidth="7" strokeLinecap="round" />
+        <path d="M70 118 L46 94" stroke="#8B6F47" strokeWidth="5" strokeLinecap="round" />
+        <path d="M70 118 L94 94" stroke="#8B6F47" strokeWidth="5" strokeLinecap="round" />
+        {/* Canopy — light outer, dark core, breathing gently */}
+        <g className="gx-breathe" style={{ animationDelay: '-2.4s' }}>
+          <circle cx="36" cy="88" r="21" fill="#6B8F7A" />
+          <circle cx="104" cy="88" r="21" fill="#6B8F7A" />
+          <circle cx="52" cy="66" r="24" fill="#5A7D69" />
+          <circle cx="88" cy="66" r="24" fill="#5A7D69" />
+          <circle cx="70" cy="50" r="27" fill="#4A6B5A" />
+        </g>
+      </g>
     </svg>
   );
 }
@@ -754,24 +820,28 @@ function YoungTreeStage() {
 function MatureTreeStage() {
   return (
     <svg width="208" height="266" viewBox="0 0 160 205">
-      {/* Trunk and branches */}
-      <path d="M80 183 L80 84" stroke="#8B6F47" strokeWidth="10" strokeLinecap="round" />
-      <path d="M80 132 L42 102" stroke="#8B6F47" strokeWidth="6" strokeLinecap="round" />
-      <path d="M80 132 L118 102" stroke="#8B6F47" strokeWidth="6" strokeLinecap="round" />
-      {/* Canopy — light outer, dark core */}
-      <circle cx="26" cy="94" r="25" fill="#6B8F7A" />
-      <circle cx="134" cy="94" r="25" fill="#6B8F7A" />
-      <circle cx="50" cy="72" r="28" fill="#5A7D69" />
-      <circle cx="110" cy="72" r="28" fill="#5A7D69" />
-      <circle cx="65" cy="82" r="22" fill="#5A7D69" />
-      <circle cx="95" cy="82" r="22" fill="#5A7D69" />
-      <circle cx="80" cy="52" r="35" fill="#4A6B5A" />
-      {/* Golden berries — reward accents */}
-      <circle cx="58" cy="60" r="4" fill="#C9B88A" />
-      <circle cx="102" cy="64" r="4" fill="#C9B88A" />
-      <circle cx="80" cy="38" r="4" fill="#C9B88A" />
-      <circle cx="36" cy="86" r="3.5" fill="#C9B88A" />
-      <circle cx="124" cy="86" r="3.5" fill="#C9B88A" />
+      <g className="gx-sway">
+        {/* Trunk and branches */}
+        <path d="M80 183 L80 84" stroke="#8B6F47" strokeWidth="10" strokeLinecap="round" />
+        <path d="M80 132 L42 102" stroke="#8B6F47" strokeWidth="6" strokeLinecap="round" />
+        <path d="M80 132 L118 102" stroke="#8B6F47" strokeWidth="6" strokeLinecap="round" />
+        {/* Canopy + berries breathe as one; berries also twinkle */}
+        <g className="gx-breathe" style={{ animationDelay: '-3s' }}>
+          <circle cx="26" cy="94" r="25" fill="#6B8F7A" />
+          <circle cx="134" cy="94" r="25" fill="#6B8F7A" />
+          <circle cx="50" cy="72" r="28" fill="#5A7D69" />
+          <circle cx="110" cy="72" r="28" fill="#5A7D69" />
+          <circle cx="65" cy="82" r="22" fill="#5A7D69" />
+          <circle cx="95" cy="82" r="22" fill="#5A7D69" />
+          <circle cx="80" cy="52" r="35" fill="#4A6B5A" />
+          {/* Golden berries — reward accents */}
+          <circle className="gx-twinkle" cx="58" cy="60" r="4" fill="#C9B88A" />
+          <circle className="gx-twinkle" style={{ animationDelay: '-0.8s' }} cx="102" cy="64" r="4" fill="#C9B88A" />
+          <circle className="gx-twinkle" style={{ animationDelay: '-1.6s' }} cx="80" cy="38" r="4" fill="#C9B88A" />
+          <circle className="gx-twinkle" style={{ animationDelay: '-2.2s' }} cx="36" cy="86" r="3.5" fill="#C9B88A" />
+          <circle className="gx-twinkle" style={{ animationDelay: '-1.1s' }} cx="124" cy="86" r="3.5" fill="#C9B88A" />
+        </g>
+      </g>
     </svg>
   );
 }

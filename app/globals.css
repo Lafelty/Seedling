@@ -426,6 +426,67 @@
     animation: countdownPop 0.85s var(--ease-out);
   }
 
+  /* ─── Living garden — idle ambient motion ───
+     Gentle, continuous life on the growth focal point (brand word: "alive").
+     Transform/opacity only. Every keyframe rests at 0%/100%, so the global
+     prefers-reduced-motion reset (which collapses looping animations to a
+     single 0.01ms tick) lands on a neutral, un-tilted pose. */
+
+  @keyframes gxSway {
+    0%, 100% { transform: rotate(0deg); }
+    28%      { transform: rotate(1.4deg); }
+    72%      { transform: rotate(-1.4deg); }
+  }
+
+  @keyframes gxBreathe {
+    0%, 100% { transform: scale(1); }
+    50%      { transform: scale(1.035); }
+  }
+
+  @keyframes gxLeafFlutter {
+    0%, 100% { transform: rotate(0deg); }
+    40%      { transform: rotate(-3.5deg); }
+    70%      { transform: rotate(2.5deg); }
+  }
+
+  @keyframes gxTwinkle {
+    0%, 100% { opacity: 1; }
+    50%      { opacity: 0.45; }
+  }
+
+  @keyframes gxGlowPulse {
+    0%, 100% { opacity: 0.85; transform: scale(1); }
+    50%      { opacity: 1; transform: scale(1.06); }
+  }
+
+  @keyframes gxImgBreathe {
+    0%, 100% { transform: translateY(0) scale(1); }
+    50%      { transform: translateY(-5px) scale(1.012); }
+  }
+
+  @keyframes gxDrift {
+    0%   { transform: translate(0, 0) scale(0.6); opacity: 0; }
+    12%  { opacity: var(--mote-max, 0.5); }
+    80%  { opacity: calc(var(--mote-max, 0.5) * 0.7); }
+    100% { transform: translate(var(--mote-dx, 10px), var(--mote-dy, -64px)) scale(1); opacity: 0; }
+  }
+
+  /* Whole tree sways from its base; canopy breathes from its own centre. */
+  .gx-sway    { transform-box: fill-box; transform-origin: 50% 100%; animation: gxSway 7.5s ease-in-out infinite; }
+  .gx-breathe { transform-box: fill-box; transform-origin: 50% 55%;  animation: gxBreathe 5.5s ease-in-out infinite; }
+  .gx-leaf    { transform-box: fill-box; transform-origin: 50% 100%; animation: gxLeafFlutter 4s ease-in-out infinite; }
+  .gx-twinkle { animation: gxTwinkle 3.2s ease-in-out infinite; }
+  .gx-glow    { animation: gxGlowPulse 6s ease-in-out infinite; }
+  .gx-img-breathe { animation: gxImgBreathe 6.5s ease-in-out infinite; }
+
+  .gx-mote {
+    position: absolute;
+    border-radius: var(--radius-full);
+    background: radial-gradient(circle, rgba(201, 184, 138, 0.9), rgba(201, 184, 138, 0) 70%);
+    pointer-events: none;
+    animation: gxDrift var(--mote-dur, 9s) ease-in-out infinite;
+  }
+
   /* Loading skeleton */
   @keyframes shimmer {
     0% {

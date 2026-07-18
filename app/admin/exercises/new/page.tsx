@@ -15,7 +15,7 @@ import {
   type Pose,
 } from '@/lib/poseDetection'
 
-type RecordingState = 'setup' | 'countdown' | 'recording' | 'reviewing' | 'saving'
+type RecordingState = 'setup' | 'countdown' | 'recording' | 'reviewing' | 'saving' | 'processing'
 
 interface RecordedFrame {
   timestamp: number
@@ -27,6 +27,7 @@ interface RecordedDemo {
   frames: RecordedFrame[]
   duration: number
   recordedAt: Date
+  source?: 'camera' | 'upload'
 }
 
 export default function NewExercisePage() {
@@ -36,10 +37,18 @@ export default function NewExercisePage() {
   const animationFrameRef = useRef<number | undefined>(undefined)
   const recordingStartTime = useRef<number>(0)
 
+  // Uploaded-video processing: hidden video element frames are seeked through
+  // one by one and fed to the same detector as the live camera.
+  const processVideoRef = useRef<HTMLVideoElement>(null)
+  const processCanvasRef = useRef<HTMLCanvasElement>(null)
+  const cancelProcessRef = useRef(false)
+  const fileInputRef = useRef<HTMLInputElement>(null)
+
   const [recordingState, setRecordingState] = useState<RecordingState>('setup')
   const [countdown, setCountdown] = useState(3)
   const [cameraError, setCameraError] = useState<string | null>(null)
   const [recordings, setRecordings] = useState<RecordedDemo[]>([])
+  const [processProgress, setProcessProgress] = useState(0)
   // True when the detector currently sees nothing — drives the framing hint.
   // Updated only on transitions (see the detect loop), never per frame.
   const [noSubject, setNoSubject] = useState(false)
@@ -119,6 +128,7 @@ export default function NewExercisePage() {
 
     return () => {
       cancelled = true
+      cancelProcessRef.current = true // abort any video-file processing using this detector
       disposeDetector()
     }
   }, [trackingMode])
@@ -138,7 +148,15 @@ export default function NewExercisePage() {
       if (!isRunning) return
       const video = videoRef.current
 
-      if (video && video.readyState >= 2 && now - lastDetectAt >= DETECT_INTERVAL_MS) {
+      // Paused while a video file is being processed: the detector is single-file
+      // (the worker drops overlapping calls), so interleaved camera frames would
+      // corrupt the extracted poses.
+      if (
+        video &&
+        video.readyState >= 2 &&
+        now - lastDetectAt >= DETECT_INTERVAL_MS &&
+        recordingStateRef.current !== 'processing'
+      ) {
         lastDetectAt = now
         const pose = await detect(video, trackingMode)
         if (!isRunning) return // disposed while awaiting the detector
@@ -281,11 +299,166 @@ export default function NewExercisePage() {
       frames: [...frames],
       duration: frames[frames.length - 1].timestamp,
       recordedAt: new Date(),
+      source: 'camera',
     }
 
     setRecordings((prev) => [...prev, demo])
     recordedFramesRef.current = []
     setRecordingState('reviewing')
+  }
+
+  // Seek and resolve once the frame is actually decoded. Skips the wait if the
+  // video is already at the target time (setting currentTime to its current
+  // value never fires `seeked` in some browsers).
+  const seekTo = (video: HTMLVideoElement, t: number) =>
+    new Promise<void>((resolve, reject) => {
+      if (Math.abs(video.currentTime - t) < 0.001 && video.readyState >= 2) {
+        resolve()
+        return
+      }
+      const cleanup = () => {
+        video.removeEventListener('seeked', onSeeked)
+        video.removeEventListener('error', onError)
+      }
+      const onSeeked = () => {
+        cleanup()
+        resolve()
+      }
+      const onError = () => {
+        cleanup()
+        reject(new Error('Video seek failed'))
+      }
+      video.addEventListener('seeked', onSeeked)
+      video.addEventListener('error', onError)
+      video.currentTime = t
+    })
+
+  // Skeleton preview while a video file is processed — same drawing as the live
+  // camera but on the (unmirrored) processing canvas.
+  const drawProcessedFrame = (pose: Pose, video: HTMLVideoElement) => {
+    const canvas = processCanvasRef.current
+    if (!canvas) return
+    const ctx = canvas.getContext('2d')
+    if (!ctx) return
+    canvas.width = video.videoWidth
+    canvas.height = video.videoHeight
+    ctx.clearRect(0, 0, canvas.width, canvas.height)
+    drawKeypointSet(ctx, pose.keypoints, '#10b981')
+    pose.extraHands?.forEach((h) => drawKeypointSet(ctx, h.keypoints, '#10b981'))
+  }
+
+  // Extract poses from an uploaded video: seek through it at the same cadence as
+  // live detection (~25 fps), run each decoded frame through the same detector,
+  // then feed the result through the identical trim + demo pipeline.
+  const processVideoFile = async (file: File) => {
+    const video = processVideoRef.current
+    if (!video || !modelReady) return
+
+    const returnState: RecordingState = recordings.length > 0 ? 'reviewing' : 'setup'
+    cancelProcessRef.current = false
+    setProcessProgress(0)
+    setRecordingState('processing')
+    // Let the camera detect loop see the state change and drain any in-flight
+    // detection — otherwise the first extracted frame can get a stale camera pose.
+    await new Promise((r) => setTimeout(r, 150))
+
+    const url = URL.createObjectURL(file)
+    try {
+      await new Promise<void>((resolve, reject) => {
+        const cleanup = () => {
+          video.removeEventListener('loadedmetadata', onLoaded)
+          video.removeEventListener('error', onError)
+        }
+        const onLoaded = () => {
+          cleanup()
+          resolve()
+        }
+        const onError = () => {
+          cleanup()
+          reject(new Error('Could not read this video file'))
+        }
+        video.addEventListener('loadedmetadata', onLoaded)
+        video.addEventListener('error', onError)
+        video.src = url
+        video.load()
+      })
+
+      // MediaRecorder-produced webm files report Infinity until forced to the
+      // end once — seek far past the end to make the real duration appear.
+      if (!isFinite(video.duration)) {
+        await seekTo(video, 1e7)
+        await seekTo(video, 0)
+      }
+
+      const duration = video.duration
+      if (!isFinite(duration) || duration <= 0) {
+        throw new Error('Could not determine video length')
+      }
+      const MAX_DURATION_S = 120
+      if (duration > MAX_DURATION_S) {
+        alert(
+          `Video is ${Math.round(duration)}s long — please use a clip under ${MAX_DURATION_S}s (a few repetitions is enough).`
+        )
+        setRecordingState(returnState)
+        return
+      }
+
+      const STEP_S = 0.04 // ~25 fps, matching the live detect cadence
+      const frames: RecordedFrame[] = []
+
+      for (let t = 0; t <= duration; t += STEP_S) {
+        if (cancelProcessRef.current) {
+          setRecordingState(returnState)
+          return
+        }
+        await seekTo(video, Math.min(t, duration))
+        const pose = await detect(video, trackingMode)
+        if (cancelProcessRef.current) {
+          setRecordingState(returnState)
+          return
+        }
+        if (pose) {
+          frames.push({ timestamp: Math.round(t * 1000), pose })
+          drawProcessedFrame(pose, video)
+        }
+        setProcessProgress(Math.min(t / duration, 1))
+      }
+
+      if (frames.length === 0) {
+        alert(
+          trackingMode === 'hand'
+            ? 'No hand detected in this video. Make sure the hand is clearly visible and well lit.'
+            : 'No body detected in this video. Make sure the full upper body is visible and well lit.'
+        )
+        setRecordingState(returnState)
+        return
+      }
+
+      const trimmed = trimIdleFrames(frames, trackingMode)
+      const demo: RecordedDemo = {
+        id: `demo-${Date.now()}`,
+        frames: [...trimmed],
+        duration: trimmed[trimmed.length - 1].timestamp,
+        recordedAt: new Date(),
+        source: 'upload',
+      }
+      setRecordings((prev) => [...prev, demo])
+      setRecordingState('reviewing')
+    } catch (error) {
+      console.error('Video processing error:', error)
+      alert(error instanceof Error ? error.message : 'Failed to process video')
+      setRecordingState(returnState)
+    } finally {
+      video.removeAttribute('src')
+      video.load()
+      URL.revokeObjectURL(url)
+    }
+  }
+
+  const handleFileSelected = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    e.target.value = '' // allow re-selecting the same file
+    if (file) processVideoFile(file)
   }
 
   const deleteRecording = (id: string) => {
@@ -430,11 +603,53 @@ export default function NewExercisePage() {
                       </div>
                     )}
 
+                    {/* Uploaded-video processing view — mounted always so the ref
+                        exists before processing starts, shown only while active */}
+                    <div
+                      className={`absolute inset-0 z-10 bg-[#1F2421] ${
+                        recordingState === 'processing' ? '' : 'hidden'
+                      }`}
+                    >
+                      <video
+                        ref={processVideoRef}
+                        className="absolute inset-0 w-full h-full object-contain"
+                        muted
+                        playsInline
+                        preload="auto"
+                      />
+                      <canvas
+                        ref={processCanvasRef}
+                        className="absolute inset-0 w-full h-full object-contain"
+                      />
+                      <div className="absolute inset-x-4 bottom-4 rounded-xl bg-black/70 p-3 text-white">
+                        <div className="flex items-center justify-between gap-3 mb-2">
+                          <span className="text-sm">
+                            Analyzing video… {Math.round(processProgress * 100)}%
+                          </span>
+                          <button
+                            onClick={() => {
+                              cancelProcessRef.current = true
+                            }}
+                            className="text-sm text-red-300 hover:text-red-200"
+                          >
+                            Cancel
+                          </button>
+                        </div>
+                        <div className="h-1.5 rounded-full bg-white/20 overflow-hidden">
+                          <div
+                            className="h-full bg-[#10b981] transition-[width] duration-150"
+                            style={{ width: `${processProgress * 100}%` }}
+                          />
+                        </div>
+                      </div>
+                    </div>
+
                     {/* Framing hint — shown only while the detector sees nothing */}
                     {modelReady &&
                       noSubject &&
                       recordingState !== 'reviewing' &&
-                      recordingState !== 'saving' && (
+                      recordingState !== 'saving' &&
+                      recordingState !== 'processing' && (
                         <div className="absolute inset-x-4 bottom-4 flex items-center justify-center bg-black/70 text-white px-4 py-2 rounded-xl text-center">
                           <span className="text-sm">
                             {trackingMode === 'hand'
@@ -448,14 +663,30 @@ export default function NewExercisePage() {
               </div>
 
               {/* Recording controls */}
-              <div className="mt-4 flex items-center justify-center gap-4">
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept="video/*"
+                onChange={handleFileSelected}
+                className="hidden"
+              />
+              <div className="mt-4 flex flex-wrap items-center justify-center gap-4">
                 {recordingState === 'setup' && (
-                  <button
-                    onClick={startRecording}
-                    className="px-6 py-3 bg-[#C4612F] hover:bg-[#A94E22] text-white rounded-full font-medium transition-colors"
-                  >
-                    Start Recording Demo
-                  </button>
+                  <>
+                    <button
+                      onClick={startRecording}
+                      className="px-6 py-3 bg-[#C4612F] hover:bg-[#A94E22] text-white rounded-full font-medium transition-colors"
+                    >
+                      Start Recording Demo
+                    </button>
+                    <button
+                      onClick={() => fileInputRef.current?.click()}
+                      disabled={!modelReady}
+                      className="px-6 py-3 bg-white text-[#C4612F] border border-[#C4612F] hover:bg-[#F2E3D6] rounded-full font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      Upload Video Instead
+                    </button>
+                  </>
                 )}
 
                 {(recordingState === 'countdown' || recordingState === 'recording') && (
@@ -480,6 +711,13 @@ export default function NewExercisePage() {
                       className="px-6 py-3 bg-[#C4612F] hover:bg-[#A94E22] text-white rounded-full font-medium transition-colors"
                     >
                       Record Another Demo
+                    </button>
+                    <button
+                      onClick={() => fileInputRef.current?.click()}
+                      disabled={!modelReady}
+                      className="px-6 py-3 bg-white text-[#C4612F] border border-[#C4612F] hover:bg-[#F2E3D6] rounded-full font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      Upload Video
                     </button>
                     <button
                       onClick={saveExercise}
@@ -517,7 +755,7 @@ export default function NewExercisePage() {
                         key={opt.value}
                         type="button"
                         onClick={() => setTrackingMode(opt.value)}
-                        disabled={recordings.length > 0}
+                        disabled={recordings.length > 0 || recordingState === 'processing'}
                         className={`px-3 py-2 rounded-lg text-sm font-medium border transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${
                           trackingMode === opt.value
                             ? 'bg-[#C4612F] text-white border-[#C4612F]'
@@ -607,7 +845,14 @@ export default function NewExercisePage() {
                       className="flex items-center justify-between p-3 bg-[#F7F4EF] rounded-lg"
                     >
                       <div>
-                        <p className="text-sm font-medium text-[#1F2421]">Demo {i + 1}</p>
+                        <p className="text-sm font-medium text-[#1F2421]">
+                          Demo {i + 1}
+                          {demo.source === 'upload' && (
+                            <span className="ml-2 text-[10px] font-normal uppercase tracking-wide text-[#5C635D] bg-white border border-[#E7E1D7] rounded-full px-2 py-0.5">
+                              from video
+                            </span>
+                          )}
+                        </p>
                         <p className="text-xs text-[#5C635D]">
                           {(demo.duration / 1000).toFixed(1)}s • {demo.frames.length} frames
                         </p>
@@ -629,7 +874,7 @@ export default function NewExercisePage() {
               <h3 className="text-sm font-medium text-[#1F2421] mb-2">Instructions</h3>
               <ol className="text-xs text-[#5C635D] space-y-1 list-decimal list-inside">
                 <li>Fill in exercise details</li>
-                <li>Record 2-3 demonstrations</li>
+                <li>Record 2-3 demonstrations — or upload a video of the movement</li>
                 <li>System derives target angles and tolerances from your movement</li>
                 <li>Review the auto-filled criteria in the editor, then publish</li>
               </ol>

@@ -3,7 +3,7 @@
 import Link from 'next/link'
 import { useEffect, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { updateProgress, getProgress, setProgressUid } from '@/lib/progress'
+import { recordCompletion, applyServerProgress, getProgress, setProgressUid } from '@/lib/progress'
 import { getGardenStage, getGardenStageName, getGardenImagePath, getStarsToNextBloom, getGardenProgressPercent } from '@/lib/garden'
 import { playRepChime, playCompletionFanfare, vibrate } from '@/lib/rewardFx'
 import confetti from 'canvas-confetti'
@@ -648,11 +648,13 @@ export default function SessionPage() {
   async function completeSession() {
     setSessionState('completed')
     const before = getProgress()
-    const updated = updateProgress(1) // Award 1 star locally
-    // Mirror the star into the database (atomic increment via RPC)
-    createClient().rpc('award_stars', { star_count: 1 }).then(({ error }) => {
-      if (error) console.error('Error saving star to database:', error)
-    })
+
+    // Celebrate immediately with the expected new total so the reward screen
+    // never waits on the network. The database award below is authoritative and
+    // the cache is corrected if the server disagrees; the home page also
+    // re-syncs from the database on arrival.
+    const optimisticTotal = before.totalStars + 1
+    const updated = recordCompletion(optimisticTotal)
 
     // Did this star reveal a new garden element or grow the tree?
     const gardenAfter = getGardenStage(updated.totalStars)
@@ -685,7 +687,23 @@ export default function SessionPage() {
         : 'Session complete! Great job!'
     )
 
+    // Persist the session as completed FIRST so the award RPC can verify it,
+    // then award exactly one star for this session. The RPC decides the amount
+    // and dedupes by session id, so the client can't mint stars.
     await saveSessionToDb(true)
+
+    const sessionId = sessionIdRef.current
+    if (sessionId) {
+      const { data, error } = await createClient().rpc('award_stars', { p_session_id: sessionId })
+      if (error) {
+        console.error('Error awarding star:', error)
+      } else if (typeof data === 'number' && data !== optimisticTotal) {
+        // Server total differs (already awarded, or another device) — reconcile
+        // the local cache and the reward display to the authoritative value.
+        applyServerProgress(data)
+        setReward((r) => (r ? { ...r, totalStars: data } : r))
+      }
+    }
 
     notifyGuardian()
 

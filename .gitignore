@@ -4,3 +4,9 @@ node_modules
 .env.local
 .gstack/
 GardenPack.pdf
+
+# Build artifacts
+tsconfig.tsbuildinfo
+
+# graphify knowledge-graph output (regenerated locally)
+graphify-out/

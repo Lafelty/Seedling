@@ -2,9 +2,9 @@
 
 import Link from 'next/link';
 import { useEffect, useMemo, useState } from 'react';
-import { getProgress, setProgressUid, type ProgressData } from '@/lib/progress';
+import { getProgress, setProgressUid, applyServerProgress, type ProgressData } from '@/lib/progress';
 import { createClient } from '@/lib/supabase/client';
-import { startOfMonth, endOfMonth, eachDayOfInterval, format, isSameDay, isSameMonth, addMonths } from 'date-fns';
+import { startOfMonth, endOfMonth, eachDayOfInterval, format, isSameDay, isSameMonth, addMonths, startOfDay, subDays } from 'date-fns';
 import { DayFace, MOOD_BG, computeDayMood, type DayMood } from '@/components/DayFace';
 
 interface DaySession {
@@ -28,8 +28,28 @@ export default function ProgressPage() {
     (async () => {
       const supabase = createClient();
       const { data: { user } } = await supabase.auth.getUser();
-      if (user) setProgressUid(user.id);
-      setProgress(getProgress());
+      if (!user) {
+        setProgress(getProgress());
+        return;
+      }
+      setProgressUid(user.id);
+
+      // Database owns the star total and the completion history; derive the
+      // streak from the database's completed dates rather than localStorage,
+      // which was device-local and lost on a browser clear.
+      const [{ data: profile }, { data: completed }] = await Promise.all([
+        supabase.from('profiles').select('total_stars').eq('id', user.id).single(),
+        supabase
+          .from('therapy_sessions')
+          .select('started_at')
+          .eq('user_id', user.id)
+          .not('completed_at', 'is', null)
+          .gte('started_at', startOfDay(subDays(new Date(), 90)).toISOString()),
+      ]);
+      const completedDates = (completed ?? []).map((row: { started_at: string }) =>
+        format(new Date(row.started_at), 'yyyy-MM-dd')
+      );
+      setProgress(applyServerProgress(profile?.total_stars ?? 0, completedDates));
     })();
   }, []);
 

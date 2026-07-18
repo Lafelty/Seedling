@@ -79,6 +79,7 @@ export interface Database {
           target_reps: number;
           completed_reps: number;
           form_quality_score: number | null;
+          stars_awarded: boolean;
           notes: string | null;
           created_at: string;
         };
@@ -93,6 +94,7 @@ export interface Database {
           target_reps?: number;
           completed_reps?: number;
           form_quality_score?: number | null;
+          stars_awarded?: boolean;
           notes?: string | null;
           created_at?: string;
         };
@@ -213,7 +215,13 @@ export interface Database {
     Views: Record<string, never>;
     Functions: {
       is_admin: { Args: Record<string, never>; Returns: boolean };
-      award_stars: { Args: { star_count?: number }; Returns: number };
+      // Awards exactly one star for a completed, not-yet-awarded session the
+      // caller owns; returns the authoritative new total (unchanged if the
+      // session is ineligible). Server decides the amount — see
+      // 20260718120000_star_integrity.sql.
+      award_stars: { Args: { p_session_id: string }; Returns: number };
+      // Admin-only absolute set of a patient's stars; returns the new total.
+      admin_set_stars: { Args: { p_user_id: string; p_stars: number }; Returns: number };
     };
     Enums: Record<string, never>;
     CompositeTypes: Record<string, never>;

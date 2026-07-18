@@ -66,17 +66,18 @@ export default function AdminUserPage() {
 
     const cleanStars = Math.max(0, Math.floor(Number(stars) || 0))
     const supabase = createClient()
-    const { error } = await supabase
-      .from('profiles')
-      .update({ total_stars: cleanStars })
-      .eq('id', profile.id)
+    // Direct total_stars writes are revoked from clients; admins set the
+    // absolute value through this SECURITY DEFINER RPC (checks is_admin()).
+    const { data, error } = await supabase
+      .rpc('admin_set_stars', { p_user_id: profile.id, p_stars: cleanStars })
 
     if (error) {
       console.error('Error updating stars:', error)
       setMessage('Failed to save stars. Please try again.')
     } else {
-      setStars(cleanStars)
-      setProfile({ ...profile, total_stars: cleanStars })
+      const saved = typeof data === 'number' ? data : cleanStars
+      setStars(saved)
+      setProfile({ ...profile, total_stars: saved })
       setMessage('Stars saved!')
     }
 

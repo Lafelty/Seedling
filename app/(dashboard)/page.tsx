@@ -4,7 +4,7 @@ import Link from 'next/link';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { createClient } from '@/lib/supabase/client';
-import { getProgress, getDayStrip, markOnboardingComplete, setProgressUid, reconcileStars, type ProgressData, type DayStatus } from '@/lib/progress';
+import { getProgress, getDayStrip, markOnboardingComplete, setProgressUid, applyServerProgress, type ProgressData, type DayStatus } from '@/lib/progress';
 import { getGardenStage, getGardenStageName, getGardenImagePath, getStarsToNextBloom, getGardenProgressPercent } from '@/lib/garden';
 import { playBloomSparkle, vibrate } from '@/lib/rewardFx';
 import confetti from 'canvas-confetti';
@@ -94,16 +94,21 @@ export default function DashboardPage() {
               setIsAdmin(true);
             }
 
-            // Database is the source of truth for stars (admins can edit it);
-            // seed it once from legacy localStorage progress.
-            const { totalStars, seedDb } = reconcileStars(profile?.total_stars ?? 0);
-            if (seedDb) {
-              await supabase
-                .from('profiles')
-                .update({ total_stars: totalStars })
-                .eq('id', user.id);
-            }
-            setProgress(getProgress());
+            // Database owns both the star total (server-awarded per session,
+            // admin-editable) and the completion history — mirror them into the
+            // local cache so the two never drift and an admin edit isn't
+            // reverted. Streak is derived from the database's completed dates.
+            const totalStars = profile?.total_stars ?? 0;
+            const { data: completed } = await supabase
+              .from('therapy_sessions')
+              .select('started_at')
+              .eq('user_id', user.id)
+              .not('completed_at', 'is', null)
+              .gte('started_at', startOfDay(subDays(new Date(), 90)).toISOString());
+            const completedDates = (completed ?? []).map((row: { started_at: string }) =>
+              format(new Date(row.started_at), 'yyyy-MM-dd')
+            );
+            setProgress(applyServerProgress(totalStars, completedDates));
             if (totalStars > 0) setShowEmptyState(false);
           }
         }).catch((error) => {

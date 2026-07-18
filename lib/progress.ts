@@ -77,64 +77,85 @@ export function getProgress(): ProgressData {
   };
 }
 
-/**
- * Reconcile local progress with the database (profiles.total_stars).
- * The database wins, except when it is still 0 and the browser holds legacy
- * localStorage stars — then the caller should seed the database (seedDb).
- */
-export function reconcileStars(dbStars: number): { totalStars: number; seedDb: boolean } {
-  const current = getProgress();
-
-  if (dbStars === 0 && current.totalStars > 0) {
-    return { totalStars: current.totalStars, seedDb: true };
-  }
-
-  if (dbStars !== current.totalStars) {
-    const updated: ProgressData = {
-      ...current,
-      totalStars: dbStars,
-      treeStage: getTreeStage(dbStars),
-    };
-    localStorage.setItem(storageKey(), JSON.stringify(updated));
-  }
-
-  return { totalStars: dbStars, seedDb: false };
+function todayStr(): string {
+  return new Date().toISOString().split('T')[0];
 }
 
-export function updateProgress(starsEarned: number): ProgressData {
+/**
+ * Consecutive-day streak ending today (or yesterday, so a not-yet-practiced
+ * today doesn't break it). Derived from a set of 'yyyy-MM-dd' completion dates
+ * — pass the database's completed-session dates for the authoritative value.
+ */
+export function computeStreak(completedDates: string[]): number {
+  if (completedDates.length === 0) return 0;
+  const set = new Set(completedDates);
+
+  const cursor = new Date();
+  const today = todayStr();
+  if (!set.has(today)) {
+    cursor.setDate(cursor.getDate() - 1);
+    if (!set.has(cursor.toISOString().split('T')[0])) return 0; // gap at today and yesterday
+  }
+
+  let streak = 0;
+  while (set.has(cursor.toISOString().split('T')[0])) {
+    streak++;
+    cursor.setDate(cursor.getDate() - 1);
+  }
+  return streak;
+}
+
+/**
+ * Mirror the database's authoritative progress into the local cache. The
+ * database owns total_stars (server-awarded per completed session) and the
+ * completion history, so it always wins — no more localStorage → database
+ * seeding, which used to revert an admin's star edit and let the two totals
+ * drift apart. `completedDates` should be the database's completed-session
+ * dates ('yyyy-MM-dd'); pass [] to refresh only the star total.
+ */
+export function applyServerProgress(dbStars: number, completedDates: string[] = []): ProgressData {
   const current = getProgress();
-  const today = new Date().toISOString().split('T')[0];
+  const dates = completedDates.length
+    ? Array.from(new Set(completedDates)).sort()
+    : current.completedDates;
 
-  const newTotalStars = current.totalStars + starsEarned;
+  const updated: ProgressData = {
+    ...current,
+    totalStars: dbStars,
+    completionStreak: computeStreak(dates),
+    treeStage: getTreeStage(dbStars),
+    completedDates: dates,
+    lastSessionDate: dates.length ? dates[dates.length - 1] : current.lastSessionDate,
+  };
 
-  // Update completed dates array
-  const newCompletedDates = current.completedDates.includes(today)
+  if (typeof window !== 'undefined') {
+    localStorage.setItem(storageKey(), JSON.stringify(updated));
+  }
+  return updated;
+}
+
+/**
+ * Advance local progress after a completed session. `totalStars` is the
+ * authoritative total returned by the award_stars RPC (not a local +1), so the
+ * cache never drifts ahead of the database when the award fails. Streak and
+ * dates are recomputed locally for the reward screen; the home page re-syncs
+ * from the database on arrival.
+ */
+export function recordCompletion(totalStars: number): ProgressData {
+  const current = getProgress();
+  const today = todayStr();
+
+  const completedDates = current.completedDates.includes(today)
     ? current.completedDates
     : [...current.completedDates, today];
 
-  // Update streak
-  let newStreak = current.completionStreak;
-  if (current.lastSessionDate !== today) {
-    const yesterday = new Date();
-    yesterday.setDate(yesterday.getDate() - 1);
-    const yesterdayStr = yesterday.toISOString().split('T')[0];
-
-    if (current.lastSessionDate === yesterdayStr) {
-      newStreak += 1;
-    } else if (current.lastSessionDate !== null) {
-      newStreak = 1;
-    } else {
-      newStreak = 1;
-    }
-  }
-
   const updated: ProgressData = {
-    totalStars: newTotalStars,
-    dailyStars: current.lastSessionDate === today ? current.dailyStars + starsEarned : starsEarned,
-    completionStreak: newStreak,
-    treeStage: getTreeStage(newTotalStars),
+    totalStars,
+    dailyStars: current.lastSessionDate === today ? current.dailyStars + 1 : 1,
+    completionStreak: computeStreak(completedDates),
+    treeStage: getTreeStage(totalStars),
     lastSessionDate: today,
-    completedDates: newCompletedDates,
+    completedDates,
     hasSeenOnboarding: current.hasSeenOnboarding,
   };
 

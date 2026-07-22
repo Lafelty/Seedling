@@ -457,25 +457,27 @@ export default function SessionPage() {
         prevPhaseRef.current = phase
       }
 
-      // Phase-led guide skeleton: pose the ghost along the recorded movement by
-      // what the patient should do next — sweep up while at rest (demonstrate
-      // the lift), lead a little ahead while lifting, hold at the top, and lead
-      // the return while lowering.
+      // Guide skeleton: run the recorded movement on a steady loop so it always
+      // demonstrates and *leads* the patient, rather than mirroring (and lagging
+      // behind) their live progress — which read as the ghost "following" them
+      // and sitting frozen until they were nearly done. The only sync to the
+      // patient is the hold: while they hold the top, the guide holds with them.
       const guideSteps = guideStepsRef.current
       if (guideSteps.length >= 2) {
-        const pp = analysis.progress ?? 0
-        const LEAD = 0.15
+        const holdMs = exercise.hold_duration_ms ?? 800
+        const UP = 1000
+        const DOWN = 1000
+        const BOTTOM = 600 // pause at the start of each loop so the lift reads clearly
         let gp: number
         if (phase === 'holding') {
-          gp = 1
-        } else if (phase === 'lowering') {
-          gp = Math.max(0, pp - LEAD)
-        } else if (phase === 'lifting') {
-          gp = Math.min(1, pp + LEAD)
+          gp = 1 // stay at the top with the patient
         } else {
-          // Resting: demonstrate the full lift on a gentle 2.4s ping-pong loop.
-          const t = (now % 2400) / 2400
-          gp = t < 0.5 ? t * 2 : (1 - t) * 2
+          const cycle = UP + holdMs + DOWN + BOTTOM
+          const t = now % cycle
+          if (t < UP) gp = t / UP // rest -> target
+          else if (t < UP + holdMs) gp = 1 // hold at the top
+          else if (t < UP + holdMs + DOWN) gp = 1 - (t - UP - holdMs) / DOWN // target -> rest
+          else gp = 0 // brief pause at rest
         }
         setGuidePose(guideSteps[Math.round(gp * (guideSteps.length - 1))])
       }

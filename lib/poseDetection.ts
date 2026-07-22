@@ -751,14 +751,19 @@ export function deriveCriteriaFromRecordings(
   const usable = demos.filter((d) => d.frames.length >= 2);
   const totalFrames = usable.reduce((sum, d) => sum + d.frames.length, 0);
 
-  // Derive in 3D only when the recordings actually carry world coordinates
-  // (hand recordings made after the HandLandmarker switch). The flag is stored
-  // on the result so validation measures in the same space.
+  // Derive in 3D only for HAND recordings, whose HandLandmarker world
+  // coordinates are metric and stable enough for rotation-invariant angles.
+  // Body recordings now also carry world coords (BlazePose), but body 3D angles
+  // aren't reliable enough to validate against yet — a 3D shoulder angle barely
+  // tracks a frontal-plane arm arc, producing bands that never discriminate.
+  // Body therefore stays on the 2D screen-angle math that works end-to-end.
+  // The flag is stored on the result so validation measures in the same space.
   const worldFrames = usable.reduce(
     (sum, d) => sum + d.frames.filter((f) => f.pose.keypoints?.[0]?.world).length,
     0
   );
-  const space: AngleSpace = totalFrames > 0 && worldFrames / totalFrames > 0.5 ? '3d' : '2d';
+  const space: AngleSpace =
+    mode === 'hand' && totalFrames > 0 && worldFrames / totalFrames > 0.5 ? '3d' : '2d';
 
   // Pool per-demo stats into one weighted view per joint, keeping the
   // per-demo stats around: the spread between demos is the therapist's own

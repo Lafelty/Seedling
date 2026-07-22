@@ -9,9 +9,11 @@ import {
   trimIdleFrames,
   GenericRepCounter,
   CycleRepCounter,
+  RomCycleRepCounter,
   type Keypoint,
   type Pose,
   type PoseCriteria,
+  type ExerciseAnalysis,
 } from '../poseDetection';
 
 // ---- helpers ----
@@ -307,6 +309,83 @@ describe('CycleRepCounter', () => {
     vi.advanceTimersByTime(100); // but only briefly
     vi.advanceTimersByTime(400); // past exit grace
     const r = rc.count(atRest); // dropped back before the hold
+    expect(r.repCount).toBe(0);
+  });
+});
+
+// ---- ROM hysteresis rep counter ----
+
+describe('RomCycleRepCounter', () => {
+  afterEach(() => vi.useRealTimers());
+
+  // Analysis frames carrying only the primary-mover progress the counter reads.
+  const prog = (p: number): ExerciseAnalysis => ({
+    meetsAllCriteria: false,
+    atRest: false,
+    feedback: 'adjust',
+    message: '',
+    failedCriteria: [],
+    progress: p,
+  });
+  // A frame where the primary joint isn't measurable (progress undefined).
+  const noRead: ExerciseAnalysis = {
+    meetsAllCriteria: false,
+    atRest: false,
+    feedback: 'analyzing',
+    message: '',
+    failedCriteria: [],
+  };
+
+  it('counts a continuous arc (top reached, no deliberate hold) on return to rest', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(100_000);
+    const rc = new RomCycleRepCounter(500);
+
+    rc.count(prog(0.1)); // rest
+    rc.count(prog(0.9)); // swept past enterHigh → top reached
+    vi.advanceTimersByTime(400); // past the exit grace, never held 500ms
+    const r = rc.count(prog(0.05)); // returned below exitLow
+    expect(r.repCount).toBe(1);
+    expect(r.justCompleted).toBe(true);
+    expect(r.phase).toBe('rest');
+  });
+
+  it('does not count a partial movement that never reaches the top', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(100_000);
+    const rc = new RomCycleRepCounter(500);
+
+    rc.count(prog(0.1)); // rest
+    rc.count(prog(0.45)); // lifting, but below enterHigh (0.6)
+    const r = rc.count(prog(0.05)); // sank back
+    expect(r.repCount).toBe(0);
+    expect(r.phase).toBe('rest');
+  });
+
+  it('earns the hold when the top is held past the threshold', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(100_000);
+    const rc = new RomCycleRepCounter(500);
+
+    rc.count(prog(0.1));
+    rc.count(prog(0.9)); // top reached, hold starts
+    vi.advanceTimersByTime(600);
+    const held = rc.count(prog(0.9));
+    expect(held.holdEarned).toBe(true);
+    vi.advanceTimersByTime(400);
+    const done = rc.count(prog(0.05));
+    expect(done.repCount).toBe(1);
+  });
+
+  it('holds its phase on a frame with no reading (joint hidden)', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(100_000);
+    const rc = new RomCycleRepCounter(500);
+
+    rc.count(prog(0.1));
+    rc.count(prog(0.9)); // holding
+    const r = rc.count(noRead); // undefined progress → no-op
+    expect(r.phase).toBe('holding');
     expect(r.repCount).toBe(0);
   });
 });

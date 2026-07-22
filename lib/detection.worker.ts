@@ -1,4 +1,4 @@
-// Detection Web Worker: runs the full inference engine (MoveNet / MediaPipe
+// Detection Web Worker: runs the full inference engine (MediaPipe Pose /
 // HandLandmarker) off the main thread so model execution never blocks
 // rendering — the root cause of jank on phones. Frames arrive as transferred
 // ImageBitmaps; results go back as plain Pose objects (structured clone).

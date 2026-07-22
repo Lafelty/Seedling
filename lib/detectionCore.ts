@@ -60,8 +60,12 @@ export const HAND_KEYPOINT_NAMES: readonly string[] = [
   'pinky_finger_tip',
 ];
 
-let poseDetection: typeof import('@tensorflow-models/pose-detection') | null = null;
-let detector: any = null;
+// Body tracking uses MediaPipe Tasks PoseLandmarker (self-hosted wasm + model
+// in /public/mediapipe), replacing the old MoveNet/tfjs detector. PoseLandmarker
+// returns metric world landmarks, so body angles can be measured in 3D — they no
+// longer swing when the patient stands closer/further or rotates relative to the
+// camera, which is what made 2D screen-angle body criteria unreliable.
+let poseLandmarker: import('@mediapipe/tasks-vision').PoseLandmarker | null = null;
 // Hand tracking uses MediaPipe Tasks HandLandmarker (self-hosted wasm + model in
 // /public/mediapipe) — the old tfjs-runtime MediaPipeHands 'lite' model guessed
 // badly under self-occlusion (fists) and re-detected the palm every frame with
@@ -92,6 +96,9 @@ let warnedHandNotReady = false;
 // previous one. Callers switch clocks (live preview vs uploaded-video media
 // time), so clamp here as a last line of defense instead of crashing detection.
 let lastHandTimestampMs = 0;
+// PoseLandmarker.detectForVideo has the same strictly-increasing-timestamp
+// requirement; clamp for the same clock-switch reason.
+let lastPoseTimestampMs = 0;
 
 function frameSize(source: FrameSource): { w: number; h: number } {
   if ('videoWidth' in source) {
@@ -100,43 +107,81 @@ function frameSize(source: FrameSource): { w: number; h: number } {
   return { w: source.width, h: source.height };
 }
 
+// MediaPipe emits 33 BlazePose landmarks; the whole downstream engine speaks the
+// 17 MoveNet/COCO names (VALID_KEYPOINT_NAMES, in this order). Mapping the subset
+// we use keeps references, connections, criteria, and overlays working unchanged
+// while the body gains world coordinates.
+const BLAZE_TO_COCO: ReadonlyArray<readonly [number, string]> = [
+  [0, 'nose'],
+  [2, 'left_eye'],
+  [5, 'right_eye'],
+  [7, 'left_ear'],
+  [8, 'right_ear'],
+  [11, 'left_shoulder'],
+  [12, 'right_shoulder'],
+  [13, 'left_elbow'],
+  [14, 'right_elbow'],
+  [15, 'left_wrist'],
+  [16, 'right_wrist'],
+  [23, 'left_hip'],
+  [24, 'right_hip'],
+  [25, 'left_knee'],
+  [26, 'right_knee'],
+  [27, 'left_ankle'],
+  [28, 'right_ankle'],
+];
+
 /**
- * Initialize the MoveNet pose detector.
+ * Initialize the MediaPipe Tasks PoseLandmarker. Wasm and the model are
+ * self-hosted under /public/mediapipe — no CDN at runtime. VIDEO running mode
+ * tracks the body between frames (steadier than per-frame re-detection) and,
+ * unlike MoveNet, exposes metric world landmarks for rotation-invariant angles.
  */
 async function initPoseCore(): Promise<boolean> {
   try {
-    if (detector) return true;
+    if (poseLandmarker) return true;
     const gen = poseGen;
 
-    if (!poseDetection) {
-      const tf = await import('@tensorflow/tfjs-core');
-      await import('@tensorflow/tfjs-backend-webgl');
+    const { FilesetResolver, PoseLandmarker } = await import('@mediapipe/tasks-vision');
+    const vision = await FilesetResolver.forVisionTasks('/mediapipe/wasm');
 
-      // Wait for backend to be ready
-      await tf.ready();
-      console.log('TensorFlow.js backend ready:', tf.getBackend());
+    const createWith = (delegate: 'GPU' | 'CPU') =>
+      PoseLandmarker.createFromOptions(vision, {
+        baseOptions: {
+          modelAssetPath: '/mediapipe/pose_landmarker_full.task',
+          delegate,
+        },
+        runningMode: 'VIDEO',
+        numPoses: 1,
+        minPoseDetectionConfidence: 0.5,
+        minPosePresenceConfidence: 0.5,
+        minTrackingConfidence: 0.5,
+        outputSegmentationMasks: false,
+      });
 
-      poseDetection = await import('@tensorflow-models/pose-detection');
+    let created: import('@mediapipe/tasks-vision').PoseLandmarker;
+    try {
+      created = await createWith('GPU');
+    } catch {
+      // Some machines/browsers can't create the GPU delegate — CPU still runs
+      // the full model in real time.
+      console.warn('GPU delegate unavailable for pose landmarker, falling back to CPU');
+      created = await createWith('CPU');
     }
-
-    const model = poseDetection.SupportedModels.MoveNet;
-    const created = await poseDetection.createDetector(model, {
-      modelType: poseDetection.movenet.modelType.SINGLEPOSE_THUNDER,
-    });
 
     if (gen !== poseGen) {
       // Disposed while loading (mode switch / unmount) — don't resurrect.
-      created.dispose();
+      created.close();
       return false;
     }
-    if (detector) {
+    if (poseLandmarker) {
       // A concurrent init already won (StrictMode double-mount).
-      created.dispose();
+      created.close();
       return true;
     }
-    detector = created;
+    poseLandmarker = created;
     warnedPoseNotReady = false;
-    console.log('Pose detector initialized successfully');
+    console.log('Pose landmarker initialized successfully');
     return true;
   } catch (error) {
     console.error('Failed to initialize pose detector:', error);
@@ -144,8 +189,14 @@ async function initPoseCore(): Promise<boolean> {
   }
 }
 
-async function detectPoseCore(source: FrameSource): Promise<Pose | null> {
-  if (!detector) {
+/**
+ * Detect a body pose, normalized into the same 17-keypoint Pose shape MoveNet
+ * produced so the whole downstream engine works unchanged — now with metric
+ * `world` coordinates attached. `timestampMs` must be monotonically increasing;
+ * it feeds the internal tracker that carries the body across frames.
+ */
+async function detectPoseCore(source: FrameSource, timestampMs: number): Promise<Pose | null> {
+  if (!poseLandmarker) {
     if (!warnedPoseNotReady) {
       console.warn('Pose detector not initialized yet — frames skipped until the model loads');
       warnedPoseNotReady = true;
@@ -154,8 +205,31 @@ async function detectPoseCore(source: FrameSource): Promise<Pose | null> {
   }
 
   try {
-    const poses = await detector.estimatePoses(source as any);
-    return poses.length > 0 ? poses[0] : null;
+    const { w, h } = frameSize(source);
+    if (!w || !h) return null;
+
+    const ts = timestampMs > lastPoseTimestampMs ? timestampMs : lastPoseTimestampMs + 1;
+    lastPoseTimestampMs = ts;
+    const result = poseLandmarker.detectForVideo(source, ts);
+    const landmarks = result.landmarks?.[0];
+    if (!landmarks) return null;
+    const world = result.worldLandmarks?.[0];
+
+    const keypoints: Keypoint[] = BLAZE_TO_COCO.map(([idx, name]) => {
+      const lm = landmarks[idx];
+      const wl = world?.[idx];
+      return {
+        x: lm.x * w,
+        y: lm.y * h,
+        // BlazePose exposes visibility ∈ [0,1]; getKeypoint gates on it exactly
+        // like MoveNet's per-keypoint score did.
+        score: lm.visibility ?? 1,
+        name,
+        // Metric 3D — lets validation measure rotation-invariant body angles.
+        world: wl ? { x: wl.x, y: wl.y, z: wl.z } : undefined,
+      };
+    });
+    return { keypoints, score: 1 };
   } catch (error) {
     console.error('Pose detection error:', error);
     return null;
@@ -163,10 +237,11 @@ async function detectPoseCore(source: FrameSource): Promise<Pose | null> {
 }
 
 function disposePoseCore() {
-  poseGen++; // invalidate any createDetector still in flight
-  if (detector) {
-    detector.dispose();
-    detector = null;
+  poseGen++; // invalidate any createFromOptions still in flight
+  lastPoseTimestampMs = 0;
+  if (poseLandmarker) {
+    poseLandmarker.close();
+    poseLandmarker = null;
   }
 }
 
@@ -396,7 +471,7 @@ export async function detectCore(
   mode: TrackingMode,
   timestampMs: number
 ): Promise<Pose | null> {
-  return mode === 'hand' ? detectHandCore(source, timestampMs) : detectPoseCore(source);
+  return mode === 'hand' ? detectHandCore(source, timestampMs) : detectPoseCore(source, timestampMs);
 }
 
 export function disposeCore() {

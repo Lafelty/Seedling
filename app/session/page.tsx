@@ -15,7 +15,7 @@ import {
   analyzeExercise,
   subjectInFrame,
   GenericRepCounter,
-  CycleRepCounter,
+  RomCycleRepCounter,
   disposeDetector,
   pickReferencePose,
   connectionsForMode,
@@ -75,7 +75,7 @@ export default function SessionPage() {
   const router = useRouter()
   const videoRef = useRef<HTMLVideoElement>(null)
   const canvasRef = useRef<HTMLCanvasElement>(null)
-  const repCounterRef = useRef<GenericRepCounter | CycleRepCounter | null>(null)
+  const repCounterRef = useRef<GenericRepCounter | RomCycleRepCounter | null>(null)
   // DTW path scoring for cyclic exercises — null when the exercise has no
   // usable demo curves (feature silently off).
   const trajectoryRef = useRef<TrajectoryTracker | null>(null)
@@ -112,6 +112,10 @@ export default function SessionPage() {
   const [isDetecting, setIsDetecting] = useState(false)
   const [repJustCompleted, setRepJustCompleted] = useState(false)
   const [holdProgress, setHoldProgress] = useState(0)
+  // Continuous 0..1 position of the primary joint along the movement (rest→top).
+  // Drives the live progress ring — the "it's tracking me" signal that a single
+  // extreme-band check can't give.
+  const [movementProgress, setMovementProgress] = useState(0)
   // Last rep's DTW path-match result, shown as a badge until the next rep.
   const [pathScore, setPathScore] = useState<TrajectoryScore | null>(null)
   const [holdMissed, setHoldMissed] = useState(false)
@@ -174,7 +178,7 @@ export default function SessionPage() {
               (c: { restAngle?: number }) => typeof c.restAngle === 'number'
             )
           repCounterRef.current = cyclic
-            ? new CycleRepCounter(data.hold_duration_ms ?? 500)
+            ? new RomCycleRepCounter(data.hold_duration_ms ?? 500)
             : new GenericRepCounter(data.hold_duration_ms ?? 500)
           // Cyclic reps have a clear start/end, so each one can be DTW-scored
           // against the therapist's recorded movement curve.
@@ -431,6 +435,7 @@ export default function SessionPage() {
       const rep = repCounterRef.current.count(analysis)
       const phase: CyclePhase | null = 'phase' in rep ? (rep.phase as CyclePhase) : null
       setHoldProgress(rep.holdProgress)
+      setMovementProgress(analysis.progress ?? 0)
 
       // Trajectory matching: collect the live angle curve, opening a rep
       // window whenever the movement leaves the rest pose.
@@ -456,6 +461,11 @@ export default function SessionPage() {
         // Out of the target band on purpose — coach the return, don't scold
         displayFeedback = 'good'
         displayMessage = exercise.feedback_messages?.return || 'Good — now return to start slowly'
+      } else if (phase === 'lifting') {
+        // Encourage the movement upward; the ring shows how far along they are.
+        displayMessage = (analysis.progress ?? 0) >= 0.85
+          ? (exercise.feedback_messages?.almost || 'Almost there…')
+          : (exercise.feedback_messages?.lifting || 'Keep lifting…')
       }
 
       // Speak the "now lower" cue once per earned hold — the patient is mid-
@@ -1279,6 +1289,36 @@ export default function SessionPage() {
                 }}>{repCount}</span> / {TARGET_REPS}
               </p>
             </div>
+
+            {/* Live movement ring — fills as the primary joint travels from
+                rest to the target, giving continuous "it's following me"
+                feedback instead of only reacting at the extreme. */}
+            {sessionState === 'active' && movementProgress > 0.02 && (
+              <div style={{
+                background: 'rgba(255, 255, 255, 0.9)',
+                backdropFilter: 'blur(8px)',
+                padding: 'var(--space-2) var(--space-3)',
+                borderRadius: 'var(--radius-full)',
+                display: 'flex',
+                alignItems: 'center',
+                gap: 'var(--space-2)',
+              }}>
+                <svg width="22" height="22" viewBox="0 0 24 24" style={{ transform: 'rotate(-90deg)' }}>
+                  <circle cx="12" cy="12" r="9" fill="none" stroke="var(--border)" strokeWidth="3" />
+                  <circle
+                    cx="12" cy="12" r="9" fill="none"
+                    stroke={movementProgress >= 0.99 ? '#22c55e' : 'var(--primary)'}
+                    strokeWidth="3" strokeLinecap="round"
+                    strokeDasharray={2 * Math.PI * 9}
+                    strokeDashoffset={2 * Math.PI * 9 * (1 - movementProgress)}
+                    style={{ transition: 'stroke-dashoffset 80ms linear, stroke 200ms ease' }}
+                  />
+                </svg>
+                <span className="text-xs" style={{ color: 'var(--muted)' }}>
+                  {Math.round(movementProgress * 100)}%
+                </span>
+              </div>
+            )}
 
             {/* DTW path match of the last rep — how closely the movement
                 followed the therapist's recorded curve */}

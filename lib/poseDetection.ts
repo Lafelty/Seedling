@@ -231,6 +231,11 @@ export interface ExerciseAnalysis {
   feedback: 'good' | 'adjust' | 'analyzing';
   message: string;
   failedCriteria: string[];
+  // 0..1 position of the primary mover along its rest→target range (0 at rest,
+  // 1 at the target extreme). Drives the live progress ring and the ROM
+  // hysteresis rep counter. Undefined when the primary joint isn't measurable
+  // this frame or the exercise has no rest-defining criterion.
+  progress?: number;
 }
 
 /**
@@ -421,6 +426,23 @@ export function analyzeExercise(
   const atRest = allAtRest;
   const failedCriteria = [...failedSet];
 
+  // Movement progress of the primary mover on the primary body/hand: 0 at the
+  // rest pose, 1 at the target extreme. Derivation sorts criteria widest-sweep
+  // first, so the first rest-defining criterion is the joint that best defines
+  // the rep. Measured in the same space the bands were derived in.
+  let progress: number | undefined;
+  const primary = criteria.find((c) => typeof c.restAngle === 'number');
+  if (primary) {
+    const pj = getKeypoint(pose, primary.joint);
+    const pa = getKeypoint(pose, primary.relativeTo[0]);
+    const pb = getKeypoint(pose, primary.relativeTo[1]);
+    const span = primary.targetAngle - (primary.restAngle as number);
+    if (pj && pa && pb && Math.abs(span) > 1) {
+      const angle = measureAngle(pa, pj, pb, space);
+      progress = Math.min(1, Math.max(0, (angle - (primary.restAngle as number)) / span));
+    }
+  }
+
   // Generate feedback
   const meetsAllCriteria = failedCriteria.length === 0;
   let feedback: 'good' | 'adjust' | 'analyzing' = 'analyzing';
@@ -456,6 +478,7 @@ export function analyzeExercise(
     feedback,
     message,
     failedCriteria,
+    progress,
   };
 }
 
@@ -463,7 +486,7 @@ export function analyzeExercise(
 // Auto-derivation of validation criteria from recorded demonstrations
 // ============================================================================
 
-/** The 17 keypoints MoveNet detects — the only valid names for joints and reference points. */
+/** The 17 COCO body keypoints the body engine emits — the only valid names for joints and reference points. */
 export const VALID_KEYPOINT_NAMES: readonly string[] = [
   'nose',
   'left_eye',
@@ -613,7 +636,7 @@ const MAX_CRITERIA_JOINTS: Record<TrackingMode, number> = { body: 8, hand: 4 };
 const BAND_FLOOR_DEG: Record<TrackingMode, number> = { body: 10, hand: 15 };
 const BAND_CAP_DEG: Record<TrackingMode, number> = { body: 20, hand: 28 };
 
-/** Centered moving average — MoveNet angles jitter several degrees frame to frame.
+/** Centered moving average — pose-estimation angles jitter several degrees frame to frame.
  * Exported for lib/trajectory.ts, which smooths live angle curves the same way. */
 export function smoothSeries(values: number[], windowSize = 5): number[] {
   if (values.length <= windowSize) return [...values];
@@ -1149,6 +1172,157 @@ export class CycleRepCounter {
     this.phase = 'rest';
     this.holdStart = 0;
     this.lastAtTargetAt = 0;
+    this.holdSatisfied = false;
+    this.repCount = 0;
+    this.lastRepTime = 0;
+  }
+
+  getCount() {
+    return this.repCount;
+  }
+}
+
+/**
+ * ROM-hysteresis rep counter for dynamic exercises. Where CycleRepCounter needs
+ * the patient to land inside a tight angle band at the extreme — which a
+ * saturating 2D angle, sensor jitter, or a patient with reduced range can miss
+ * entirely — this counts by how far the primary joint travels along its
+ * rest→target range (analysis.progress). A rep fires once the movement passes
+ * `enterHigh` of the range and then returns below `exitLow`; the wide gap
+ * between the two is a hysteresis band that keeps a single noisy frame from
+ * flip-flopping the phase. Reaching the top is what counts a rep — an optional
+ * top hold is tracked only to drive coaching (holdEarned) and the hold bar, so
+ * a smooth continuous arc still counts without a deliberate pause.
+ *
+ * Consumes analysis.progress and is a no-op on frames where the primary joint
+ * isn't measurable (progress undefined), holding the current phase.
+ */
+export class RomCycleRepCounter {
+  private phase: CyclePhase = 'rest';
+  private reachedTop = false;
+  private holdStart = 0;
+  private lastAboveAt = 0;
+  private holdSatisfied = false;
+  private repCount = 0;
+  private lastRepTime = 0;
+  private readonly minRepInterval = 1000; // ms cooldown between reps
+  // A brief dip below the top threshold (jitter) shouldn't end the top phase;
+  // only treat the top as left after it stays below for this long.
+  private readonly exitGraceMs = 300;
+  private holdThreshold: number;
+  private readonly enterHigh: number;
+  private readonly exitLow: number;
+
+  constructor(holdThresholdMs = 500, enterHigh = 0.6, exitLow = 0.25) {
+    this.holdThreshold = holdThresholdMs;
+    this.enterHigh = enterHigh;
+    this.exitLow = exitLow;
+  }
+
+  private holdProgressNow(now: number): number {
+    return this.holdSatisfied
+      ? 1
+      : this.phase === 'holding'
+        ? Math.min(1, (now - this.holdStart) / this.holdThreshold)
+        : 0;
+  }
+
+  count(analysis: ExerciseAnalysis): {
+    repCount: number;
+    justCompleted: boolean;
+    holdProgress: number;
+    holdMissed: boolean;
+    holdEarned: boolean;
+    phase: CyclePhase;
+  } {
+    const now = Date.now();
+    const p = analysis.progress;
+    let justCompleted = false;
+
+    // No reading this frame (primary joint hidden) — keep the current phase.
+    if (typeof p !== 'number') {
+      return {
+        repCount: this.repCount,
+        justCompleted,
+        holdProgress: this.holdProgressNow(now),
+        holdMissed: false,
+        holdEarned: this.holdSatisfied,
+        phase: this.phase,
+      };
+    }
+
+    const atTop = p >= this.enterHigh;
+    const atRest = p <= this.exitLow;
+
+    const completeIfReached = () => {
+      if (this.reachedTop && now - this.lastRepTime >= this.minRepInterval) {
+        this.repCount++;
+        justCompleted = true;
+        this.lastRepTime = now;
+      }
+      this.reachedTop = false;
+      this.holdSatisfied = false;
+    };
+
+    const enterTop = () => {
+      this.phase = 'holding';
+      this.reachedTop = true;
+      this.holdStart = now;
+      this.lastAboveAt = now;
+      this.holdSatisfied = false;
+    };
+
+    switch (this.phase) {
+      case 'rest':
+        if (atTop) enterTop();
+        else if (!atRest) this.phase = 'lifting';
+        break;
+
+      case 'lifting':
+        if (atTop) enterTop();
+        else if (atRest) this.phase = 'rest'; // sank back without reaching the top
+        break;
+
+      case 'holding':
+        if (atTop) {
+          this.lastAboveAt = now;
+          if (now - this.holdStart >= this.holdThreshold) this.holdSatisfied = true;
+        } else if (now - this.lastAboveAt >= this.exitGraceMs) {
+          // Really left the top (past the jitter grace window)
+          if (atRest) {
+            completeIfReached();
+            this.phase = 'rest';
+          } else {
+            this.phase = 'lowering';
+          }
+        }
+        break;
+
+      case 'lowering':
+        if (atTop) enterTop(); // came back up — resume the top (rep not yet counted)
+        else if (atRest) {
+          completeIfReached();
+          this.phase = 'rest';
+        }
+        break;
+    }
+
+    return {
+      repCount: this.repCount,
+      justCompleted,
+      holdProgress: this.holdProgressNow(now),
+      // Top holds are optional in ROM mode, so a missed hold is never a failure.
+      holdMissed: false,
+      holdEarned: this.holdSatisfied,
+      phase: this.phase,
+    };
+  }
+
+  reset() {
+    this.phase = 'rest';
+    this.reachedTop = false;
+    this.holdStart = 0;
+    this.lastAboveAt = 0;
     this.holdSatisfied = false;
     this.repCount = 0;
     this.lastRepTime = 0;

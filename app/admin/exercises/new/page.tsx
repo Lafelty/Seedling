@@ -478,9 +478,23 @@ export default function NewExercisePage() {
 
       const onEnded = () => finish()
       const onError = () => fail(new Error('Video playback failed'))
-      // Cancel must work even if playback stalls and no more frames ever fire.
+      // Self-healing sweep. Three jobs: (1) honor cancel even when no more
+      // frame callbacks will fire; (2) detect the end being reached in a paused
+      // state — pausing on the final frame can park the element at
+      // currentTime == duration, where the `ended` event never fires because
+      // nothing plays *into* the end (the sometimes-stuck-at-99% hang); (3)
+      // resume playback if any path left the video paused when it shouldn't be.
       const watchdog = setInterval(() => {
-        if (cancelProcessRef.current) finish()
+        if (cancelProcessRef.current) {
+          finish()
+          return
+        }
+        if (done || busy) return
+        if (video.ended || duration - video.currentTime < 0.01) {
+          finish()
+          return
+        }
+        maybeResume()
       }, 200)
 
       video.addEventListener('ended', onEnded)

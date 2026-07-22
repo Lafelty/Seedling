@@ -972,7 +972,31 @@ export function buildGuideFrames(
   }
   if (restIdx >= targetIdx) return [];
 
-  return demo.frames.slice(restIdx, targetIdx + 1).map((f) => f.pose);
+  // Resample the rest->target limb to uniform MOVEMENT steps rather than uniform
+  // time. If the therapist paused at the top or bottom while recording, those
+  // dwell frames would otherwise make the guide sit frozen there while the fast
+  // middle of the movement flew by. Indexing by progress keeps the guide moving
+  // at a constant pace end to end.
+  const risingFrames = demo.frames.slice(restIdx, targetIdx + 1);
+  const risingProg = prog.slice(restIdx, targetIdx + 1);
+  const STEPS = 32;
+  const out: Pose[] = [];
+  for (let k = 0; k < STEPS; k++) {
+    const wantP = k / (STEPS - 1);
+    let bestIdx = 0;
+    let bestDiff = Infinity;
+    for (let i = 0; i < risingFrames.length; i++) {
+      const p = risingProg[i];
+      if (p === null) continue;
+      const d = Math.abs(p - wantP);
+      if (d < bestDiff) {
+        bestDiff = d;
+        bestIdx = i;
+      }
+    }
+    out.push(risingFrames[bestIdx].pose);
+  }
+  return out;
 }
 
 // ---- Auto-trim of recorded demos ----

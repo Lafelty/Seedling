@@ -96,9 +96,6 @@ let warnedHandNotReady = false;
 // previous one. Callers switch clocks (live preview vs uploaded-video media
 // time), so clamp here as a last line of defense instead of crashing detection.
 let lastHandTimestampMs = 0;
-// PoseLandmarker.detectForVideo has the same strictly-increasing-timestamp
-// requirement; clamp for the same clock-switch reason.
-let lastPoseTimestampMs = 0;
 
 function frameSize(source: FrameSource): { w: number; h: number } {
   if ('videoWidth' in source) {
@@ -133,9 +130,11 @@ const BLAZE_TO_COCO: ReadonlyArray<readonly [number, string]> = [
 
 /**
  * Initialize the MediaPipe Tasks PoseLandmarker. Wasm and the model are
- * self-hosted under /public/mediapipe — no CDN at runtime. VIDEO running mode
- * tracks the body between frames (steadier than per-frame re-detection) and,
- * unlike MoveNet, exposes metric world landmarks for rotation-invariant angles.
+ * self-hosted under /public/mediapipe — no CDN at runtime. IMAGE running mode
+ * detects each frame statelessly, exactly like the old MoveNet detector: the
+ * frame-by-frame video-upload capture pauses the video per frame, and VIDEO
+ * mode's cross-frame tracker loses the body on that stop-start cadence, which
+ * dropped most uploaded frames. Stateless detection returns a pose every frame.
  */
 async function initPoseCore(): Promise<boolean> {
   try {
@@ -151,7 +150,7 @@ async function initPoseCore(): Promise<boolean> {
           modelAssetPath: '/mediapipe/pose_landmarker_full.task',
           delegate,
         },
-        runningMode: 'VIDEO',
+        runningMode: 'IMAGE',
         numPoses: 1,
         minPoseDetectionConfidence: 0.5,
         minPosePresenceConfidence: 0.5,
@@ -192,10 +191,10 @@ async function initPoseCore(): Promise<boolean> {
 /**
  * Detect a body pose, normalized into the same 17-keypoint Pose shape MoveNet
  * produced so the whole downstream engine works unchanged — now with metric
- * `world` coordinates attached. `timestampMs` must be monotonically increasing;
- * it feeds the internal tracker that carries the body across frames.
+ * `world` coordinates attached. Stateless (IMAGE mode): no timestamp, no
+ * cross-frame tracking, so the video-upload capture gets a pose on every frame.
  */
-async function detectPoseCore(source: FrameSource, timestampMs: number): Promise<Pose | null> {
+async function detectPoseCore(source: FrameSource): Promise<Pose | null> {
   if (!poseLandmarker) {
     if (!warnedPoseNotReady) {
       console.warn('Pose detector not initialized yet — frames skipped until the model loads');
@@ -208,9 +207,7 @@ async function detectPoseCore(source: FrameSource, timestampMs: number): Promise
     const { w, h } = frameSize(source);
     if (!w || !h) return null;
 
-    const ts = timestampMs > lastPoseTimestampMs ? timestampMs : lastPoseTimestampMs + 1;
-    lastPoseTimestampMs = ts;
-    const result = poseLandmarker.detectForVideo(source, ts);
+    const result = poseLandmarker.detect(source);
     const landmarks = result.landmarks?.[0];
     if (!landmarks) return null;
     const world = result.worldLandmarks?.[0];
@@ -238,7 +235,6 @@ async function detectPoseCore(source: FrameSource, timestampMs: number): Promise
 
 function disposePoseCore() {
   poseGen++; // invalidate any createFromOptions still in flight
-  lastPoseTimestampMs = 0;
   if (poseLandmarker) {
     poseLandmarker.close();
     poseLandmarker = null;
@@ -471,7 +467,7 @@ export async function detectCore(
   mode: TrackingMode,
   timestampMs: number
 ): Promise<Pose | null> {
-  return mode === 'hand' ? detectHandCore(source, timestampMs) : detectPoseCore(source, timestampMs);
+  return mode === 'hand' ? detectHandCore(source, timestampMs) : detectPoseCore(source);
 }
 
 export function disposeCore() {

@@ -88,6 +88,11 @@ let handGen = 0;
 let warnedPoseNotReady = false;
 let warnedHandNotReady = false;
 
+// detectForVideo hard-throws if a timestamp is not strictly greater than the
+// previous one. Callers switch clocks (live preview vs uploaded-video media
+// time), so clamp here as a last line of defense instead of crashing detection.
+let lastHandTimestampMs = 0;
+
 function frameSize(source: FrameSource): { w: number; h: number } {
   if ('videoWidth' in source) {
     return { w: source.videoWidth, h: source.videoHeight };
@@ -242,7 +247,9 @@ async function detectHandCore(source: FrameSource, timestampMs: number): Promise
     const { w, h } = frameSize(source);
     if (!w || !h) return null;
 
-    const result = handLandmarker.detectForVideo(source, timestampMs);
+    const ts = timestampMs > lastHandTimestampMs ? timestampMs : lastHandTimestampMs + 1;
+    lastHandTimestampMs = ts;
+    const result = handLandmarker.detectForVideo(source, ts);
     if (!result.landmarks || result.landmarks.length === 0) {
       smoothedHands = []; // hand lost — don't smooth across the gap
       return null;
@@ -323,6 +330,7 @@ async function detectHandCore(source: FrameSource, timestampMs: number): Promise
 function disposeHandCore() {
   handGen++; // invalidate any createFromOptions still in flight
   smoothedHands = [];
+  lastHandTimestampMs = 0;
   if (handLandmarker) {
     handLandmarker.close();
     handLandmarker = null;

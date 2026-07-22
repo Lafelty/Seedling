@@ -124,7 +124,15 @@ export async function initDetector(mode: TrackingMode): Promise<boolean> {
   return gen === facadeGen ? ok : false;
 }
 
-export async function detect(video: HTMLVideoElement, mode: TrackingMode): Promise<Pose | null> {
+export async function detect(
+  video: HTMLVideoElement,
+  mode: TrackingMode,
+  // Video-file processing passes its own clock (upload base + media time) so the
+  // hand tracker sees frames spaced by real video time, not by how long each
+  // inference happened to take. Live callers omit it.
+  timestampMs?: number
+): Promise<Pose | null> {
+  const ts = timestampMs ?? performance.now();
   if (usingWorker && worker) {
     if (!video.videoWidth || !video.videoHeight) return null;
     // Never queue frames behind a slow inference — reuse the last result so
@@ -136,7 +144,7 @@ export async function detect(video: HTMLVideoElement, mode: TrackingMode): Promi
       const res = await callWorker(
         // detectForVideo needs a monotonically increasing timestamp; taking it
         // here (not in the worker) keeps it monotonic across worker restarts.
-        { type: 'detect', mode, bitmap, timestamp: performance.now() },
+        { type: 'detect', mode, bitmap, timestamp: ts },
         [bitmap]
       );
       lastWorkerPose = (res?.pose as Pose | null) ?? null;
@@ -148,7 +156,7 @@ export async function detect(video: HTMLVideoElement, mode: TrackingMode): Promi
       detectInFlight = false;
     }
   }
-  return detectCore(video, mode, performance.now());
+  return detectCore(video, mode, ts);
 }
 
 export function disposeDetector() {

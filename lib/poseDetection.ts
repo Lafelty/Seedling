@@ -350,9 +350,27 @@ export function analyzeExercise(
   let anyMissingParts = false;
   let allAtRest = true;
 
+  // Only the joints the criteria actually use need to be in frame — not every
+  // part that happened to drift during the demo. An arm exercise shouldn't
+  // demand the legs be visible just because a hallucinated lower-body landmark
+  // jittered in the recording. (targetBodyParts still lists the movers for the
+  // editor's skeleton highlight; it's just not the visibility gate anymore.)
+  const requiredParts = new Set<string>();
+  for (const c of criteria) {
+    requiredParts.add(c.joint);
+    requiredParts.add(c.relativeTo[0]);
+    requiredParts.add(c.relativeTo[1]);
+  }
+  for (const rule of levelingRules) {
+    requiredParts.add(rule.joints[0]);
+    requiredParts.add(rule.joints[1]);
+  }
+  // Fall back to the stored list only if the criteria reference nothing usable.
+  const partsToCheck = requiredParts.size > 0 ? [...requiredParts] : targetBodyParts;
+
   for (const set of sets) {
-    // Check if all target body parts are visible on this hand/body
-    const missingParts = targetBodyParts.filter((part) => !getKeypoint(set, part));
+    // Check if the joints this exercise depends on are visible on this hand/body
+    const missingParts = partsToCheck.filter((part) => !getKeypoint(set, part));
     if (missingParts.length > 0) {
       anyMissingParts = true;
       allAtRest = false;

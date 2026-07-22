@@ -465,9 +465,9 @@ export default function SessionPage() {
       const guideSteps = guideStepsRef.current
       if (guideSteps.length >= 2) {
         const holdMs = exercise.hold_duration_ms ?? 800
-        const UP = 1000
-        const DOWN = 1000
-        const BOTTOM = 600 // pause at the start of each loop so the lift reads clearly
+        const UP = 3000
+        const DOWN = 3000
+        const BOTTOM = 1500 // pause at the start of each loop so the lift reads clearly
         let gp: number
         if (phase === 'holding') {
           gp = 1 // stay at the top with the patient

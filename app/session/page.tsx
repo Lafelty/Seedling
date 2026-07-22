@@ -457,29 +457,6 @@ export default function SessionPage() {
         prevPhaseRef.current = phase
       }
 
-      // Guide skeleton: run the recorded movement on a steady loop so it always
-      // demonstrates and *leads* the patient, rather than mirroring (and lagging
-      // behind) their live progress — which read as the ghost "following" them
-      // and sitting frozen until they were nearly done. The only sync to the
-      // patient is the hold: while they hold the top, the guide holds with them.
-      const guideSteps = guideStepsRef.current
-      if (guideSteps.length >= 2) {
-        const UP = 3000
-        const DOWN = 3000
-        let gp: number
-        if (phase === 'holding') {
-          gp = 1 // hold at the top with the patient while they hold
-        } else {
-          // Continuous ping-pong with no dead pause at either end, so a still
-          // patient always sees the movement being demonstrated (a bottom pause
-          // made it look frozen when they weren't moving yet).
-          const period = UP + DOWN
-          const t = now % period
-          gp = t < UP ? t / UP : 1 - (t - UP) / DOWN
-        }
-        setGuidePose(guideSteps[Math.round(gp * (guideSteps.length - 1))])
-      }
-
       let displayFeedback = analysis.feedback
       let displayMessage = analysis.message
       if (phase === 'holding') {
@@ -597,6 +574,32 @@ export default function SessionPage() {
       }
     }
   }, [sessionState, exercise])
+
+  // Animate the guide skeleton on its own clock — a smooth, continuous ping-pong
+  // through the recorded movement — so it always demonstrates regardless of what
+  // the patient is doing or how fast inference runs, including during the
+  // countdown before they've started moving.
+  useEffect(() => {
+    if (sessionState !== 'active' && sessionState !== 'countdown') return
+    const steps = guideStepsRef.current
+    if (steps.length < 2) return
+    const PERIOD = 6000 // 3s up, 3s down
+    const half = PERIOD / 2
+    let raf = 0
+    let lastIdx = -1
+    const tick = () => {
+      const t = performance.now() % PERIOD
+      const gp = t < half ? t / half : 1 - (t - half) / half
+      const idx = Math.round(gp * (steps.length - 1))
+      if (idx !== lastIdx) {
+        lastIdx = idx
+        setGuidePose(steps[idx])
+      }
+      raf = requestAnimationFrame(tick)
+    }
+    raf = requestAnimationFrame(tick)
+    return () => cancelAnimationFrame(raf)
+  }, [sessionState])
 
   // Persist the session (and its reps) to the database. Reads refs so it never
   // sees stale state. `completed` marks a full finish vs. an early save-and-exit.
@@ -1039,38 +1042,45 @@ export default function SessionPage() {
         style={{ transform: 'scaleX(-1)' }}
       />
 
-      {/* Skeleton overlay — live skeleton */}
-      {sessionState === 'active' && detectedPose && videoRef.current && (
+      {/* Guide skeleton — the therapist's movement, animated on its own loop so
+          it always demonstrates (including during the countdown, before the
+          patient moves). Anchored to the patient's shoulders when they're
+          detected, otherwise centered in the frame. */}
+      {(sessionState === 'active' || sessionState === 'countdown') && videoRef.current && (guidePose ?? ghostPose) && (
         <svg
           className="absolute inset-0 pointer-events-none"
           viewBox={`0 0 ${videoRef.current.videoWidth} ${videoRef.current.videoHeight}`}
           preserveAspectRatio="xMidYMid slice"
           style={{ width: '100%', height: '100%', transform: 'scaleX(-1)' }}
         >
-
-          {/* Ghost skeleton — the therapist's target pose, anchored to the
-              patient's anchor pair (shoulders, or wrist↔knuckle for hands) and
-              scaled to their body so it overlays where their limbs should be */}
-          {(guidePose ?? ghostPose) && (() => {
-            // The animated guide when available, else the static target pose.
+          {(() => {
             const guide = guidePose ?? ghostPose
-            if (!guide) return null
+            if (!guide || !videoRef.current) return null
             const find = (pose: Pose, name: string) => {
               const kp = pose.keypoints.find((k) => k.name === name)
               return kp && (kp.score ?? 0) > 0.3 ? kp : null
             }
             const [anchorA, anchorB] = anchorPairForMode(mode)
-            const pls = find(detectedPose, anchorA)
-            const prs = find(detectedPose, anchorB)
             const gls = find(guide, anchorA)
             const grs = find(guide, anchorB)
-            if (!pls || !prs || !gls || !grs) return null
-
-            const pMid = { x: (pls.x + prs.x) / 2, y: (pls.y + prs.y) / 2 }
+            if (!gls || !grs) return null
             const gMid = { x: (gls.x + grs.x) / 2, y: (gls.y + grs.y) / 2 }
             const gWidth = Math.hypot(gls.x - grs.x, gls.y - grs.y)
             if (gWidth < 1) return null
-            const scale = Math.hypot(pls.x - prs.x, pls.y - prs.y) / gWidth
+
+            // Anchor to the patient's shoulders when detected; otherwise (e.g.
+            // during the countdown, before the detection loop runs) center the
+            // guide in the frame so it can still demonstrate.
+            const pls = detectedPose ? find(detectedPose, anchorA) : null
+            const prs = detectedPose ? find(detectedPose, anchorB) : null
+            const vw = videoRef.current.videoWidth
+            const vh = videoRef.current.videoHeight
+            const pMid = pls && prs
+              ? { x: (pls.x + prs.x) / 2, y: (pls.y + prs.y) / 2 }
+              : { x: vw / 2, y: vh * 0.42 }
+            const scale = pls && prs
+              ? Math.hypot(pls.x - prs.x, pls.y - prs.y) / gWidth
+              : (vw * (mode === 'hand' ? 0.35 : 0.24)) / gWidth
             const tx = (p: { x: number; y: number }) => ({
               x: pMid.x + (p.x - gMid.x) * scale,
               y: pMid.y + (p.y - gMid.y) * scale,
@@ -1091,12 +1101,22 @@ export default function SessionPage() {
                   strokeWidth={mode === 'hand' ? 3 : 5}
                   strokeLinecap="round"
                   strokeDasharray="14 10"
-                  opacity="0.45"
+                  opacity="0.5"
                 />
               )
             })
           })()}
+        </svg>
+      )}
 
+      {/* Skeleton overlay — live skeleton */}
+      {sessionState === 'active' && detectedPose && videoRef.current && (
+        <svg
+          className="absolute inset-0 pointer-events-none"
+          viewBox={`0 0 ${videoRef.current.videoWidth} ${videoRef.current.videoHeight}`}
+          preserveAspectRatio="xMidYMid slice"
+          style={{ width: '100%', height: '100%', transform: 'scaleX(-1)' }}
+        >
           {/* Live skeleton — solid colored lines reflecting posture feedback.
               Body mode keeps its arm-only subset; hand mode draws the full
               21-segment hand with a thinner stroke. */}

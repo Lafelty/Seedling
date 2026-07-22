@@ -919,6 +919,62 @@ export function pickReferencePose(
   return best ?? middle;
 }
 
+/**
+ * Build the ordered poses of the movement's rising limb (rest -> target) from a
+ * recorded demo, so a session can pose an animated guide skeleton at any point
+ * `p` in [0,1] along the movement: guideFrames[round(p * (len-1))]. Uses the
+ * primary rest-defining criterion to locate the rest start and target extreme;
+ * returns [] when the exercise has no such criterion (static holds) or no demo
+ * shows it — callers then fall back to a static reference pose.
+ */
+export function buildGuideFrames(
+  demos: Array<{ frames: Array<{ pose: Pose }> }> | null | undefined,
+  criteria: PoseCriteria | null | undefined
+): Pose[] {
+  const crit = criteria?.criteria?.find((c) => typeof c.restAngle === 'number');
+  const demo = demos?.find((d) => (d.frames?.length ?? 0) >= 4);
+  if (!crit || !demo) return [];
+
+  const space: AngleSpace = criteria?.angleSpace === '3d' ? '3d' : '2d';
+  const rest = crit.restAngle as number;
+  const span = crit.targetAngle - rest;
+  if (Math.abs(span) < 1) return [];
+
+  // Progress (0 at rest, 1 at target) of the primary joint on each frame.
+  const prog: Array<number | null> = demo.frames.map((f) => {
+    const j = getKeypoint(f.pose, crit.joint);
+    const a = getKeypoint(f.pose, crit.relativeTo[0]);
+    const b = getKeypoint(f.pose, crit.relativeTo[1]);
+    if (!j || !a || !b) return null;
+    return Math.min(1, Math.max(0, (measureAngle(a, j, b, space) - rest) / span));
+  });
+
+  // Target = the frame nearest the extreme; rest = the lowest-progress frame
+  // before it. The slice between them is the rest -> target sweep to animate.
+  let targetIdx = -1;
+  let targetVal = -Infinity;
+  prog.forEach((p, i) => {
+    if (p !== null && p > targetVal) {
+      targetVal = p;
+      targetIdx = i;
+    }
+  });
+  if (targetIdx < 0) return [];
+
+  let restIdx = targetIdx;
+  let restVal = Infinity;
+  for (let i = 0; i <= targetIdx; i++) {
+    const p = prog[i];
+    if (p !== null && p < restVal) {
+      restVal = p;
+      restIdx = i;
+    }
+  }
+  if (restIdx >= targetIdx) return [];
+
+  return demo.frames.slice(restIdx, targetIdx + 1).map((f) => f.pose);
+}
+
 // ---- Auto-trim of recorded demos ----
 
 // Mean per-keypoint pixel travel between consecutive frames that counts as

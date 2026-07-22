@@ -18,6 +18,7 @@ import {
   RomCycleRepCounter,
   disposeDetector,
   pickReferencePose,
+  buildGuideFrames,
   connectionsForMode,
   anchorPairForMode,
   type TrackingMode,
@@ -80,6 +81,9 @@ export default function SessionPage() {
   // usable demo curves (feature silently off).
   const trajectoryRef = useRef<TrajectoryTracker | null>(null)
   const prevPhaseRef = useRef<CyclePhase | null>(null)
+  // Ordered rest->target poses of the recorded movement; the guide skeleton is
+  // posed at guideStepsRef.current[round(p * (len-1))] for a position p in [0,1].
+  const guideStepsRef = useRef<Pose[]>([])
   const animationFrameRef = useRef<number | undefined>(undefined)
 
   // Exercise state
@@ -123,6 +127,9 @@ export default function SessionPage() {
   const holdCueSpokenRef = useRef(false)
   // Therapist's recorded target pose, drawn as a ghost skeleton to match
   const [ghostPose, setGhostPose] = useState<Pose | null>(null)
+  // Live guide skeleton — the recorded movement posed by the patient's phase so
+  // it leads them (sweeps up at rest, holds at the top, returns on the way down).
+  const [guidePose, setGuidePose] = useState<Pose | null>(null)
   const [shouldersVisible, setShouldersVisible] = useState(true)
   const [hasSpoken, setHasSpoken] = useState(false)
   const [instructionBoxPos, setInstructionBoxPos] = useState({ x: 0, y: 0 })
@@ -170,6 +177,9 @@ export default function SessionPage() {
           // Ghost skeleton: the therapist's recorded target pose, shown behind
           // the patient's live skeleton as a visual goal.
           setGhostPose(pickReferencePose(data.recorded_paths, data.pose_criteria))
+          // Rest->target sweep for the phase-led guide skeleton (empty for
+          // static holds — the static ghost above stands in then).
+          guideStepsRef.current = buildGuideFrames(data.recorded_paths, data.pose_criteria)
           // Dynamic exercises with a known rest pose count full movement cycles
           // (rest → target → hold → back to rest); everything else counts holds.
           const cyclic =
@@ -445,6 +455,29 @@ export default function SessionPage() {
           trajectoryRef.current.markRepStart()
         }
         prevPhaseRef.current = phase
+      }
+
+      // Phase-led guide skeleton: pose the ghost along the recorded movement by
+      // what the patient should do next — sweep up while at rest (demonstrate
+      // the lift), lead a little ahead while lifting, hold at the top, and lead
+      // the return while lowering.
+      const guideSteps = guideStepsRef.current
+      if (guideSteps.length >= 2) {
+        const pp = analysis.progress ?? 0
+        const LEAD = 0.15
+        let gp: number
+        if (phase === 'holding') {
+          gp = 1
+        } else if (phase === 'lowering') {
+          gp = Math.max(0, pp - LEAD)
+        } else if (phase === 'lifting') {
+          gp = Math.min(1, pp + LEAD)
+        } else {
+          // Resting: demonstrate the full lift on a gentle 2.4s ping-pong loop.
+          const t = (now % 2400) / 2400
+          gp = t < 0.5 ? t * 2 : (1 - t) * 2
+        }
+        setGuidePose(guideSteps[Math.round(gp * (guideSteps.length - 1))])
       }
 
       let displayFeedback = analysis.feedback
@@ -1018,7 +1051,10 @@ export default function SessionPage() {
           {/* Ghost skeleton — the therapist's target pose, anchored to the
               patient's anchor pair (shoulders, or wrist↔knuckle for hands) and
               scaled to their body so it overlays where their limbs should be */}
-          {ghostPose && (() => {
+          {(guidePose ?? ghostPose) && (() => {
+            // The animated guide when available, else the static target pose.
+            const guide = guidePose ?? ghostPose
+            if (!guide) return null
             const find = (pose: Pose, name: string) => {
               const kp = pose.keypoints.find((k) => k.name === name)
               return kp && (kp.score ?? 0) > 0.3 ? kp : null
@@ -1026,8 +1062,8 @@ export default function SessionPage() {
             const [anchorA, anchorB] = anchorPairForMode(mode)
             const pls = find(detectedPose, anchorA)
             const prs = find(detectedPose, anchorB)
-            const gls = find(ghostPose, anchorA)
-            const grs = find(ghostPose, anchorB)
+            const gls = find(guide, anchorA)
+            const grs = find(guide, anchorB)
             if (!pls || !prs || !gls || !grs) return null
 
             const pMid = { x: (pls.x + prs.x) / 2, y: (pls.y + prs.y) / 2 }
@@ -1041,8 +1077,8 @@ export default function SessionPage() {
             })
 
             return connectionsForMode(mode).map(([start, end], i) => {
-              const s = find(ghostPose, start)
-              const e = find(ghostPose, end)
+              const s = find(guide, start)
+              const e = find(guide, end)
               if (!s || !e) return null
               const s2 = tx(s)
               const e2 = tx(e)

@@ -919,6 +919,33 @@ export function pickReferencePose(
   return best ?? middle;
 }
 
+/** Linearly blend two poses (keypoint x/y and world) by fraction f in [0,1],
+ * matched by keypoint name. Used to synthesize in-between guide poses so the
+ * guide moves smoothly even where the recording has few frames. */
+function lerpPose(a: Pose, b: Pose, f: number): Pose {
+  const bByName = new Map(b.keypoints.map((k) => [k.name, k] as const));
+  const keypoints: Keypoint[] = a.keypoints.map((ka) => {
+    const kb = ka.name ? bByName.get(ka.name) : undefined;
+    if (!kb) return ka;
+    const world =
+      ka.world && kb.world
+        ? {
+            x: ka.world.x + (kb.world.x - ka.world.x) * f,
+            y: ka.world.y + (kb.world.y - ka.world.y) * f,
+            z: ka.world.z + (kb.world.z - ka.world.z) * f,
+          }
+        : ka.world;
+    return {
+      ...ka,
+      x: ka.x + (kb.x - ka.x) * f,
+      y: ka.y + (kb.y - ka.y) * f,
+      score: Math.min(ka.score ?? 1, kb.score ?? 1),
+      world,
+    };
+  });
+  return { keypoints, score: a.score };
+}
+
 /**
  * Build the ordered poses of the movement's rising limb (rest -> target) from a
  * recorded demo, so a session can pose an animated guide skeleton at any point
@@ -972,29 +999,33 @@ export function buildGuideFrames(
   }
   if (restIdx >= targetIdx) return [];
 
-  // Resample the rest->target limb to uniform MOVEMENT steps rather than uniform
-  // time. If the therapist paused at the top or bottom while recording, those
-  // dwell frames would otherwise make the guide sit frozen there while the fast
-  // middle of the movement flew by. Indexing by progress keeps the guide moving
-  // at a constant pace end to end.
-  const risingFrames = demo.frames.slice(restIdx, targetIdx + 1);
-  const risingProg = prog.slice(restIdx, targetIdx + 1);
+  // Pair each rising-limb frame with its progress, drop unmeasured frames, and
+  // sort ascending into a monotonic rest -> target sequence (also irons out
+  // per-frame progress jitter).
+  const pts = demo.frames
+    .slice(restIdx, targetIdx + 1)
+    .map((f, i) => ({ p: prog[restIdx + i], pose: f.pose }))
+    .filter((x): x is { p: number; pose: Pose } => x.p !== null)
+    .sort((a, b) => a.p - b.p);
+  if (pts.length < 2) return pts.map((x) => x.pose);
+
+  // Resample to uniform MOVEMENT steps by interpolating between the bracketing
+  // frames. Uniform in progress (not recording time) means a pause the therapist
+  // made at an extreme doesn't freeze the guide there; interpolating means a
+  // range the arm swept through quickly — leaving few recorded frames — is still
+  // shown smoothly instead of jumping.
   const STEPS = 32;
+  const lo0 = pts[0].p;
+  const hi0 = pts[pts.length - 1].p;
   const out: Pose[] = [];
+  let seg = 0;
   for (let k = 0; k < STEPS; k++) {
-    const wantP = k / (STEPS - 1);
-    let bestIdx = 0;
-    let bestDiff = Infinity;
-    for (let i = 0; i < risingFrames.length; i++) {
-      const p = risingProg[i];
-      if (p === null) continue;
-      const d = Math.abs(p - wantP);
-      if (d < bestDiff) {
-        bestDiff = d;
-        bestIdx = i;
-      }
-    }
-    out.push(risingFrames[bestIdx].pose);
+    const wantP = lo0 + (hi0 - lo0) * (k / (STEPS - 1));
+    while (seg < pts.length - 2 && pts[seg + 1].p < wantP) seg++;
+    const lo = pts[seg];
+    const hi = pts[seg + 1];
+    const f = hi.p === lo.p ? 0 : Math.min(1, Math.max(0, (wantP - lo.p) / (hi.p - lo.p)));
+    out.push(lerpPose(lo.pose, hi.pose, f));
   }
   return out;
 }

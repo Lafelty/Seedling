@@ -159,6 +159,19 @@ export async function detect(
   return detectCore(video, mode, ts);
 }
 
+/**
+ * Resolve once no detection is in flight. Video-file processing calls this
+ * before its first frame: detect() returns the LAST pose instantly while a
+ * call is pending, which would let the capture loop believe frames were
+ * analyzed (with stale camera poses, no less) while playback rolled past them.
+ */
+export async function waitForDetectorIdle(timeoutMs = 10000): Promise<void> {
+  const start = performance.now();
+  while (detectInFlight && performance.now() - start < timeoutMs) {
+    await new Promise((r) => setTimeout(r, 25));
+  }
+}
+
 export function disposeDetector() {
   facadeGen++; // invalidate any initDetector still in flight
   if (worker) {

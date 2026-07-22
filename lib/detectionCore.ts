@@ -339,14 +339,56 @@ function disposeHandCore() {
 
 // ---- Engine facade ----
 
+// Blank frame for warm-up inference. Works in both homes of this module:
+// OffscreenCanvas in the worker, a document canvas on the main thread.
+async function makeBlankFrame(): Promise<ImageBitmap | null> {
+  try {
+    if (typeof OffscreenCanvas !== 'undefined') {
+      const c = new OffscreenCanvas(640, 480);
+      c.getContext('2d')?.fillRect(0, 0, 1, 1);
+      return await createImageBitmap(c);
+    }
+    if (typeof document !== 'undefined') {
+      const c = document.createElement('canvas');
+      c.width = 640;
+      c.height = 480;
+      c.getContext('2d')?.fillRect(0, 0, 1, 1);
+      return await createImageBitmap(c);
+    }
+  } catch {
+    // No canvas support — skip warm-up, first real frame pays the cost.
+  }
+  return null;
+}
+
+// The first inference after model creation compiles WebGL shaders / GPU
+// delegate programs — seconds on some machines. Run it on a blank frame during
+// init so "model ready" means ready-to-answer-now: the overlay skeleton appears
+// immediately and video processing never stalls on a cold first frame.
+async function warmupCore(mode: TrackingMode): Promise<void> {
+  const frame = await makeBlankFrame();
+  if (!frame) return;
+  try {
+    await detectCore(frame, mode, performance.now());
+  } catch {
+    // Best-effort — a failed warm-up just means the first real frame is slow.
+  } finally {
+    frame.close();
+  }
+}
+
 /** Init the detector for a mode, disposing the other model first (one model resident at a time). */
 export async function initCore(mode: TrackingMode): Promise<boolean> {
+  let ok: boolean;
   if (mode === 'hand') {
     disposePoseCore();
-    return initHandCore();
+    ok = await initHandCore();
+  } else {
+    disposeHandCore();
+    ok = await initPoseCore();
   }
-  disposeHandCore();
-  return initPoseCore();
+  if (ok) await warmupCore(mode);
+  return ok;
 }
 
 export async function detectCore(

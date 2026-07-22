@@ -11,6 +11,7 @@ import {
   deriveCriteriaFromRecordings,
   connectionsForMode,
   trimIdleFrames,
+  waitForDetectorIdle,
   type TrackingMode,
   type Pose,
 } from '@/lib/poseDetection'
@@ -524,9 +525,14 @@ export default function NewExercisePage() {
     setProcessProgress(0)
     setProcessFrameCount(0)
     setRecordingState('processing')
-    // Let the camera detect loop see the state change and drain any in-flight
-    // detection — otherwise the first extracted frame can get a stale camera pose.
-    await new Promise((r) => setTimeout(r, 150))
+    // Two-step drain before touching the detector: a short sleep lets React
+    // commit the state change so the camera loop stops issuing detections, then
+    // wait for any in-flight call to land. A fixed sleep alone is not enough —
+    // a cold model's first inference can hold the detector for seconds, during
+    // which detect() would hand the capture loop instant stale poses and let
+    // playback roll past unanalyzed frames.
+    await new Promise((r) => setTimeout(r, 50))
+    await waitForDetectorIdle()
 
     const url = URL.createObjectURL(file)
     try {

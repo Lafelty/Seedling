@@ -49,6 +49,9 @@ export default function NewExercisePage() {
   const [cameraError, setCameraError] = useState<string | null>(null)
   const [recordings, setRecordings] = useState<RecordedDemo[]>([])
   const [processProgress, setProcessProgress] = useState(0)
+  // Live captured-pose count shown in the processing overlay — lets the
+  // therapist see coverage building instead of trusting a bare percentage.
+  const [processFrameCount, setProcessFrameCount] = useState(0)
   // True when the detector currently sees nothing — drives the framing hint.
   // Updated only on transitions (see the detect loop), never per frame.
   const [noSubject, setNoSubject] = useState(false)
@@ -356,13 +359,14 @@ export default function NewExercisePage() {
     canvas.getContext('2d')?.clearRect(0, 0, canvas.width, canvas.height)
   }
 
-  // Play the uploaded video once and run every presented frame through the
-  // detector. requestVideoFrameCallback fires exactly when a frame is decoded
-  // and on screen, so every frame the browser shows is a frame we can analyze —
-  // the previous seek-per-frame approach spent 200–400 ms of wall time per 40 ms
-  // of video and produced sparse, partial captures. If inference can't keep up
-  // with the frame rate, playback drops to half speed once so temporal coverage
-  // stays dense instead of silently skipping frames.
+  // Step through the uploaded video frame by frame: on every presented frame
+  // (requestVideoFrameCallback; rAF sampling as fallback) playback is PAUSED,
+  // the frame runs through the detector, then playback resumes. The video waits
+  // for the detector instead of racing it, so capture is lossless and the same
+  // video yields the same frames on every run and every machine — a pure
+  // realtime capture silently skipped whatever presented while inference was
+  // busy, which made frame counts swing wildly between runs (background-tab
+  // throttling or a slow moment could drop most of the video).
   const captureFramesFromPlayback = (
     video: HTMLVideoElement,
     duration: number
@@ -370,14 +374,15 @@ export default function NewExercisePage() {
     new Promise((resolve, reject) => {
       const frames: RecordedFrame[] = []
       // Hand-tracker clock: base + media time. Monotonic with the camera
-      // preview's performance.now() clock (playback rate never exceeds 1×), and
-      // frames arrive spaced by true video time, so the tracker sees the
+      // preview's performance.now() clock (media time can only lag wall time),
+      // and frames arrive spaced by true video time, so the tracker sees the
       // movement at its real speed regardless of inference speed.
       const tsBase = performance.now()
+      // Cap capture at ~33 fps so 60 fps sources don't double the demo size.
+      const MIN_FRAME_GAP_S = 0.03
       let busy = false
       let done = false
-      let slowedDown = false
-      let attempts = 0
+      let lastCapturedTime = -1
       let vfcHandle = 0
       let rafHandle = 0
       let lastSampledTime = -1
@@ -395,6 +400,7 @@ export default function NewExercisePage() {
         clearInterval(watchdog)
         video.removeEventListener('ended', onEnded)
         video.removeEventListener('error', onError)
+        document.removeEventListener('visibilitychange', onVisibility)
         video.pause()
       }
       const finish = () => {
@@ -412,32 +418,47 @@ export default function NewExercisePage() {
         reject(err)
       }
 
+      // Resume playback only when nothing is holding it: not mid-inference, not
+      // canceled, not finished, not in a hidden tab, not already at the end.
+      const maybeResume = () => {
+        if (done || busy || cancelProcessRef.current) return
+        if (document.visibilityState === 'hidden') return
+        // play() after `ended` would loop back to the start and re-capture.
+        if (!video.ended && video.paused) video.play().catch(() => {})
+      }
+      // Hidden tabs stop rVFC/rAF entirely while the video would keep playing —
+      // pause so no content passes unobserved, resume on return.
+      const onVisibility = () => {
+        if (document.visibilityState === 'hidden') video.pause()
+        else maybeResume()
+      }
+
       const handleFrame = async (mediaTime: number) => {
         if (done || cancelProcessRef.current) return
         setProcessProgress(duration > 0 ? Math.min(mediaTime / duration, 1) : 0)
-        if (busy) return // detector still on the previous frame — skip this one
+        if (busy) return // safety net — playback is paused during inference
+        if (mediaTime - lastCapturedTime < MIN_FRAME_GAP_S) return
         busy = true
+        // Freeze the presented frame until its inference lands — this is what
+        // guarantees no frame slips past a slow detector. It also pins the
+        // element on exactly the frame the timestamp refers to.
+        video.pause()
         try {
-          attempts++
           const pose = await detect(video, trackingMode, tsBase + mediaTime * 1000)
           // `done` alone doesn't bail here: when `ended` fires mid-inference,
           // finish() waits on `busy`, so this last pose can still be recorded.
           if (cancelProcessRef.current) return
+          lastCapturedTime = mediaTime
           if (pose) {
             frames.push({ timestamp: Math.round(mediaTime * 1000), pose })
+            setProcessFrameCount(frames.length)
             drawProcessedFrame(pose, video)
           } else {
             clearProcessedFrame()
           }
-          // Detector keeping up ≈ one inference per presented frame. Well under
-          // ~15 inferences per media-second means frames are being skipped —
-          // halve playback once so the demo keeps full temporal density.
-          if (!slowedDown && mediaTime > 2 && attempts / mediaTime < 15) {
-            slowedDown = true
-            video.playbackRate = 0.5
-          }
         } finally {
           busy = false
+          maybeResume()
         }
       }
 
@@ -464,6 +485,7 @@ export default function NewExercisePage() {
 
       video.addEventListener('ended', onEnded)
       video.addEventListener('error', onError)
+      document.addEventListener('visibilitychange', onVisibility)
 
       video.currentTime = 0
       video.playbackRate = 1
@@ -486,6 +508,7 @@ export default function NewExercisePage() {
     const returnState: RecordingState = recordings.length > 0 ? 'reviewing' : 'setup'
     cancelProcessRef.current = false
     setProcessProgress(0)
+    setProcessFrameCount(0)
     setRecordingState('processing')
     // Let the camera detect loop see the state change and drain any in-flight
     // detection — otherwise the first extracted frame can get a stale camera pose.
@@ -739,6 +762,7 @@ export default function NewExercisePage() {
                         <div className="flex items-center justify-between gap-3 mb-2">
                           <span className="text-sm">
                             Analyzing video… {Math.round(processProgress * 100)}%
+                            {processFrameCount > 0 && ` • ${processFrameCount} poses`}
                           </span>
                           <button
                             onClick={() => {

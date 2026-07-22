@@ -464,20 +464,18 @@ export default function SessionPage() {
       // patient is the hold: while they hold the top, the guide holds with them.
       const guideSteps = guideStepsRef.current
       if (guideSteps.length >= 2) {
-        const holdMs = exercise.hold_duration_ms ?? 800
         const UP = 3000
         const DOWN = 3000
-        const BOTTOM = 1500 // pause at the start of each loop so the lift reads clearly
         let gp: number
         if (phase === 'holding') {
-          gp = 1 // stay at the top with the patient
+          gp = 1 // hold at the top with the patient while they hold
         } else {
-          const cycle = UP + holdMs + DOWN + BOTTOM
-          const t = now % cycle
-          if (t < UP) gp = t / UP // rest -> target
-          else if (t < UP + holdMs) gp = 1 // hold at the top
-          else if (t < UP + holdMs + DOWN) gp = 1 - (t - UP - holdMs) / DOWN // target -> rest
-          else gp = 0 // brief pause at rest
+          // Continuous ping-pong with no dead pause at either end, so a still
+          // patient always sees the movement being demonstrated (a bottom pause
+          // made it look frozen when they weren't moving yet).
+          const period = UP + DOWN
+          const t = now % period
+          gp = t < UP ? t / UP : 1 - (t - UP) / DOWN
         }
         setGuidePose(guideSteps[Math.round(gp * (guideSteps.length - 1))])
       }

@@ -703,14 +703,22 @@ function collectJointStats(
   if (series.length < 5) return null;
 
   const smoothed = smoothSeries(series);
-  const startWindow = smoothed.slice(0, Math.max(3, Math.round(smoothed.length * 0.1)));
   const p5 = percentile(smoothed, 0.05);
   const p95 = percentile(smoothed, 0.95);
-  // The rest pose is whichever movement extreme the recording starts nearest to
-  // — snapping there keeps restAngle honest even when the demo starts slightly
-  // into the movement instead of fully at rest.
-  const startRaw = percentile(startWindow, 0.5);
-  const start = Math.abs(p5 - startRaw) <= Math.abs(p95 - startRaw) ? p5 : p95;
+  // Rest = whichever movement extreme the recording reaches FIRST in time.
+  // Deciding by time (not by the magnitude of a leading window) is independent
+  // of recording length and speed: a long or fast demo can't mis-snap rest to
+  // the far extreme and invert the whole movement direction — the failure mode
+  // where a top->bottom demo was derived, and then guided, as bottom->top.
+  // (First occurrence wins, so a demo that returns to rest at the end still
+  // reads its true starting extreme as rest.)
+  let idxMin = 0;
+  let idxMax = 0;
+  for (let i = 1; i < smoothed.length; i++) {
+    if (smoothed[i] < smoothed[idxMin]) idxMin = i;
+    if (smoothed[i] > smoothed[idxMax]) idxMax = i;
+  }
+  const start = idxMin <= idxMax ? p5 : p95;
   return {
     count: smoothed.length,
     start,

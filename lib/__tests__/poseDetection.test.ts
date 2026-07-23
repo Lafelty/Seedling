@@ -200,6 +200,23 @@ describe('deriveCriteriaFromRecordings', () => {
     expect(criteria.angleSpace).toBe('2d');
   });
 
+  it('keeps rest at the recorded start for a long top->bottom demo', () => {
+    // Regression: a 120-frame demo that STARTS at the top (~150°) and descends
+    // to the bottom (~30°). Rest must stay at the top and target at the bottom —
+    // a length-scaled leading window could sample past the midpoint and invert
+    // the whole movement direction (derive/guide/ring all playing bottom->top).
+    const frames = Array.from({ length: 120 }, (_, i) => {
+      const deg = 150 - (120 * i) / 119;
+      return { pose: elbowPose(deg) };
+    });
+    const criteria = deriveCriteriaFromRecordings([{ frames }], 'body');
+
+    const elbow = criteria.criteria.find((c) => c.joint === 'left_elbow');
+    expect(elbow).toBeDefined();
+    expect(elbow!.restAngle!).toBeGreaterThan(120); // rest = top, where it started
+    expect(elbow!.targetAngle).toBeLessThan(60); // target = bottom, the far end
+  });
+
   it('produces no criteria from an empty recording', () => {
     const criteria = deriveCriteriaFromRecordings([{ frames: [] }], 'body');
     expect(criteria.criteria).toEqual([]);

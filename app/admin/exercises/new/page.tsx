@@ -360,158 +360,50 @@ export default function NewExercisePage() {
     canvas.getContext('2d')?.clearRect(0, 0, canvas.width, canvas.height)
   }
 
-  // Step through the uploaded video frame by frame: on every presented frame
-  // (requestVideoFrameCallback; rAF sampling as fallback) playback is PAUSED,
-  // the frame runs through the detector, then playback resumes. The video waits
-  // for the detector instead of racing it, so capture is lossless and the same
-  // video yields the same frames on every run and every machine — a pure
-  // realtime capture silently skipped whatever presented while inference was
-  // busy, which made frame counts swing wildly between runs (background-tab
-  // throttling or a slow moment could drop most of the video).
-  const captureFramesFromPlayback = (
+  // Extract poses by SEEKING to fixed timestamps instead of playing the video.
+  // Playing + pausing for inference loses frames: every resume carries decode/
+  // scheduling latency during which the media clock skips ahead, so a slow
+  // detector (or slow device) captured only a fraction of the frames and counts
+  // swung wildly between runs. Seeking pins the element on an exact time, waits
+  // for that frame to decode ('seeked'), then detects it — lossless and
+  // identical on every run and every machine, independent of inference speed.
+  const captureFramesBySeeking = async (
     video: HTMLVideoElement,
     duration: number
-  ): Promise<RecordedFrame[]> =>
-    new Promise((resolve, reject) => {
-      const frames: RecordedFrame[] = []
-      // Hand-tracker clock: base + media time. Monotonic with the camera
-      // preview's performance.now() clock (media time can only lag wall time),
-      // and frames arrive spaced by true video time, so the tracker sees the
-      // movement at its real speed regardless of inference speed.
-      const tsBase = performance.now()
-      // Cap capture at ~33 fps so 60 fps sources don't double the demo size.
-      const MIN_FRAME_GAP_S = 0.03
-      let busy = false
-      let done = false
-      let lastCapturedTime = -1
-      let vfcHandle = 0
-      let rafHandle = 0
-      let lastSampledTime = -1
+  ): Promise<RecordedFrame[]> => {
+    const frames: RecordedFrame[] = []
+    // Sample ~30 fps, but cap the total so a long clip can't spawn thousands of
+    // seeks. A few-second demo therefore yields ~100+ evenly-spaced frames.
+    const TARGET_FPS = 30
+    const MAX_FRAMES = 600
+    const step = Math.max(1 / TARGET_FPS, duration / MAX_FRAMES)
+    // Hand-tracker clock: base + media time, so detectForVideo sees frames
+    // spaced by real video time regardless of how long each inference takes.
+    const tsBase = performance.now()
 
-      // rVFC is in every evergreen browser; the cast keeps TS happy on older libs.
-      const v = video as HTMLVideoElement & {
-        requestVideoFrameCallback?: (cb: (now: number, meta: { mediaTime: number }) => void) => number
-        cancelVideoFrameCallback?: (handle: number) => void
+    video.pause()
+    for (let t = 0; t <= duration + 1e-6; t += step) {
+      if (cancelProcessRef.current) break
+      const target = Math.min(t, duration)
+      try {
+        await seekTo(video, target)
+      } catch {
+        break // seek failed — stop and keep whatever was captured
       }
-      const hasVFC = typeof v.requestVideoFrameCallback === 'function'
-
-      const cleanup = () => {
-        if (hasVFC && vfcHandle) v.cancelVideoFrameCallback?.(vfcHandle)
-        if (rafHandle) cancelAnimationFrame(rafHandle)
-        clearInterval(watchdog)
-        video.removeEventListener('ended', onEnded)
-        video.removeEventListener('error', onError)
-        document.removeEventListener('visibilitychange', onVisibility)
-        video.pause()
+      if (cancelProcessRef.current) break
+      const pose = await detect(video, trackingMode, tsBase + target * 1000)
+      setProcessProgress(duration > 0 ? Math.min(target / duration, 1) : 1)
+      if (pose) {
+        frames.push({ timestamp: Math.round(target * 1000), pose })
+        setProcessFrameCount(frames.length)
+        drawProcessedFrame(pose, video)
+      } else {
+        clearProcessedFrame()
       }
-      const finish = () => {
-        if (done) return
-        done = true
-        // Let an in-flight detection land before resolving so the tail of the
-        // movement isn't cut off.
-        const settle = () => (busy ? setTimeout(settle, 30) : (cleanup(), resolve(frames)))
-        settle()
-      }
-      const fail = (err: Error) => {
-        if (done) return
-        done = true
-        cleanup()
-        reject(err)
-      }
-
-      // Resume playback only when nothing is holding it: not mid-inference, not
-      // canceled, not finished, not in a hidden tab, not already at the end.
-      const maybeResume = () => {
-        if (done || busy || cancelProcessRef.current) return
-        if (document.visibilityState === 'hidden') return
-        // play() after `ended` would loop back to the start and re-capture.
-        if (!video.ended && video.paused) video.play().catch(() => {})
-      }
-      // Hidden tabs stop rVFC/rAF entirely while the video would keep playing —
-      // pause so no content passes unobserved, resume on return.
-      const onVisibility = () => {
-        if (document.visibilityState === 'hidden') video.pause()
-        else maybeResume()
-      }
-
-      const handleFrame = async (mediaTime: number) => {
-        if (done || cancelProcessRef.current) return
-        setProcessProgress(duration > 0 ? Math.min(mediaTime / duration, 1) : 0)
-        if (busy) return // safety net — playback is paused during inference
-        if (mediaTime - lastCapturedTime < MIN_FRAME_GAP_S) return
-        busy = true
-        // Freeze the presented frame until its inference lands — this is what
-        // guarantees no frame slips past a slow detector. It also pins the
-        // element on exactly the frame the timestamp refers to.
-        video.pause()
-        try {
-          const pose = await detect(video, trackingMode, tsBase + mediaTime * 1000)
-          // `done` alone doesn't bail here: when `ended` fires mid-inference,
-          // finish() waits on `busy`, so this last pose can still be recorded.
-          if (cancelProcessRef.current) return
-          lastCapturedTime = mediaTime
-          if (pose) {
-            frames.push({ timestamp: Math.round(mediaTime * 1000), pose })
-            setProcessFrameCount(frames.length)
-            drawProcessedFrame(pose, video)
-          } else {
-            clearProcessedFrame()
-          }
-        } finally {
-          busy = false
-          maybeResume()
-        }
-      }
-
-      const onVFC = (_now: number, meta: { mediaTime: number }) => {
-        if (done) return
-        void handleFrame(meta.mediaTime)
-        vfcHandle = v.requestVideoFrameCallback!(onVFC)
-      }
-      const onRAF = () => {
-        if (done) return
-        if (video.currentTime !== lastSampledTime) {
-          lastSampledTime = video.currentTime
-          void handleFrame(video.currentTime)
-        }
-        rafHandle = requestAnimationFrame(onRAF)
-      }
-
-      const onEnded = () => finish()
-      const onError = () => fail(new Error('Video playback failed'))
-      // Self-healing sweep. Three jobs: (1) honor cancel even when no more
-      // frame callbacks will fire; (2) detect the end being reached in a paused
-      // state — pausing on the final frame can park the element at
-      // currentTime == duration, where the `ended` event never fires because
-      // nothing plays *into* the end (the sometimes-stuck-at-99% hang); (3)
-      // resume playback if any path left the video paused when it shouldn't be.
-      const watchdog = setInterval(() => {
-        if (cancelProcessRef.current) {
-          finish()
-          return
-        }
-        if (done || busy) return
-        if (video.ended || duration - video.currentTime < 0.01) {
-          finish()
-          return
-        }
-        maybeResume()
-      }, 200)
-
-      video.addEventListener('ended', onEnded)
-      video.addEventListener('error', onError)
-      document.addEventListener('visibilitychange', onVisibility)
-
-      video.currentTime = 0
-      video.playbackRate = 1
-      video
-        .play()
-        .then(() => {
-          if (hasVFC) vfcHandle = v.requestVideoFrameCallback!(onVFC)
-          else rafHandle = requestAnimationFrame(onRAF)
-        })
-        .catch(() => fail(new Error('Could not start video playback')))
-    })
+    }
+    setProcessProgress(1)
+    return frames
+  }
 
   // Extract poses from an uploaded video by playing it through the same
   // detector as the live camera, then feed the result through the identical
@@ -575,7 +467,7 @@ export default function NewExercisePage() {
         return
       }
 
-      const frames = await captureFramesFromPlayback(video, duration)
+      const frames = await captureFramesBySeeking(video, duration)
       if (cancelProcessRef.current) {
         setRecordingState(returnState)
         return

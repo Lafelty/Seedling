@@ -1,67 +1,84 @@
 'use client'
 
 import Link from 'next/link'
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
 import { buildLevelMap, type CompletedSession, type GroupNode, type LevelExercise, type LevelGroup } from '@/lib/levels'
+import { difficultySteps, tintOf, type BoxTint } from '@/lib/levels-theme'
+import BoxMark from '@/components/BoxMark'
 
 export const dynamic = 'force-dynamic'
 
-const DIFFICULTY_STYLES: Record<string, { bg: string; fg: string }> = {
-  beginner: { bg: '#E8F5E9', fg: '#2E7D32' },
-  intermediate: { bg: '#FFF3E0', fg: '#EF6C00' },
-  advanced: { bg: '#FFEBEE', fg: '#C62828' },
-}
-
-/** Circular progress ring with a glyph or number in the middle. */
-function RingBadge({ pct, cleared, size = 56 }: { pct: number; cleared: boolean; size?: number }) {
-  const stroke = 4
+/**
+ * The box's own mark, ringed by how much of the box is done. Identity in the
+ * middle, progress around it — one object instead of a badge plus a number.
+ */
+function MarkRing({ id, pct, cleared, tint, size = 76 }: { id: string; pct: number; cleared: boolean; tint: BoxTint; size?: number }) {
+  const stroke = 5
   const r = (size - stroke) / 2
   const c = 2 * Math.PI * r
-  const off = c - (pct / 100) * c
   return (
-    <div style={{ position: 'relative', width: size, height: size, flexShrink: 0 }}>
-      <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} style={{ transform: 'rotate(-90deg)' }}>
-        <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke="rgba(74, 107, 90, 0.16)" strokeWidth={stroke} />
+    <div style={{ position: 'relative', width: size, height: size, flexShrink: 0, display: 'grid', placeItems: 'center' }}>
+      <svg
+        width={size}
+        height={size}
+        viewBox={`0 0 ${size} ${size}`}
+        aria-hidden
+        style={{ position: 'absolute', inset: 0, transform: 'rotate(-90deg)' }}
+      >
+        <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke={tint.wash} strokeWidth={stroke} />
         <circle
           cx={size / 2}
           cy={size / 2}
           r={r}
           fill="none"
-          stroke={cleared ? '#C9B88A' : 'var(--primary)'}
+          stroke={tint.ink}
           strokeWidth={stroke}
           strokeLinecap="round"
           strokeDasharray={c}
-          strokeDashoffset={off}
+          strokeDashoffset={c - (pct / 100) * c}
+          style={{ transition: 'stroke-dashoffset var(--dur-grow) var(--ease-out)' }}
         />
       </svg>
-      <div
-        style={{
-          position: 'absolute',
-          inset: 0,
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          fontSize: 'var(--text-sm)',
-          fontWeight: 700,
-          color: cleared ? '#8A7A4E' : 'var(--primary)',
-        }}
-      >
-        {pct}%
-      </div>
+      <BoxMark id={id} cleared={cleared} size={size - stroke * 2 - 10} />
     </div>
+  )
+}
+
+/** Effort as filled dots plus a word — never a red/amber/green warning badge. */
+function Effort({ difficulty, tint, dim }: { difficulty: string; tint: BoxTint; dim: boolean }) {
+  const steps = difficultySteps(difficulty)
+  return (
+    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 'var(--space-2)', flexShrink: 0 }}>
+      <span aria-hidden style={{ display: 'inline-flex', gap: '3px' }}>
+        {[1, 2, 3].map((step) => (
+          <span
+            key={step}
+            style={{
+              width: 5,
+              height: 5,
+              borderRadius: 'var(--radius-full)',
+              background: step <= steps ? (dim ? 'var(--muted)' : tint.ink) : 'var(--border)',
+            }}
+          />
+        ))}
+      </span>
+      <span style={{ fontSize: 'var(--text-xs)', fontWeight: 600, color: 'var(--muted)', textTransform: 'capitalize' }}>
+        {difficulty}
+      </span>
+    </span>
   )
 }
 
 function PosePathSkeleton() {
   return (
-    <main className="min-h-screen max-w-2xl mx-auto px-4 py-8 pb-16">
+    <main className="min-h-screen max-w-2xl mx-auto px-4 py-8 pb-24">
       <div className="skeleton" style={{ width: '90px', height: '16px', marginBottom: 'var(--space-4)' }} />
-      <div className="skeleton" style={{ height: '104px', borderRadius: 'var(--radius-lg)', marginBottom: 'var(--space-6)' }} />
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-4)' }}>
+      <div className="skeleton" style={{ height: '148px', borderRadius: 'var(--radius-lg)', marginBottom: 'var(--space-6)' }} />
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-3)' }}>
         {[0, 1, 2].map((i) => (
-          <div key={i} className="skeleton" style={{ height: '120px', borderRadius: 'var(--radius-lg)' }} />
+          <div key={i} className="skeleton" style={{ height: '116px', borderRadius: 'var(--radius-lg)' }} />
         ))}
       </div>
     </main>
@@ -72,13 +89,10 @@ export default function LevelGroupPage() {
   const router = useRouter()
   const params = useParams<{ groupId: string }>()
   const [loading, setLoading] = useState(true)
+  const [loadError, setLoadError] = useState(false)
   const [node, setNode] = useState<GroupNode | null>(null)
 
-  useEffect(() => {
-    loadGroup()
-  }, [])
-
-  async function loadGroup() {
+  const loadGroup = useCallback(async () => {
     const supabase = createClient()
     const { data: { user } } = await supabase.auth.getUser()
     if (!user) {
@@ -86,8 +100,7 @@ export default function LevelGroupPage() {
       return
     }
 
-    // Build the whole map so box lock state stays consistent with /levels —
-    // deep-linking a locked box bounces back to the map.
+    // Build the whole map so pose unlock state stays consistent with /levels.
     const [groupsRes, exercisesRes, sessionsRes] = await Promise.all([
       supabase
         .from('exercise_groups')
@@ -104,14 +117,15 @@ export default function LevelGroupPage() {
         .not('completed_at', 'is', null),
     ])
 
+    // A failed request is not the same as a box that isn't there: offer a
+    // retry here rather than silently bouncing the patient back to the map.
     if (groupsRes.error || exercisesRes.error) {
-      console.error(
-        'Error loading box (run supabase/levels_migration.sql?):',
-        groupsRes.error || exercisesRes.error
-      )
-      router.push('/levels')
+      console.error('Error loading box:', groupsRes.error || exercisesRes.error)
+      setLoadError(true)
+      setLoading(false)
       return
     }
+    setLoadError(false)
 
     const map = buildLevelMap(
       (groupsRes.data ?? []) as LevelGroup[],
@@ -120,13 +134,40 @@ export default function LevelGroupPage() {
     )
 
     const found = map.find((n) => n.group.id === params.groupId)
-    if (!found || found.status === 'locked') {
+    if (!found) {
       router.replace('/levels')
       return
     }
 
     setNode(found)
     setLoading(false)
+  }, [params.groupId, router])
+
+  useEffect(() => {
+    loadGroup()
+  }, [loadGroup])
+
+  if (loadError) {
+    return (
+      <div className="min-h-screen flex items-center justify-center px-4">
+        <div className="card text-center" style={{ maxWidth: '420px' }}>
+          <p style={{ fontWeight: 700, color: 'var(--primary)', marginBottom: 'var(--space-2)' }}>
+            Couldn&apos;t load this box
+          </p>
+          <p style={{ color: 'var(--muted)', fontSize: 'var(--text-sm)', marginBottom: 'var(--space-4)' }}>
+            Check your connection and try again.
+          </p>
+          <div style={{ display: 'flex', gap: 'var(--space-2)', justifyContent: 'center', flexWrap: 'wrap' }}>
+            <button className="btn btn-primary" onClick={() => { setLoading(true); loadGroup() }}>
+              Try again
+            </button>
+            <Link href="/levels" className="pill-btn pill-btn-outline">
+              All boxes
+            </Link>
+          </div>
+        </div>
+      </div>
+    )
   }
 
   if (loading || !node) {
@@ -135,245 +176,292 @@ export default function LevelGroupPage() {
 
   const pct = node.total > 0 ? Math.round((node.clearedCount / node.total) * 100) : 0
   const boxCleared = node.status === 'cleared'
-  // The pose the patient is "up to" — first one that's open but not yet cleared.
-  const currentId = node.exercises.find((e) => e.status === 'unlocked')?.exercise.id ?? null
-  const nextUp = node.exercises.find((e) => e.exercise.id === currentId)?.exercise ?? null
+  const tint = tintOf(node.group.id, boxCleared)
+  // The pose the patient is up to — first one open but not yet cleared.
+  const current = node.exercises.find((e) => e.status === 'unlocked') ?? null
+  const currentId = current?.exercise.id ?? null
 
   return (
-    <main
-      className="min-h-screen max-w-2xl mx-auto px-4 py-8 pb-16"
-      style={{ background: 'linear-gradient(180deg, rgba(74, 107, 90, 0.08), transparent 340px)' }}
-    >
-      <style>{`
-        .pose-start { transition: transform var(--dur-fast) var(--ease-out), box-shadow var(--dur-fast) var(--ease-out); }
-        .pose-start:hover { transform: translateY(-1px); box-shadow: 0 8px 20px rgba(74, 107, 90, 0.22); }
-        .pose-start:focus-visible { outline: none; box-shadow: 0 0 0 3px rgba(74, 107, 90, 0.45); }
-        .pose-card { transition: border-color var(--dur-fast) var(--ease-out); }
-        @media (prefers-reduced-motion: reduce) {
-          .pose-start { transition: none; }
-          .pose-start:hover { transform: none; }
-        }
-      `}</style>
+    <>
+      <main
+        className="min-h-screen max-w-2xl mx-auto px-4 py-8 pb-24"
+        style={{
+          // The page wears the box's own colour, so opening a box from the map
+          // lands somewhere that plainly belongs to it.
+          ['--box-wash' as string]: tint.wash,
+          ['--box-edge' as string]: tint.edge,
+          ['--box-ink' as string]: tint.ink,
+          ['--box-bar' as string]: tint.bar,
+          background: `linear-gradient(180deg, ${tint.wash}, transparent 360px)`,
+        }}
+      >
+        <style>{`
+          .pose-back {
+            display: inline-flex;
+            align-items: center;
+            gap: var(--space-1);
+            min-height: 48px;
+            margin-left: calc(-1 * var(--space-2));
+            padding-inline: var(--space-2);
+            border-radius: var(--radius-full);
+            font-size: var(--text-sm);
+            font-weight: 600;
+            color: var(--box-ink);
+            text-decoration: none;
+            transition: background var(--dur-fast) var(--ease-out);
+          }
+          .pose-back svg { transition: transform var(--dur-fast) var(--ease-out); }
 
-      {/* Header */}
-      <div className="mb-6 animate-fadeIn">
-        <Link
-          href="/levels"
-          style={{
-            display: 'inline-flex',
-            alignItems: 'center',
-            gap: 'var(--space-1)',
-            fontSize: 'var(--text-sm)',
-            fontWeight: 600,
-            color: 'var(--primary)',
-            textDecoration: 'none',
-            marginBottom: 'var(--space-4)',
-          }}
-        >
+          /* Dark enough for white label text (>=4.5:1) at every tint. */
+          .pose-start {
+            min-height: 48px;
+            background: var(--box-ink);
+            color: #FFFFFF;
+            transition: transform var(--dur-fast) var(--ease-out), box-shadow var(--dur-fast) var(--ease-out), filter var(--dur-fast) var(--ease-out);
+          }
+          .pose-start-quiet {
+            min-height: 48px;
+            background: var(--surface);
+            color: var(--box-ink);
+            border-color: var(--box-edge);
+          }
+
+          @media (hover: hover) and (pointer: fine) {
+            .pose-back:hover { background: var(--box-wash); }
+            .pose-back:hover svg { transform: translateX(-2px); }
+            .pose-start:hover { transform: translateY(-1px); filter: brightness(1.12); box-shadow: 0 8px 20px var(--box-edge); }
+            .pose-start-quiet:hover { background: var(--box-wash); }
+            .pose-row[data-locked='false']:hover { border-color: var(--box-bar); }
+          }
+
+          .pose-row { transition: border-color var(--dur-fast) var(--ease-out), box-shadow var(--dur-fast) var(--ease-out); }
+
+          /* The trail: one line down the poses, because inside a box they do
+             come in order — earlier poses open the next one. */
+          .pose-trail { position: relative; padding-left: 46px; }
+          .pose-trail::before {
+            content: '';
+            position: absolute;
+            left: 17px;
+            top: 24px;
+            bottom: 24px;
+            width: 2px;
+            border-radius: var(--radius-full);
+            background: linear-gradient(180deg, var(--box-bar), var(--box-wash));
+          }
+
+          @media (prefers-reduced-motion: reduce) {
+            .pose-start:hover { transform: none; }
+          }
+        `}</style>
+
+        <Link href="/levels" className="pose-back">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
             <path d="M15 18l-6-6 6-6" />
           </svg>
           All boxes
         </Link>
 
-        {/* Hero card */}
-        <div
-          className="card animate-scaleIn"
+        {/* Header: what this box is, and how far in the patient is. */}
+        <header
+          className="card animate-fadeIn"
           style={{
+            marginTop: 'var(--space-3)',
+            marginBottom: 'var(--space-6)',
             display: 'flex',
             alignItems: 'center',
             gap: 'var(--space-4)',
-            background: boxCleared
-              ? 'linear-gradient(160deg, rgba(201, 184, 138, 0.22), var(--surface) 72%)'
-              : 'linear-gradient(160deg, rgba(74, 107, 90, 0.12), var(--surface) 72%)',
-            borderColor: boxCleared ? 'rgba(201, 184, 138, 0.55)' : 'rgba(74, 107, 90, 0.28)',
+            background: `linear-gradient(160deg, ${tint.wash}, var(--surface) 72%)`,
+            borderColor: tint.edge,
           }}
         >
-          <RingBadge pct={pct} cleared={boxCleared} size={64} />
-          <div style={{ flex: 1 }}>
-            <h1 style={{ color: 'var(--primary)', fontSize: 'var(--text-2xl)', marginBottom: '2px' }}>{node.group.name}</h1>
+          <MarkRing id={node.group.id} pct={pct} cleared={boxCleared} tint={tint} />
+
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <h1 style={{ color: 'var(--ink)', fontSize: 'var(--text-2xl)' }}>{node.group.name}</h1>
             {node.group.description && (
-              <p style={{ color: 'var(--muted)', fontSize: 'var(--text-sm)' }}>{node.group.description}</p>
+              <p style={{ color: 'var(--muted)', fontSize: 'var(--text-sm)', marginTop: '2px' }}>
+                {node.group.description}
+              </p>
             )}
-            <p style={{ color: 'var(--ink)', fontSize: 'var(--text-sm)', fontWeight: 600, marginTop: 'var(--space-1)' }}>
-              {boxCleared
-                ? 'Box complete — every pose cleared.'
-                : nextUp
-                ? `Next up: ${nextUp.name}`
-                : `${node.clearedCount}/${node.total} poses cleared`}
+            <p style={{ color: tint.ink, fontSize: 'var(--text-sm)', fontWeight: 700, marginTop: 'var(--space-2)' }}>
+              {node.total === 0
+                ? 'No poses yet'
+                : boxCleared
+                ? `All ${node.total} poses cleared`
+                : `${node.clearedCount} of ${node.total} poses cleared`}
             </p>
           </div>
-        </div>
-      </div>
+        </header>
 
-      {/* Pose path */}
-      <div style={{ position: 'relative', paddingLeft: '34px' }}>
-        {/* Trail line */}
-        <div
-          style={{
-            position: 'absolute',
-            left: '15px',
-            top: '28px',
-            bottom: '28px',
-            width: '3px',
-            borderRadius: 'var(--radius-full)',
-            background: 'linear-gradient(180deg, var(--primary), rgba(74, 107, 90, 0.12))',
-          }}
-        />
+        {node.total === 0 ? (
+          <div className="card text-center" style={{ padding: 'var(--space-12) var(--space-6)' }}>
+            <p style={{ color: 'var(--muted)', marginBottom: 'var(--space-4)' }}>
+              This box has no poses in it yet. Your therapist is still filling it.
+            </p>
+            <Link href="/levels" className="pill-btn pill-btn-primary" style={{ minHeight: 48 }}>
+              Pick another box
+            </Link>
+          </div>
+        ) : (
+          <ol className="pose-trail" style={{ listStyle: 'none', margin: 0, display: 'flex', flexDirection: 'column', gap: 'var(--space-3)' }}>
+            {node.exercises.map((exNode, index) => {
+              const { exercise, status, bestScore } = exNode
+              const locked = status === 'locked'
+              const cleared = status === 'cleared'
+              const isCurrent = exercise.id === currentId
+              const prev = index > 0 ? node.exercises[index - 1].exercise : null
+              // Status reads three ways — mark, word, colour — so none of it
+              // rests on colour alone.
+              const statusLabel = cleared ? 'Cleared' : locked ? 'Locked' : isCurrent ? 'Up next' : 'Ready'
 
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-4)' }}>
-          {node.exercises.map((exNode, index) => {
-            const { exercise, status, bestScore } = exNode
-            const locked = status === 'locked'
-            const cleared = status === 'cleared'
-            const isCurrent = exercise.id === currentId
-            const diffStyle = DIFFICULTY_STYLES[exercise.difficulty] ?? DIFFICULTY_STYLES.beginner
-            const prev = index > 0 ? node.exercises[index - 1].exercise : null
+              return (
+                <li key={exercise.id} style={{ position: 'relative' }} className="animate-fadeInUp" >
+                  {/* Trail marker */}
+                  <span
+                    aria-hidden
+                    style={{
+                      position: 'absolute',
+                      left: '-46px',
+                      top: '22px',
+                      width: '36px',
+                      height: '36px',
+                      borderRadius: 'var(--radius-full)',
+                      display: 'grid',
+                      placeItems: 'center',
+                      background: cleared ? tint.ink : locked ? 'var(--bg)' : 'var(--surface)',
+                      border: `2px solid ${cleared ? tint.ink : locked ? 'var(--border)' : tint.edge}`,
+                      boxShadow: isCurrent ? `0 0 0 4px ${tint.wash}` : 'none',
+                      color: cleared ? '#FFFFFF' : locked ? 'var(--muted)' : tint.ink,
+                      fontSize: 'var(--text-sm)',
+                      fontWeight: 800,
+                    }}
+                  >
+                    {cleared ? (
+                      <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
+                        <path d="M5 12l5 5L19 7" />
+                      </svg>
+                    ) : locked ? (
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                        <rect x="5" y="11" width="14" height="9" rx="2" />
+                        <path d="M8 11V7a4 4 0 0 1 8 0v4" />
+                      </svg>
+                    ) : (
+                      index + 1
+                    )}
+                  </span>
 
-            return (
-              <div key={exercise.id} style={{ position: 'relative' }} className="animate-fadeInUp">
-                {/* Trail node */}
-                <div
-                  style={{
-                    position: 'absolute',
-                    left: '-34px',
-                    top: '18px',
-                    width: '34px',
-                    height: '34px',
-                    borderRadius: '50%',
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    background: cleared ? '#C9B88A' : locked ? 'var(--border)' : 'var(--surface)',
-                    border: locked ? 'none' : `2px solid ${cleared ? '#C9B88A' : 'var(--primary)'}`,
-                    boxShadow: isCurrent ? '0 0 0 4px rgba(74, 107, 90, 0.18)' : 'none',
-                    color: cleared ? 'white' : locked ? 'var(--muted)' : 'var(--primary)',
-                    zIndex: 1,
-                  }}
-                >
-                  {cleared ? (
-                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
-                      <path d="M5 12l5 5L19 7" />
-                    </svg>
-                  ) : locked ? (
-                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                      <rect x="5" y="11" width="14" height="9" rx="2" />
-                      <path d="M8 11V7a4 4 0 0 1 8 0v4" />
-                    </svg>
-                  ) : (
-                    <span style={{ fontSize: 'var(--text-sm)', fontWeight: 800 }}>{index + 1}</span>
-                  )}
-                </div>
-
-                <div
-                  className="pose-card card"
-                  style={{
-                    marginLeft: 'var(--space-3)',
-                    background: cleared
-                      ? 'linear-gradient(160deg, rgba(201, 184, 138, 0.18), var(--surface) 72%)'
-                      : locked
-                      ? 'var(--surface)'
-                      : 'linear-gradient(160deg, rgba(74, 107, 90, 0.11), var(--surface) 72%)',
-                    borderColor: isCurrent
-                      ? 'var(--primary)'
-                      : cleared
-                      ? 'rgba(201, 184, 138, 0.5)'
-                      : locked
-                      ? 'var(--border)'
-                      : 'rgba(74, 107, 90, 0.28)',
-                    borderWidth: isCurrent ? '2px' : '1px',
-                    opacity: locked ? 0.65 : 1,
-                  }}
-                >
-                  <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 'var(--space-3)', flexWrap: 'wrap' }}>
-                    <div style={{ flex: 1, minWidth: '160px' }}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-2)', flexWrap: 'wrap', marginBottom: 'var(--space-1)' }}>
-                        {isCurrent && (
-                          <span
-                            style={{
-                              fontSize: '0.65rem',
-                              fontWeight: 800,
-                              letterSpacing: '0.06em',
-                              textTransform: 'uppercase',
-                              color: 'var(--primary)',
-                              background: 'rgba(74, 107, 90, 0.14)',
-                              padding: '2px var(--space-2)',
-                              borderRadius: 'var(--radius-full)',
-                            }}
-                          >
-                            Current
-                          </span>
-                        )}
-                        <h2 style={{ fontSize: 'var(--text-lg)', fontWeight: 600, color: 'var(--ink)' }}>
-                          {exercise.name}
-                        </h2>
-                        <span
-                          style={{
-                            padding: '2px var(--space-2)',
-                            fontSize: 'var(--text-xs)',
-                            fontWeight: 600,
-                            borderRadius: 'var(--radius-full)',
-                            background: diffStyle.bg,
-                            color: diffStyle.fg,
-                          }}
-                        >
-                          {exercise.difficulty}
-                        </span>
-                      </div>
-                      {exercise.description && (
-                        <p style={{ fontSize: 'var(--text-sm)', color: 'var(--muted)', marginBottom: 'var(--space-2)', lineHeight: 1.5 }}>
-                          {exercise.description}
-                        </p>
-                      )}
-                      {bestScore != null && (
-                        <span
-                          style={{
-                            display: 'inline-flex',
-                            alignItems: 'center',
-                            gap: 'var(--space-1)',
-                            fontSize: 'var(--text-xs)',
-                            color: '#8A7A4E',
-                            fontWeight: 700,
-                            background: 'rgba(201, 184, 138, 0.22)',
-                            padding: '2px var(--space-2)',
-                            borderRadius: 'var(--radius-full)',
-                          }}
-                        >
-                          <svg width="12" height="12" viewBox="0 0 20 20" fill="currentColor">
-                            <path d="M10 0l2.5 6.5H19l-5.5 4 2 6.5L10 13l-5.5 4 2-6.5-5.5-4h6.5z" />
-                          </svg>
-                          Best form {Math.round(bestScore)}%
-                        </span>
-                      )}
-                      {locked && prev && (
-                        <p style={{ fontSize: 'var(--text-xs)', color: 'var(--muted)', marginTop: 'var(--space-1)' }}>
-                          Reach {exercise.unlock_min_score}% form on “{prev.name}”
-                          {exercise.unlock_max_seconds != null && ` within ${exercise.unlock_max_seconds}s`}
-                          {' '}to unlock
-                        </p>
-                      )}
+                  <div
+                    className="pose-row card"
+                    data-locked={locked}
+                    style={{
+                      animationDelay: `${Math.min(index, 6) * 50}ms`,
+                      padding: 'var(--space-4)',
+                      display: 'flex',
+                      flexDirection: 'column',
+                      gap: 'var(--space-3)',
+                      // Locked poses stay legible: quieter surface, full-strength
+                      // text. Dimming the whole card takes the words with it.
+                      background: cleared
+                        ? `linear-gradient(160deg, ${tint.wash}, var(--surface) 72%)`
+                        : locked
+                        ? 'var(--bg)'
+                        : 'var(--surface)',
+                      borderColor: isCurrent ? tint.bar : locked ? 'var(--border)' : tint.edge,
+                      borderWidth: isCurrent ? '2px' : '1px',
+                      boxShadow: isCurrent ? `0 8px 24px ${tint.wash}` : '0 1px 3px rgba(0, 0, 0, 0.05)',
+                    }}
+                  >
+                    <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 'var(--space-3)' }}>
+                      <h2 style={{ fontSize: 'var(--text-lg)', fontWeight: 600, color: 'var(--ink)', minWidth: 0 }}>
+                        {exercise.name}
+                      </h2>
+                      <span
+                        style={{
+                          flexShrink: 0,
+                          fontSize: 'var(--text-xs)',
+                          fontWeight: 700,
+                          letterSpacing: '0.04em',
+                          textTransform: 'uppercase',
+                          color: locked ? 'var(--muted)' : tint.ink,
+                        }}
+                      >
+                        {statusLabel}
+                      </span>
                     </div>
 
-                    {!locked && (
-                      <button
-                        onClick={() => router.push(`/session?exercise=${exercise.id}`)}
-                        className="pose-start pill-btn pill-btn-primary"
-                        style={{ flexShrink: 0, minHeight: '44px' }}
-                      >
-                        {cleared ? 'Practice again' : 'Start'}
-                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                          <path d="M5 12h14" />
-                          <path d="M13 6l6 6-6 6" />
-                        </svg>
-                      </button>
+                    {exercise.description && (
+                      <p style={{ fontSize: 'var(--text-sm)', color: 'var(--muted)', lineHeight: 1.5 }}>
+                        {exercise.description}
+                      </p>
                     )}
+
+                    {locked && prev && (
+                      <p style={{ fontSize: 'var(--text-sm)', color: 'var(--muted)', lineHeight: 1.5 }}>
+                        Opens when you reach {exercise.unlock_min_score}% form on {prev.name}
+                        {exercise.unlock_max_seconds != null && ` within ${exercise.unlock_max_seconds} seconds`}.
+                      </p>
+                    )}
+
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 'var(--space-3)', flexWrap: 'wrap' }}>
+                      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 'var(--space-3)', flexWrap: 'wrap' }}>
+                        <Effort difficulty={exercise.difficulty} tint={tint} dim={locked} />
+                        {bestScore != null && (
+                          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 'var(--space-1)', fontSize: 'var(--text-xs)', fontWeight: 700, color: '#7A6A3E' }}>
+                            <svg width="12" height="12" viewBox="0 0 20 20" fill="currentColor" aria-hidden>
+                              <path d="M10 0l2.5 6.5H19l-5.5 4 2 6.5L10 13l-5.5 4 2-6.5-5.5-4h6.5z" />
+                            </svg>
+                            Best form {Math.round(bestScore)}%
+                          </span>
+                        )}
+                      </span>
+
+                      {!locked && (
+                        <button
+                          onClick={() => router.push(`/session?exercise=${exercise.id}`)}
+                          className={`pill-btn ${cleared ? 'pose-start-quiet' : 'pose-start'}`}
+                          style={{ flexShrink: 0 }}
+                        >
+                          {cleared ? 'Practice again' : 'Start pose'}
+                          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+                            <path d="M5 12h14" />
+                            <path d="M13 6l6 6-6 6" />
+                          </svg>
+                        </button>
+                      )}
+                    </div>
                   </div>
-                </div>
-              </div>
-            )
-          })}
-        </div>
-      </div>
-    </main>
+                </li>
+              )
+            })}
+          </ol>
+        )}
+      </main>
+
+      {/* Same shell as every other page in the app. */}
+      <nav className="bottom-nav">
+        <Link href="/" className="nav-item">
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M8 19a4 4 0 0 1-2.24-7.32A3.5 3.5 0 0 1 9 6.03V6a3 3 0 1 1 6 0v.04a3.5 3.5 0 0 1 3.24 5.65A4 4 0 0 1 16 19Z" />
+            <path d="M12 19v3" />
+          </svg>
+          <span>Garden</span>
+        </Link>
+        <Link href="/progress" className="nav-item">
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+            <path d="M3 3v18h18" />
+            <path d="M7 16l4-8 4 4 4-12" />
+          </svg>
+          <span>Progress</span>
+        </Link>
+        <Link href="/profile" className="nav-item">
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" />
+            <circle cx="12" cy="7" r="4" />
+          </svg>
+          <span>Profile</span>
+        </Link>
+      </nav>
+    </>
   )
 }

@@ -1,8 +1,9 @@
 'use client'
 
 import Link from 'next/link'
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
+import { AnimatePresence, MotionConfig, motion } from 'framer-motion'
 import { createClient } from '@/lib/supabase/client'
 import { buildLevelMap, type CompletedSession, type GroupNode, type LevelExercise, type LevelGroup } from '@/lib/levels'
 
@@ -80,15 +81,60 @@ function LevelsSkeleton() {
   )
 }
 
+/** Status wording is the same in the grid and in the expanded panel. */
+function statusOf(node: GroupNode, isCurrent: boolean) {
+  const locked = node.status === 'locked'
+  const cleared = node.status === 'cleared'
+  return {
+    locked,
+    cleared,
+    label: locked ? 'Locked' : cleared ? 'Complete' : isCurrent ? 'Current' : 'Open',
+  }
+}
+
 export default function LevelsPage() {
   const router = useRouter()
   const [loading, setLoading] = useState(true)
   const [loadError, setLoadError] = useState(false)
   const [map, setMap] = useState<GroupNode[]>([])
+  /** The box whose panel is open. The grid card morphs into it and back. */
+  const [active, setActive] = useState<GroupNode | null>(null)
+  const panelRef = useRef<HTMLDivElement>(null)
+  const closeRef = useRef<HTMLButtonElement>(null)
+  // Where focus came from, so closing puts it back on the card the patient opened.
+  const openerRef = useRef<HTMLElement | null>(null)
 
   useEffect(() => {
     loadMap()
   }, [])
+
+  // While a panel is open it owns the screen: escape closes it, the page behind
+  // it stays put, and focus starts on the close button.
+  useEffect(() => {
+    if (!active) return
+
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setActive(null)
+    }
+    const onPointerDown = (event: MouseEvent | TouchEvent) => {
+      if (panelRef.current && !panelRef.current.contains(event.target as Node)) setActive(null)
+    }
+
+    const previousOverflow = document.body.style.overflow
+    document.body.style.overflow = 'hidden'
+    closeRef.current?.focus()
+
+    window.addEventListener('keydown', onKeyDown)
+    document.addEventListener('mousedown', onPointerDown)
+    document.addEventListener('touchstart', onPointerDown)
+    return () => {
+      document.body.style.overflow = previousOverflow
+      window.removeEventListener('keydown', onKeyDown)
+      document.removeEventListener('mousedown', onPointerDown)
+      document.removeEventListener('touchstart', onPointerDown)
+      openerRef.current?.focus()
+    }
+  }, [active])
 
   async function loadMap() {
     const supabase = createClient()
@@ -164,20 +210,23 @@ export default function LevelsPage() {
   const currentId = visibleBoxes.find((n) => n.status !== 'cleared')?.group.id ?? null
 
   return (
-    <>
+    // `reducedMotion="user"` makes every layout morph below honour the OS
+    // setting: the panel then appears and leaves without travelling.
+    <MotionConfig reducedMotion="user">
       <style>{`
         .lvl-card {
-          transition: transform var(--dur-fast) var(--ease-out), box-shadow var(--dur-fast) var(--ease-out), border-color var(--dur-fast) var(--ease-out);
+          transition: box-shadow var(--dur-fast) var(--ease-out), border-color var(--dur-fast) var(--ease-out);
           outline: none;
         }
-        .lvl-link:hover .lvl-card { transform: translateY(-3px); box-shadow: 0 12px 28px rgba(74, 107, 90, 0.16); }
-        .lvl-link:focus-visible .lvl-card { box-shadow: 0 0 0 3px rgba(74, 107, 90, 0.45); }
-        .lvl-link:active .lvl-card { transform: translateY(-1px); }
+        @media (hover: hover) and (pointer: fine) {
+          .lvl-card:hover { box-shadow: 0 12px 28px rgba(74, 107, 90, 0.16); }
+          .lvl-card:hover .lvl-cta svg { transform: translateX(3px); }
+        }
+        .lvl-card:focus-visible { box-shadow: 0 0 0 3px rgba(74, 107, 90, 0.45); }
         .lvl-cta svg { transition: transform var(--dur-fast) var(--ease-out); }
-        .lvl-link:hover .lvl-cta svg { transform: translateX(3px); }
+        .lvl-pose + .lvl-pose { border-top: 1px solid var(--border); }
         @media (prefers-reduced-motion: reduce) {
           .lvl-card, .lvl-cta svg { transition: none; }
-          .lvl-link:hover .lvl-card { transform: none; }
         }
       `}</style>
 
@@ -245,9 +294,27 @@ export default function LevelsPage() {
               const cta = cleared ? 'Review' : node.clearedCount > 0 ? 'Continue' : 'Start'
               const statusLabel = locked ? 'Locked' : cleared ? 'Complete' : isCurrent ? 'Current' : 'Open'
 
-              const card = (
-                <div
-                  className="lvl-card card animate-scaleIn"
+              const isOpen = active?.group.id === node.group.id
+
+              return (
+                <motion.div
+                  key={node.group.id}
+                  layoutId={`box-${node.group.id}`}
+                  className="lvl-card card animate-fadeIn"
+                  role="button"
+                  tabIndex={0}
+                  aria-expanded={isOpen}
+                  aria-label={`${node.group.name}, box ${index + 1}, ${pct}% complete, ${statusLabel.toLowerCase()}`}
+                  onClick={(event) => {
+                    openerRef.current = event.currentTarget
+                    setActive(node)
+                  }}
+                  onKeyDown={(event) => {
+                    if (event.key !== 'Enter' && event.key !== ' ') return
+                    event.preventDefault()
+                    openerRef.current = event.currentTarget
+                    setActive(node)
+                  }}
                   style={{
                     animationDelay: `${index * 60}ms`,
                     height: '100%',
@@ -269,27 +336,33 @@ export default function LevelsPage() {
                     borderWidth: isCurrent ? '2px' : '1px',
                     opacity: locked ? 0.6 : 1,
                     filter: locked ? 'grayscale(0.4)' : 'none',
-                    cursor: locked ? 'default' : 'pointer',
+                    cursor: 'pointer',
+                    // The panel takes over the shared layout; leaving the card
+                    // visible underneath would show it twice mid-morph.
+                    visibility: isOpen ? 'hidden' : 'visible',
                   }}
                 >
                   {/* Top: ring + status chip */}
                   <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 'var(--space-2)' }}>
-                    <RingBadge pct={pct} cleared={cleared} locked={locked}>
-                      {cleared ? (
-                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
-                          <path d="M5 12l5 5L19 7" />
-                        </svg>
-                      ) : locked ? (
-                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                          <rect x="5" y="11" width="14" height="9" rx="2" />
-                          <path d="M8 11V7a4 4 0 0 1 8 0v4" />
-                        </svg>
-                      ) : (
-                        <span style={{ fontSize: 'var(--text-base)', fontWeight: 800 }}>{index + 1}</span>
-                      )}
-                    </RingBadge>
+                    <motion.div layoutId={`box-ring-${node.group.id}`}>
+                      <RingBadge pct={pct} cleared={cleared} locked={locked}>
+                        {cleared ? (
+                          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
+                            <path d="M5 12l5 5L19 7" />
+                          </svg>
+                        ) : locked ? (
+                          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                            <rect x="5" y="11" width="14" height="9" rx="2" />
+                            <path d="M8 11V7a4 4 0 0 1 8 0v4" />
+                          </svg>
+                        ) : (
+                          <span style={{ fontSize: 'var(--text-base)', fontWeight: 800 }}>{index + 1}</span>
+                        )}
+                      </RingBadge>
+                    </motion.div>
 
-                    <span
+                    <motion.span
+                      layoutId={`box-chip-${node.group.id}`}
                       style={{
                         display: 'inline-flex',
                         alignItems: 'center',
@@ -309,11 +382,11 @@ export default function LevelsPage() {
                       }}
                     >
                       {statusLabel}
-                    </span>
+                    </motion.span>
                   </div>
 
                   {/* Title + description */}
-                  <div style={{ flex: 1 }}>
+                  <motion.div layoutId={`box-title-${node.group.id}`} style={{ flex: 1 }}>
                     <span
                       style={{
                         fontSize: 'var(--text-xs)',
@@ -331,7 +404,7 @@ export default function LevelsPage() {
                     {node.group.description && (
                       <p style={{ fontSize: 'var(--text-sm)', color: 'var(--muted)', lineHeight: 1.5 }}>{node.group.description}</p>
                     )}
-                  </div>
+                  </motion.div>
 
                   {/* Footer: pose count + CTA */}
                   <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 'var(--space-2)', borderTop: '1px solid var(--border)', paddingTop: 'var(--space-3)' }}>
@@ -360,26 +433,26 @@ export default function LevelsPage() {
                       </span>
                     )}
                   </div>
-                </div>
-              )
-
-              return locked ? (
-                <div key={node.group.id} aria-label={`${node.group.name} — locked`}>{card}</div>
-              ) : (
-                <Link
-                  key={node.group.id}
-                  href={`/levels/${node.group.id}`}
-                  className="lvl-link"
-                  aria-label={`${node.group.name}, box ${index + 1}, ${pct}% complete, ${statusLabel.toLowerCase()}`}
-                  style={{ textDecoration: 'none', borderRadius: 'var(--radius-lg)' }}
-                >
-                  {card}
-                </Link>
+                </motion.div>
               )
             })}
           </div>
         )}
       </main>
+
+      <AnimatePresence>
+        {active && (
+          <ExpandedBox
+            key={active.group.id}
+            node={active}
+            index={visibleBoxes.findIndex((n) => n.group.id === active.group.id)}
+            isCurrent={active.group.id === currentId}
+            panelRef={panelRef}
+            closeRef={closeRef}
+            onClose={() => setActive(null)}
+          />
+        )}
+      </AnimatePresence>
 
       {/* Bottom Navigation */}
       <nav className="bottom-nav">
@@ -405,6 +478,214 @@ export default function LevelsPage() {
           <span>Profile</span>
         </Link>
       </nav>
+    </MotionConfig>
+  )
+}
+
+/**
+ * The opened box. It carries the same `layoutId`s as its card, so the card
+ * grows into this panel rather than a separate dialog appearing over it, and
+ * shows what the card has no room for: the poses inside the box.
+ */
+function ExpandedBox({
+  node,
+  index,
+  isCurrent,
+  panelRef,
+  closeRef,
+  onClose,
+}: {
+  node: GroupNode
+  index: number
+  isCurrent: boolean
+  panelRef: React.RefObject<HTMLDivElement | null>
+  closeRef: React.RefObject<HTMLButtonElement | null>
+  onClose: () => void
+}) {
+  const { locked, cleared, label } = statusOf(node, isCurrent)
+  const pct = node.total > 0 ? Math.round((node.clearedCount / node.total) * 100) : 0
+  const cta = cleared ? 'Review box' : node.clearedCount > 0 ? 'Continue box' : 'Start box'
+
+  return (
+    <>
+      <motion.div
+        aria-hidden
+        initial={{ opacity: 0 }}
+        animate={{ opacity: 1 }}
+        exit={{ opacity: 0 }}
+        transition={{ duration: 0.2 }}
+        style={{ position: 'fixed', inset: 0, background: 'rgba(38, 48, 42, 0.38)', zIndex: 1000 }}
+      />
+
+      <div style={{ position: 'fixed', inset: 0, display: 'grid', placeItems: 'center', padding: 'var(--space-4)', zIndex: 1001 }}>
+        <motion.div
+          ref={panelRef}
+          layoutId={`box-${node.group.id}`}
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby={`box-heading-${node.group.id}`}
+          className="card"
+          style={{
+            width: 'min(560px, 100%)',
+            maxHeight: '85vh',
+            overflowY: 'auto',
+            display: 'flex',
+            flexDirection: 'column',
+            gap: 'var(--space-4)',
+            // Opaque base under the tint: the card's gradient alone is partly
+            // transparent, which is invisible on the page but not over it.
+            backgroundColor: 'var(--surface)',
+            backgroundImage: cleared
+              ? 'linear-gradient(160deg, rgba(201, 184, 138, 0.22), transparent 72%)'
+              : locked
+              ? 'none'
+              : 'linear-gradient(160deg, rgba(74, 107, 90, 0.13), transparent 72%)',
+            borderColor: cleared ? 'rgba(201, 184, 138, 0.55)' : isCurrent ? 'var(--primary)' : 'var(--border)',
+            boxShadow: '0 24px 60px rgba(38, 48, 42, 0.22)',
+          }}
+        >
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 'var(--space-2)' }}>
+            <motion.div layoutId={`box-ring-${node.group.id}`}>
+              <RingBadge pct={pct} cleared={cleared} locked={locked}>
+                {cleared ? (
+                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M5 12l5 5L19 7" />
+                  </svg>
+                ) : locked ? (
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <rect x="5" y="11" width="14" height="9" rx="2" />
+                    <path d="M8 11V7a4 4 0 0 1 8 0v4" />
+                  </svg>
+                ) : (
+                  <span style={{ fontSize: 'var(--text-base)', fontWeight: 800 }}>{index + 1}</span>
+                )}
+              </RingBadge>
+            </motion.div>
+
+            <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-2)' }}>
+              <motion.span
+                layoutId={`box-chip-${node.group.id}`}
+                style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  fontSize: 'var(--text-xs)',
+                  fontWeight: 700,
+                  letterSpacing: '0.04em',
+                  textTransform: 'uppercase',
+                  padding: 'var(--space-1) var(--space-3)',
+                  borderRadius: 'var(--radius-full)',
+                  background: cleared ? 'rgba(201, 184, 138, 0.28)' : isCurrent ? 'rgba(74, 107, 90, 0.16)' : 'rgba(0,0,0,0.04)',
+                  color: cleared ? '#8A7A4E' : isCurrent ? 'var(--primary)' : 'var(--muted)',
+                }}
+              >
+                {label}
+              </motion.span>
+              <button
+                ref={closeRef}
+                onClick={onClose}
+                aria-label="Close box"
+                className="pill-btn"
+                // 48px: patients may have limited mobility, so nothing here is
+                // allowed to be a small target.
+                style={{ width: 48, height: 48, padding: 0, borderRadius: 'var(--radius-full)' }}
+              >
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
+                  <path d="M6 6l12 12M18 6L6 18" />
+                </svg>
+              </button>
+            </div>
+          </div>
+
+          <motion.div layoutId={`box-title-${node.group.id}`}>
+            <span style={{ fontSize: 'var(--text-xs)', fontWeight: 700, color: 'var(--muted)', letterSpacing: '0.08em', textTransform: 'uppercase' }}>
+              Box {index + 1}
+            </span>
+            <h2 id={`box-heading-${node.group.id}`} style={{ fontSize: 'var(--text-xl)', fontWeight: 600, color: 'var(--ink)', margin: 'var(--space-1) 0' }}>
+              {node.group.name}
+            </h2>
+            {node.group.description && (
+              <p style={{ fontSize: 'var(--text-sm)', color: 'var(--muted)', lineHeight: 1.5 }}>{node.group.description}</p>
+            )}
+          </motion.div>
+
+          {/* The poses themselves — what the card never had room to show. */}
+          <motion.ul
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.18, delay: 0.1 }}
+            style={{ listStyle: 'none', margin: 0, padding: 0, borderTop: '1px solid var(--border)' }}
+          >
+            {node.exercises.map((item) => {
+              const poseCleared = item.status === 'cleared'
+              const poseLocked = item.status === 'locked'
+              return (
+                <li
+                  key={item.exercise.id}
+                  className="lvl-pose"
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    gap: 'var(--space-3)',
+                    padding: 'var(--space-3) 0',
+                    opacity: poseLocked ? 0.55 : 1,
+                  }}
+                >
+                  <span style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-2)', minWidth: 0 }}>
+                    <span
+                      aria-hidden
+                      style={{
+                        width: 18,
+                        height: 18,
+                        flexShrink: 0,
+                        display: 'grid',
+                        placeItems: 'center',
+                        borderRadius: 'var(--radius-full)',
+                        background: poseCleared ? 'rgba(201, 184, 138, 0.45)' : poseLocked ? 'var(--border)' : 'rgba(74, 107, 90, 0.18)',
+                        color: poseCleared ? '#8A7A4E' : 'var(--primary)',
+                      }}
+                    >
+                      {poseCleared && (
+                        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="4" strokeLinecap="round" strokeLinejoin="round">
+                          <path d="M5 12l5 5L19 7" />
+                        </svg>
+                      )}
+                    </span>
+                    <span style={{ fontSize: 'var(--text-sm)', color: 'var(--ink)', fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      {item.exercise.name}
+                    </span>
+                  </span>
+                  <span style={{ fontSize: 'var(--text-xs)', color: 'var(--muted)', fontWeight: 600, flexShrink: 0 }}>
+                    {poseLocked
+                      ? 'Locked'
+                      : item.bestScore != null
+                      ? `Best ${item.bestScore}%`
+                      : 'Not tried yet'}
+                  </span>
+                </li>
+              )
+            })}
+          </motion.ul>
+
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 'var(--space-3)', borderTop: '1px solid var(--border)', paddingTop: 'var(--space-3)' }}>
+            <span style={{ fontSize: 'var(--text-sm)', color: 'var(--muted)', fontWeight: 600 }}>
+              {node.clearedCount}/{node.total} poses
+            </span>
+            {locked ? (
+              <span style={{ fontSize: 'var(--text-sm)', color: 'var(--muted)' }}>Clear the previous box to open this one</span>
+            ) : (
+              <Link href={`/levels/${node.group.id}`} className="pill-btn pill-btn-primary" style={{ textDecoration: 'none' }}>
+                {cta}
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M5 12h14" />
+                  <path d="M13 6l6 6-6 6" />
+                </svg>
+              </Link>
+            )}
+          </div>
+        </motion.div>
+      </div>
     </>
   )
 }

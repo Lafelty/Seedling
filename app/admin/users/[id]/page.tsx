@@ -170,12 +170,7 @@ export default function AdminUserPage() {
           </h2>
 
           <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-3)', flexWrap: 'wrap' }}>
-            <StarBadge as="span">
-              <svg width="20" height="20" viewBox="0 0 20 20" fill="currentColor">
-                <path d="M10 0l2.5 6.5H19l-5.5 4 2 6.5L10 13l-5.5 4 2-6.5-5.5-4h6.5z" />
-              </svg>
-              <span>{profile.total_stars}</span>
-            </StarBadge>
+            <StarBadge as="span" value={profile.total_stars} />
 
             <NumberField
               aria-label="Total stars"

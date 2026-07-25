@@ -193,14 +193,30 @@
     align-items: center;
     gap: var(--space-2);
     padding: var(--space-2) var(--space-4);
-    background: linear-gradient(135deg, #F3EAD3 0%, #C9B88A 100%);
+    /* Three stops, not two: the bright band partway down is what separates
+       polished metal from flat paint. */
+    background: linear-gradient(135deg, #F7F0DE 0%, #E4D5AB 42%, #C9B88A 100%);
     color: #5C4E2A;
     border: 1px solid rgba(178, 158, 108, 0.5);
     border-radius: var(--radius-full);
     font-family: var(--font-body);
     font-size: var(--text-base);
     font-weight: 700;
-    box-shadow: 0 2px 8px rgba(201, 184, 138, 0.35);
+    /* Lit rim on top, shade underneath — a struck-coin bevel. */
+    box-shadow:
+      0 2px 8px rgba(201, 184, 138, 0.35),
+      inset 0 1px 0 rgba(255, 255, 255, 0.6),
+      inset 0 -1px 0 rgba(140, 116, 56, 0.18);
+    transition: box-shadow var(--dur-base) var(--ease-out);
+  }
+
+  @media (hover: hover) and (pointer: fine) {
+    .star-badge:hover {
+      box-shadow:
+        0 6px 18px rgba(201, 184, 138, 0.5),
+        inset 0 1px 0 rgba(255, 255, 255, 0.75),
+        inset 0 -1px 0 rgba(140, 116, 56, 0.2);
+    }
   }
 
   .star-badge svg {

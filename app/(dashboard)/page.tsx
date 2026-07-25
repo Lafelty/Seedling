@@ -236,12 +236,7 @@ export default function DashboardPage() {
                 </p>
                 <h1 style={{ fontSize: 'var(--text-3xl)', fontWeight: 700 }}>{displayName}</h1>
               </div>
-              <StarBadge className="animate-scaleIn" style={{ animationDelay: '100ms' }}>
-                <svg width="20" height="20" viewBox="0 0 20 20" fill="currentColor" className="animate-starShine">
-                  <path d="M10 0l2.5 6.5H19l-5.5 4 2 6.5L10 13l-5.5 4 2-6.5-5.5-4h6.5z" />
-                </svg>
-                <span>{progress.totalStars}</span>
-              </StarBadge>
+              <StarBadge className="animate-scaleIn" style={{ animationDelay: '100ms' }} value={progress.totalStars} />
             </div>
 
             {/* Action row: wraps cleanly on small screens */}

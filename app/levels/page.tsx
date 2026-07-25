@@ -225,52 +225,78 @@ export default function LevelsPage() {
         .lvl-card:focus-visible { box-shadow: 0 0 0 3px rgba(74, 107, 90, 0.45); }
         .lvl-cta svg { transition: transform var(--dur-fast) var(--ease-out); }
         .lvl-pose + .lvl-pose { border-top: 1px solid var(--border); }
+
+        /* Overall progress, carried by a rail instead of its own card. */
+        .lvl-rail {
+          margin-top: var(--space-4);
+          height: 6px;
+          border-radius: var(--radius-full);
+          background: rgba(74, 107, 90, 0.14);
+          overflow: hidden;
+        }
+        .lvl-rail-fill {
+          display: block;
+          height: 100%;
+          border-radius: var(--radius-full);
+          background: linear-gradient(90deg, var(--primary), #C9B88A);
+          transition: width var(--dur-grow) var(--ease-out);
+        }
+
+        /* The path: one trail down the page, a node per box. Reads as a route
+           on a phone, which is where the patients are. */
+        .lvl-path { list-style: none; margin: 0; padding: 0; }
+        .lvl-step { position: relative; padding-left: 76px; padding-bottom: var(--space-5); }
+        .lvl-step:last-child { padding-bottom: 0; }
+        .lvl-node {
+          position: absolute;
+          left: 0;
+          top: 0;
+          width: 56px;
+          height: 56px;
+          display: grid;
+          place-items: center;
+        }
+        .lvl-spine {
+          position: absolute;
+          left: 27px;
+          top: 60px;
+          bottom: -4px;
+          width: 2px;
+          border-radius: 2px;
+          background: var(--border);
+        }
+        .lvl-step:last-child .lvl-spine { display: none; }
+        .lvl-step[data-state='cleared'] .lvl-spine {
+          background: linear-gradient(180deg, #C9B88A, rgba(201, 184, 138, 0.4));
+        }
+        .lvl-step[data-state='current'] .lvl-spine {
+          background: linear-gradient(180deg, var(--primary), var(--border));
+        }
+
         @media (prefers-reduced-motion: reduce) {
-          .lvl-card, .lvl-cta svg { transition: none; }
+          .lvl-card, .lvl-cta svg, .lvl-rail-fill { transition: none; }
         }
       `}</style>
 
-      <main
-        className="min-h-screen max-w-4xl mx-auto px-4 py-8 pb-24"
-        style={{ background: 'linear-gradient(180deg, rgba(74, 107, 90, 0.08), transparent 340px)' }}
-      >
-        {/* Header */}
+      {/* The wash spans the viewport; the path itself stays a column, so the
+          tint must not be pinned to the column's width. */}
+      <div style={{ background: 'linear-gradient(180deg, rgba(74, 107, 90, 0.08), transparent 340px)' }}>
+      <main className="min-h-screen max-w-2xl mx-auto px-4 py-8 pb-24">
+        {/* Header. The progress that used to sit in its own slab now rides in
+            the sentence and the rail — the path itself is the focal point. */}
         <div className="mb-8 animate-fadeIn">
-          <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-2)', marginBottom: 'var(--space-2)' }}>
-            <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="var(--primary)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M3 11l9-8 9 8" />
-              <path d="M5 9v11h5v-6h4v6h5V9" />
-            </svg>
-            <h1 style={{ color: 'var(--primary)' }}>Your path</h1>
-          </div>
-          <p style={{ color: 'var(--muted)' }}>
-            Work through each box of poses at your own pace
+          <h1 style={{ color: 'var(--primary)' }}>Your path</h1>
+          <p style={{ color: 'var(--muted)', marginTop: 'var(--space-1)' }}>
+            {visibleBoxes.length === 0
+              ? 'Work through each box of poses at your own pace'
+              : overallPct === 100
+              ? 'Every box cleared — beautiful work.'
+              : `${clearedBoxes} of ${visibleBoxes.length} boxes behind you. One pose at a time.`}
           </p>
 
-          {/* Overall progress */}
           {visibleBoxes.length > 0 && (
-            <div
-              className="card"
-              style={{
-                marginTop: 'var(--space-4)',
-                display: 'flex',
-                alignItems: 'center',
-                gap: 'var(--space-4)',
-                background: 'linear-gradient(160deg, rgba(74, 107, 90, 0.10), var(--surface) 70%)',
-                borderColor: 'rgba(74, 107, 90, 0.22)',
-              }}
-            >
-              <RingBadge pct={overallPct} cleared={overallPct === 100} locked={false} size={56}>
-                <span style={{ fontSize: 'var(--text-sm)', fontWeight: 700 }}>{overallPct}%</span>
-              </RingBadge>
-              <div>
-                <p style={{ fontWeight: 700, color: 'var(--ink)', fontSize: 'var(--text-base)' }}>
-                  {clearedBoxes} of {visibleBoxes.length} boxes complete
-                </p>
-                <p style={{ color: 'var(--muted)', fontSize: 'var(--text-sm)' }}>
-                  {overallPct === 100 ? 'Every box cleared — beautiful work.' : 'Keep going, one pose at a time.'}
-                </p>
-              </div>
+            <div className="lvl-rail" role="img" aria-label={`${overallPct}% of your path complete`}>
+              <span className="lvl-rail-fill" style={{ width: `${overallPct}%` }} />
             </div>
           )}
         </div>
@@ -285,7 +311,7 @@ export default function LevelsPage() {
             </Link>
           </div>
         ) : (
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 320px))', gap: 'var(--space-5)', justifyContent: 'center' }}>
+          <ol className="lvl-path">
             {visibleBoxes.map((node, index) => {
               const locked = node.status === 'locked'
               const cleared = node.status === 'cleared'
@@ -295,150 +321,148 @@ export default function LevelsPage() {
               const statusLabel = locked ? 'Locked' : cleared ? 'Complete' : isCurrent ? 'Current' : 'Open'
 
               const isOpen = active?.group.id === node.group.id
+              const state = cleared ? 'cleared' : locked ? 'locked' : isCurrent ? 'current' : 'open'
 
               return (
-                <motion.div
+                <li
                   key={node.group.id}
-                  layoutId={`box-${node.group.id}`}
-                  className="lvl-card card animate-fadeIn"
-                  role="button"
-                  tabIndex={0}
-                  aria-expanded={isOpen}
-                  aria-label={`${node.group.name}, box ${index + 1}, ${pct}% complete, ${statusLabel.toLowerCase()}`}
-                  onClick={(event) => {
-                    openerRef.current = event.currentTarget
-                    setActive(node)
-                  }}
-                  onKeyDown={(event) => {
-                    if (event.key !== 'Enter' && event.key !== ' ') return
-                    event.preventDefault()
-                    openerRef.current = event.currentTarget
-                    setActive(node)
-                  }}
-                  style={{
-                    animationDelay: `${index * 60}ms`,
-                    height: '100%',
-                    display: 'flex',
-                    flexDirection: 'column',
-                    gap: 'var(--space-4)',
-                    background: cleared
-                      ? 'linear-gradient(160deg, rgba(201, 184, 138, 0.22), var(--surface) 72%)'
-                      : locked
-                      ? 'var(--surface)'
-                      : 'linear-gradient(160deg, rgba(74, 107, 90, 0.13), var(--surface) 72%)',
-                    borderColor: cleared
-                      ? 'rgba(201, 184, 138, 0.55)'
-                      : isCurrent
-                      ? 'var(--primary)'
-                      : locked
-                      ? 'var(--border)'
-                      : 'rgba(74, 107, 90, 0.30)',
-                    borderWidth: isCurrent ? '2px' : '1px',
-                    opacity: locked ? 0.6 : 1,
-                    filter: locked ? 'grayscale(0.4)' : 'none',
-                    cursor: 'pointer',
-                    // The panel takes over the shared layout; leaving the card
-                    // visible underneath would show it twice mid-morph.
-                    visibility: isOpen ? 'hidden' : 'visible',
-                  }}
+                  className="lvl-step animate-fadeIn"
+                  data-state={state}
+                  style={{ animationDelay: `${index * 70}ms` }}
                 >
-                  {/* Top: ring + status chip */}
-                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 'var(--space-2)' }}>
-                    <motion.div layoutId={`box-ring-${node.group.id}`}>
-                      <RingBadge pct={pct} cleared={cleared} locked={locked}>
-                        {cleared ? (
-                          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
-                            <path d="M5 12l5 5L19 7" />
-                          </svg>
-                        ) : locked ? (
-                          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                            <rect x="5" y="11" width="14" height="9" rx="2" />
-                            <path d="M8 11V7a4 4 0 0 1 8 0v4" />
-                          </svg>
-                        ) : (
-                          <span style={{ fontSize: 'var(--text-base)', fontWeight: 800 }}>{index + 1}</span>
-                        )}
-                      </RingBadge>
-                    </motion.div>
+                  {/* The trail between boxes: walked stretches are gold, the one
+                      the patient is on fades toward what hasn't been done yet. */}
+                  <span className="lvl-spine" aria-hidden />
 
-                    <motion.span
-                      layoutId={`box-chip-${node.group.id}`}
-                      style={{
-                        display: 'inline-flex',
-                        alignItems: 'center',
-                        gap: 'var(--space-1)',
-                        fontSize: 'var(--text-xs)',
-                        fontWeight: 700,
-                        letterSpacing: '0.04em',
-                        textTransform: 'uppercase',
-                        padding: 'var(--space-1) var(--space-3)',
-                        borderRadius: 'var(--radius-full)',
-                        background: cleared
-                          ? 'rgba(201, 184, 138, 0.28)'
-                          : isCurrent
-                          ? 'rgba(74, 107, 90, 0.16)'
-                          : 'rgba(0,0,0,0.04)',
-                        color: cleared ? '#8A7A4E' : isCurrent ? 'var(--primary)' : 'var(--muted)',
-                      }}
-                    >
-                      {statusLabel}
-                    </motion.span>
-                  </div>
-
-                  {/* Title + description */}
-                  <motion.div layoutId={`box-title-${node.group.id}`} style={{ flex: 1 }}>
-                    <span
-                      style={{
-                        fontSize: 'var(--text-xs)',
-                        fontWeight: 700,
-                        color: 'var(--muted)',
-                        letterSpacing: '0.08em',
-                        textTransform: 'uppercase',
-                      }}
-                    >
-                      Box {index + 1}
-                    </span>
-                    <h2 style={{ fontSize: 'var(--text-xl)', fontWeight: 600, color: 'var(--ink)', margin: 'var(--space-1) 0' }}>
-                      {node.group.name}
-                    </h2>
-                    {node.group.description && (
-                      <p style={{ fontSize: 'var(--text-sm)', color: 'var(--muted)', lineHeight: 1.5 }}>{node.group.description}</p>
-                    )}
+                  <motion.div layoutId={`box-ring-${node.group.id}`} className="lvl-node">
+                    <RingBadge pct={pct} cleared={cleared} locked={locked} size={isCurrent ? 56 : 44}>
+                      {cleared ? (
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
+                          <path d="M5 12l5 5L19 7" />
+                        </svg>
+                      ) : locked ? (
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                          <rect x="5" y="11" width="14" height="9" rx="2" />
+                          <path d="M8 11V7a4 4 0 0 1 8 0v4" />
+                        </svg>
+                      ) : (
+                        <span style={{ fontSize: isCurrent ? 'var(--text-base)' : 'var(--text-sm)', fontWeight: 800 }}>
+                          {index + 1}
+                        </span>
+                      )}
+                    </RingBadge>
                   </motion.div>
 
-                  {/* Footer: pose count + CTA */}
-                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 'var(--space-2)', borderTop: '1px solid var(--border)', paddingTop: 'var(--space-3)' }}>
-                    <span style={{ fontSize: 'var(--text-sm)', color: 'var(--muted)', fontWeight: 600 }}>
-                      {node.clearedCount}/{node.total} poses
-                    </span>
-                    {locked ? (
-                      <span style={{ fontSize: 'var(--text-xs)', color: 'var(--muted)' }}>Clear the previous box</span>
-                    ) : (
-                      <span
-                        className="lvl-cta"
+                  <motion.div
+                    layoutId={`box-${node.group.id}`}
+                    className="lvl-card card"
+                    role="button"
+                    tabIndex={0}
+                    aria-expanded={isOpen}
+                    aria-label={`${node.group.name}, box ${index + 1}, ${pct}% complete, ${statusLabel.toLowerCase()}`}
+                    onClick={(event) => {
+                      openerRef.current = event.currentTarget
+                      setActive(node)
+                    }}
+                    onKeyDown={(event) => {
+                      if (event.key !== 'Enter' && event.key !== ' ') return
+                      event.preventDefault()
+                      openerRef.current = event.currentTarget
+                      setActive(node)
+                    }}
+                    style={{
+                      display: 'flex',
+                      flexDirection: 'column',
+                      gap: 'var(--space-3)',
+                      background: cleared
+                        ? 'linear-gradient(160deg, rgba(201, 184, 138, 0.20), var(--surface) 72%)'
+                        : isCurrent
+                        ? 'linear-gradient(160deg, rgba(74, 107, 90, 0.13), var(--surface) 72%)'
+                        : 'var(--surface)',
+                      borderColor: cleared
+                        ? 'rgba(201, 184, 138, 0.55)'
+                        : isCurrent
+                        ? 'var(--primary)'
+                        : 'var(--border)',
+                      borderWidth: isCurrent ? '2px' : '1px',
+                      // Locked boxes stay legible: quieter, never greyed to mush.
+                      opacity: locked ? 0.72 : 1,
+                      cursor: 'pointer',
+                      // The panel takes over the shared layout; leaving the card
+                      // visible underneath would show it twice mid-morph.
+                      visibility: isOpen ? 'hidden' : 'visible',
+                    }}
+                  >
+                    <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 'var(--space-3)' }}>
+                      <motion.div layoutId={`box-title-${node.group.id}`} style={{ minWidth: 0 }}>
+                        <h2 style={{ fontSize: isCurrent ? 'var(--text-xl)' : 'var(--text-lg)', fontWeight: 600, color: 'var(--ink)' }}>
+                          {node.group.name}
+                        </h2>
+                        {/* Only the box in play spends room on its description;
+                            the rest earn it back by opening. */}
+                        {isCurrent && node.group.description && (
+                          <p style={{ fontSize: 'var(--text-sm)', color: 'var(--muted)', lineHeight: 1.5, marginTop: 'var(--space-1)' }}>
+                            {node.group.description}
+                          </p>
+                        )}
+                      </motion.div>
+
+                      <motion.span
+                        layoutId={`box-chip-${node.group.id}`}
                         style={{
                           display: 'inline-flex',
                           alignItems: 'center',
-                          gap: 'var(--space-1)',
-                          fontSize: 'var(--text-sm)',
+                          flexShrink: 0,
+                          fontSize: 'var(--text-xs)',
                           fontWeight: 700,
-                          color: cleared ? '#8A7A4E' : 'var(--primary)',
+                          letterSpacing: '0.04em',
+                          textTransform: 'uppercase',
+                          padding: cleared || isCurrent ? 'var(--space-1) var(--space-3)' : 0,
+                          borderRadius: 'var(--radius-full)',
+                          background: cleared
+                            ? 'rgba(201, 184, 138, 0.28)'
+                            : isCurrent
+                            ? 'rgba(74, 107, 90, 0.16)'
+                            : 'transparent',
+                          color: cleared ? '#8A7A4E' : isCurrent ? 'var(--primary)' : 'var(--muted)',
                         }}
                       >
-                        {cta}
-                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                          <path d="M5 12h14" />
-                          <path d="M13 6l6 6-6 6" />
-                        </svg>
+                        {statusLabel}
+                      </motion.span>
+                    </div>
+
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 'var(--space-2)' }}>
+                      <span style={{ fontSize: 'var(--text-sm)', color: 'var(--muted)', fontWeight: 600 }}>
+                        {locked ? 'Clear the box before this one' : `${node.clearedCount}/${node.total} poses`}
                       </span>
-                    )}
-                  </div>
-                </motion.div>
+                      {!locked && (
+                        <span
+                          className="lvl-cta"
+                          style={{
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            gap: 'var(--space-1)',
+                            fontSize: 'var(--text-sm)',
+                            fontWeight: 700,
+                            color: cleared ? '#8A7A4E' : 'var(--primary)',
+                          }}
+                        >
+                          {cta}
+                          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                            <path d="M5 12h14" />
+                            <path d="M13 6l6 6-6 6" />
+                          </svg>
+                        </span>
+                      )}
+                    </div>
+                  </motion.div>
+                </li>
               )
             })}
-          </div>
+          </ol>
         )}
       </main>
+      </div>
 
       <AnimatePresence>
         {active && (
@@ -597,10 +621,9 @@ function ExpandedBox({
           </div>
 
           <motion.div layoutId={`box-title-${node.group.id}`}>
-            <span style={{ fontSize: 'var(--text-xs)', fontWeight: 700, color: 'var(--muted)', letterSpacing: '0.08em', textTransform: 'uppercase' }}>
-              Box {index + 1}
-            </span>
-            <h2 id={`box-heading-${node.group.id}`} style={{ fontSize: 'var(--text-xl)', fontWeight: 600, color: 'var(--ink)', margin: 'var(--space-1) 0' }}>
+            {/* No "Box N" label: the ring beside it already carries the number,
+                and the card it grew from doesn't have one either. */}
+            <h2 id={`box-heading-${node.group.id}`} style={{ fontSize: 'var(--text-xl)', fontWeight: 600, color: 'var(--ink)' }}>
               {node.group.name}
             </h2>
             {node.group.description && (

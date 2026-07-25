@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { createClient } from '@/lib/supabase/client'
+import { NumberField } from '@/components/NumberField'
 import { getTreeStage } from '@/lib/progress'
 import type { ProfileSummary as Profile } from '@/lib/supabase/types'
 
@@ -175,12 +176,11 @@ export default function AdminUserPage() {
               <span>{profile.total_stars}</span>
             </span>
 
-            <input
-              type="number"
+            <NumberField
+              aria-label="Total stars"
               min={0}
-              step={1}
               value={stars}
-              onChange={(e) => setStars(Number(e.target.value))}
+              onValueChange={(value) => setStars(value ?? 0)}
               style={{
                 width: '120px',
                 padding: 'var(--space-3)',

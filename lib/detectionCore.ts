@@ -104,6 +104,36 @@ function frameSize(source: FrameSource): { w: number; h: number } {
   return { w: source.width, h: source.height };
 }
 
+/**
+ * Canonical keypoint space. Landmarks come back normalized [0..1], and scaling
+ * them by the SOURCE frame size put every recording in its own pixel space: a
+ * 640×480 recorder, a 1280×720 session, and a 1080×1920 uploaded clip all
+ * produced different numbers for the same posture, so every pixel-valued
+ * threshold downstream (leveling tolerances, moving-joint displacement, trim
+ * energy) silently changed meaning between authoring and validation.
+ *
+ * Every keypoint this module emits is therefore expressed in ONE space:
+ * height fixed at CANONICAL_FRAME_HEIGHT, width following the source aspect
+ * ratio. The scale is uniform (same factor on x and y), so angles are
+ * untouched, and 640×480 — what every existing recording was captured at —
+ * maps to itself, so stored demos keep their original numbers.
+ *
+ * Height is the anchor because subjects are framed to fill the frame
+ * vertically in practice (webcam portrait framing, phone video alike), so the
+ * same body yields the same canonical extent whatever the camera's aspect.
+ */
+export const CANONICAL_FRAME_HEIGHT = 480;
+
+/** Canonical-space dimensions for a source frame of `width` × `height`. */
+export function canonicalFrameSize(width: number, height: number): { w: number; h: number } {
+  if (!width || !height) {
+    // 4:3 default — the shape of the legacy space, used only when a caller asks
+    // before the video element has reported its real size.
+    return { w: (CANONICAL_FRAME_HEIGHT * 4) / 3, h: CANONICAL_FRAME_HEIGHT };
+  }
+  return { w: (CANONICAL_FRAME_HEIGHT * width) / height, h: CANONICAL_FRAME_HEIGHT };
+}
+
 // MediaPipe emits 33 BlazePose landmarks; the whole downstream engine speaks the
 // 17 MoveNet/COCO names (VALID_KEYPOINT_NAMES, in this order). Mapping the subset
 // we use keeps references, connections, criteria, and overlays working unchanged
@@ -212,12 +242,15 @@ async function detectPoseCore(source: FrameSource): Promise<Pose | null> {
     if (!landmarks) return null;
     const world = result.worldLandmarks?.[0];
 
+    // Canonical space, not source pixels — see canonicalFrameSize.
+    const { w: cw, h: ch } = canonicalFrameSize(w, h);
+
     const keypoints: Keypoint[] = BLAZE_TO_COCO.map(([idx, name]) => {
       const lm = landmarks[idx];
       const wl = world?.[idx];
       return {
-        x: lm.x * w,
-        y: lm.y * h,
+        x: lm.x * cw,
+        y: lm.y * ch,
         // BlazePose exposes visibility ∈ [0,1]; getKeypoint gates on it exactly
         // like MoveNet's per-keypoint score did.
         score: lm.visibility ?? 1,
@@ -327,8 +360,10 @@ async function detectHandCore(source: FrameSource, timestampMs: number): Promise
     }
 
     // Landmarks come back normalized [0..1] in canonical MediaPipe order, which
-    // HAND_KEYPOINT_NAMES mirrors — scale to pixels and attach names so the
-    // overlay and the angle engine see the exact shape they always have.
+    // HAND_KEYPOINT_NAMES mirrors — scale into the canonical keypoint space
+    // (see canonicalFrameSize) and attach names so the overlay and the angle
+    // engine see the exact shape they always have.
+    const { w: cw, h: ch } = canonicalFrameSize(w, h);
     const sets = result.landmarks.map((landmarks, i) => {
       // Handedness classification confidence is the closest thing the task
       // returns to a per-hand score; landmarks carry no per-point score, and
@@ -337,8 +372,8 @@ async function detectHandCore(source: FrameSource, timestampMs: number): Promise
       const world = result.worldLandmarks?.[i];
       return {
         keypoints: landmarks.map((lm, j) => ({
-          x: lm.x * w,
-          y: lm.y * h,
+          x: lm.x * cw,
+          y: lm.y * ch,
           name: HAND_KEYPOINT_NAMES[j],
           score: s,
           // Metric 3D — lets validation measure rotation-invariant angles.
@@ -359,7 +394,7 @@ async function detectHandCore(source: FrameSource, timestampMs: number): Promise
 
     // EMA-smooth each hand slot; a big wrist jump means the slot changed hands,
     // so restart that filter instead of dragging points across the screen.
-    const jumpLimit = Math.hypot(w, h) * 0.2;
+    const jumpLimit = Math.hypot(cw, ch) * 0.2;
     sets.forEach((set, i) => {
       const prev = smoothedHands[i];
       const wrist = set.keypoints[0];

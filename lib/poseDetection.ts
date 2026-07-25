@@ -8,13 +8,15 @@ import {
   initCore,
   detectCore,
   disposeCore,
+  canonicalFrameSize,
+  CANONICAL_FRAME_HEIGHT,
   HAND_KEYPOINT_NAMES,
   type TrackingMode,
   type Keypoint,
   type Pose,
 } from './detectionCore';
 
-export { HAND_KEYPOINT_NAMES };
+export { HAND_KEYPOINT_NAMES, canonicalFrameSize, CANONICAL_FRAME_HEIGHT };
 export type { TrackingMode, Keypoint, Pose };
 
 /**
@@ -49,6 +51,11 @@ const pending = new Map<number, (value: any) => void>();
 let facadeGen = 0;
 let lastWorkerPose: Pose | null = null;
 let detectInFlight = false;
+// Which mode the MAIN-THREAD engine currently holds a model for (null = none).
+// Distinct from the worker's: when the page runs on the worker, this stays null
+// until a retirement forces the fallback to load its own copy.
+let mainThreadMode: TrackingMode | null = null;
+let mainThreadInit: Promise<boolean> | null = null;
 
 function workerSupported(): boolean {
   return (
@@ -56,6 +63,28 @@ function workerSupported(): boolean {
     typeof Worker !== 'undefined' &&
     typeof createImageBitmap === 'function'
   );
+}
+
+// Per-message deadlines. The worker always replies (see detection.worker.ts),
+// so these only fire when it is wedged beyond recovery — a hung wasm call, a
+// tab the browser froze, a crashed process that never raised onerror. Without
+// them a single lost reply leaves the promise unsettled forever, pinning
+// detectInFlight true so every later detect() returns the same stale pose.
+// Init covers downloading the ~8 MB model plus GPU shader warm-up on a cold,
+// slow device; detection is one inference on a frame that is already decoded.
+const WORKER_INIT_TIMEOUT_MS = 60000;
+const WORKER_CALL_TIMEOUT_MS = 15000;
+
+/** Tear the worker down and route this page to the main thread from here on. */
+function retireWorker(reason: string) {
+  console.error(`Detection worker retired (${reason}) — falling back to main thread`);
+  workerBroken = true;
+  usingWorker = false;
+  // Unblock every waiter before dropping them, or their callers hang too.
+  for (const resolve of pending.values()) resolve(null);
+  pending.clear();
+  worker?.terminate();
+  worker = null;
 }
 
 function getWorker(): Worker {
@@ -70,27 +99,50 @@ function getWorker(): Worker {
       }
     };
     worker.onerror = (e: ErrorEvent) => {
-      // Worker script failed to load or crashed — unblock every waiter and
-      // route this page's detection to the main thread from here on.
-      console.error('Detection worker error, falling back to main thread:', e.message);
-      workerBroken = true;
-      usingWorker = false;
-      for (const resolve of pending.values()) resolve(null);
-      pending.clear();
-      worker?.terminate();
-      worker = null;
+      // Worker script failed to load or crashed synchronously.
+      retireWorker(e.message || 'worker error');
     };
   }
   return worker;
 }
 
-function callWorker(msg: Record<string, unknown>, transfer?: Transferable[]): Promise<any> {
+function callWorker(
+  msg: Record<string, unknown>,
+  transfer?: Transferable[],
+  timeoutMs = WORKER_CALL_TIMEOUT_MS
+): Promise<any> {
   const w = getWorker();
   const id = msgSeq++;
   return new Promise((resolve) => {
-    pending.set(id, resolve);
+    const timer = setTimeout(() => {
+      if (!pending.has(id)) return; // answered in the same tick the timer fired
+      pending.delete(id);
+      retireWorker(`no reply to '${String(msg.type)}' in ${timeoutMs}ms`);
+      resolve(null);
+    }, timeoutMs);
+    pending.set(id, (value) => {
+      clearTimeout(timer);
+      resolve(value);
+    });
     w.postMessage({ ...msg, id }, transfer ?? []);
   });
+}
+
+/** Load the main-thread model for `mode` once, sharing one in-flight attempt. */
+function ensureMainThreadModel(mode: TrackingMode): Promise<boolean> {
+  if (mainThreadMode === mode) return Promise.resolve(true);
+  if (!mainThreadInit) {
+    const gen = facadeGen;
+    mainThreadInit = initCore(mode)
+      .then((ok) => {
+        if (ok && gen === facadeGen) mainThreadMode = mode;
+        return ok;
+      })
+      .finally(() => {
+        mainThreadInit = null;
+      });
+  }
+  return mainThreadInit;
 }
 
 /** Init the detector for a mode, disposing the other model first (one model resident at a time). */
@@ -100,18 +152,17 @@ export async function initDetector(mode: TrackingMode): Promise<boolean> {
 
   if (!workerBroken && workerSupported()) {
     try {
-      const res = await callWorker({ type: 'init', mode });
+      const res = await callWorker({ type: 'init', mode }, undefined, WORKER_INIT_TIMEOUT_MS);
       if (gen !== facadeGen) return false;
       if (res?.ok) {
         usingWorker = true;
         return true;
       }
-      // Model couldn't start inside the worker — retire it and fall through
-      // to the main-thread engine.
+      // Model couldn't start inside the worker (or it timed out and already
+      // retired itself) — make sure it's gone and fall through to the
+      // main-thread engine.
+      if (worker) retireWorker(res?.error ? `init failed: ${res.error}` : 'init returned not-ok');
       workerBroken = true;
-      worker?.terminate();
-      worker = null;
-      pending.clear();
     } catch (error) {
       console.error('Detection worker init failed, falling back to main thread:', error);
       workerBroken = true;
@@ -120,7 +171,7 @@ export async function initDetector(mode: TrackingMode): Promise<boolean> {
 
   usingWorker = false;
   if (gen !== facadeGen) return false;
-  const ok = await initCore(mode);
+  const ok = await ensureMainThreadModel(mode);
   return gen === facadeGen ? ok : false;
 }
 
@@ -147,6 +198,12 @@ export async function detect(
         { type: 'detect', mode, bitmap, timestamp: ts },
         [bitmap]
       );
+      if (res?.error) {
+        // The worker answered, but detection is structurally broken in there
+        // (detectCore swallows ordinary inference errors itself). Stop asking.
+        retireWorker(`detect failed: ${res.error}`);
+        return null;
+      }
       lastWorkerPose = (res?.pose as Pose | null) ?? null;
       return lastWorkerPose;
     } catch (error) {
@@ -155,6 +212,16 @@ export async function detect(
     } finally {
       detectInFlight = false;
     }
+  }
+
+  // Main-thread engine. After a mid-session worker retirement it holds no
+  // model — the page initialized the worker's, not this one's — so load it
+  // once and let the next frames use it, rather than warning per frame forever.
+  if (mainThreadMode !== mode) {
+    ensureMainThreadModel(mode).catch(() => {
+      // Reported by initCore; the next frame retries.
+    });
+    return null;
   }
   return detectCore(video, mode, ts);
 }
@@ -183,6 +250,8 @@ export function disposeDetector() {
   usingWorker = false;
   detectInFlight = false;
   lastWorkerPose = null;
+  mainThreadMode = null;
+  mainThreadInit = null;
   disposeCore();
 }
 
@@ -203,6 +272,8 @@ export interface AngleCriterion {
 
 export interface LevelingRule {
   joints: [string, string];
+  /** Vertical tolerance in CANONICAL keypoint units (see canonicalFrameSize) —
+   * the same space recordings are stored in and live sessions are measured in. */
   maxDifference: number;
   message: string;
 }
@@ -634,13 +705,52 @@ export function anchorPairForMode(mode: TrackingMode): [string, string] {
 /** Minimal shape of a recorded demo both admin pages share. */
 export interface RecordedDemoFrames {
   frames: Array<{ pose: Pose }>;
+  /** Canonical-space frame the keypoints were captured in. Written by the
+   * recorder; absent on rows recorded before keypoints were canonicalized. */
+  frameSize?: { width: number; height: number };
+}
+
+/**
+ * The coordinate box a demo's keypoints live in — what an editor canvas has to
+ * be sized to for the skeleton to land on screen.
+ *
+ * Prefers the size the recorder stored. Rows recorded before keypoints were
+ * canonicalized carry raw source pixels instead (a portrait phone clip stored
+ * coordinates up to 1080×1920), so fall back to the actual extent of the
+ * recorded points, never smaller than the canonical frame — otherwise a demo
+ * where the subject sat in one corner would render zoomed in.
+ */
+export function frameSizeForDemo(
+  demo: RecordedDemoFrames | null | undefined
+): { width: number; height: number } {
+  const canonical = canonicalFrameSize(0, 0); // 4:3 canonical default
+  if (demo?.frameSize?.width && demo.frameSize.height) {
+    return { width: demo.frameSize.width, height: demo.frameSize.height };
+  }
+
+  let maxX = 0;
+  let maxY = 0;
+  for (const frame of demo?.frames ?? []) {
+    for (const kp of frame.pose?.keypoints ?? []) {
+      if ((kp.score ?? 0) <= 0.3) continue;
+      if (kp.x > maxX) maxX = kp.x;
+      if (kp.y > maxY) maxY = kp.y;
+    }
+  }
+
+  return {
+    width: Math.max(canonical.w, Math.ceil(maxX * 1.05)),
+    height: Math.max(canonical.h, Math.ceil(maxY * 1.05)),
+  };
 }
 
 const MIN_VISIBLE_FRAMES = 10; // pooled frames a joint needs before we trust its stats
 const MIN_VISIBLE_RATIO = 0.4; // joint must be measurable in this share of all frames
-// Degrees of motion that mark a joint as exercised / pixel travel that marks a
-// part as moving. Hands sweep smaller angles (thumb opposition is ~15–30°) and
-// occupy far fewer pixels than a body, so their thresholds are tighter.
+// Degrees of motion that mark a joint as exercised / travel that marks a part
+// as moving. Hands sweep smaller angles (thumb opposition is ~15–30°) and
+// occupy far less of the frame than a body, so their thresholds are tighter.
+// Displacement is in canonical keypoint units (see canonicalFrameSize), which
+// is why it means the same thing for a 720p session and a portrait phone clip.
 const MOVING_ROM_THRESHOLD: Record<TrackingMode, number> = { body: 25, hand: 15 };
 const MOVING_DISPLACEMENT_PX: Record<TrackingMode, number> = { body: 40, hand: 25 };
 // A fist sweeps nearly every hand joint past the ROM threshold; requiring all
@@ -1040,8 +1150,10 @@ export function buildGuideFrames(
 
 // ---- Auto-trim of recorded demos ----
 
-// Mean per-keypoint pixel travel between consecutive frames that counts as
-// "moving" (camera is 640×480). Hands cover fewer pixels, so a lower bar.
+// Mean per-keypoint travel between consecutive frames that counts as "moving",
+// in canonical keypoint units (see canonicalFrameSize — frame height is always
+// 480 there, whatever the camera or clip resolution). Hands cover less of the
+// frame, so a lower bar.
 const TRIM_ENERGY_PX: Record<TrackingMode, number> = { body: 4, hand: 2.5 };
 const TRIM_MARGIN_MS = 400; // rest kept on both sides of the active span
 
@@ -1093,6 +1205,83 @@ export function trimIdleFrames<T extends { timestamp: number; pose: Pose }>(
 
   const base = kept[0].timestamp;
   return kept.map((f) => ({ ...f, timestamp: f.timestamp - base }));
+}
+
+// ---- Storage compaction ----
+
+// Frames kept per stored demo. Capture runs at ~30 fps and can hand back 600
+// frames per demo, but nothing downstream reads that density: buildGuideFrames
+// resamples to 32 poses, trajectory DTW resamples to 64 time points, and
+// derivation works off percentiles over the whole series. Storing the raw
+// capture put multiple megabytes into exercises.recorded_paths — which every
+// patient session downloads on a phone before the model even loads.
+export const MAX_STORED_FRAMES = 120;
+
+const round = (v: number, places: number) => {
+  const f = 10 ** places;
+  return Math.round(v * f) / f;
+};
+
+/** Strip a pose down to what storage actually needs. */
+function compactPose(pose: Pose, keepWorld: boolean): Pose {
+  const compactKeypoints = (keypoints: Keypoint[]): Keypoint[] =>
+    keypoints.map((kp) => {
+      // Canonical units, frame height 480 — a tenth of a unit is far below
+      // pose-estimation jitter, and keeps small hand segments accurate.
+      const out: Keypoint = { x: round(kp.x, 1), y: round(kp.y, 1) };
+      if (kp.name !== undefined) out.name = kp.name;
+      // Preserved rather than defaulted: getKeypoint treats a missing score as
+      // 0 (invisible), so inventing one would change which frames validate.
+      if (kp.score !== undefined) out.score = round(kp.score, 2);
+      // Metric metres over a hand ~0.2 m across — 0.1 mm resolution.
+      if (keepWorld && kp.world) {
+        out.world = {
+          x: round(kp.world.x, 4),
+          y: round(kp.world.y, 4),
+          z: round(kp.world.z, 4),
+        };
+      }
+      return out;
+    });
+
+  const out: Pose = { keypoints: compactKeypoints(pose.keypoints) };
+  if (pose.score !== undefined) out.score = round(pose.score, 2);
+  if (pose.extraHands?.length) {
+    out.extraHands = pose.extraHands.map((h) => {
+      const hand: { keypoints: Keypoint[]; score?: number } = {
+        keypoints: compactKeypoints(h.keypoints),
+      };
+      if (h.score !== undefined) hand.score = round(h.score, 2);
+      return hand;
+    });
+  }
+  return out;
+}
+
+/**
+ * Shrink a recorded demo to what is worth persisting: at most
+ * MAX_STORED_FRAMES evenly spaced frames (first and last always kept, so the
+ * rest pose and the movement extreme survive), coordinates rounded, and world
+ * coordinates dropped for body recordings — body criteria are derived and
+ * validated in 2D (deriveCriteriaFromRecordings only reaches for '3d' in hand
+ * mode), so those triples were pure payload.
+ *
+ * Run this AFTER trimIdleFrames, which needs the full-rate series to measure
+ * per-frame movement energy.
+ */
+export function compactRecordedFrames<T extends { timestamp: number; pose: Pose }>(
+  frames: T[],
+  mode: TrackingMode
+): T[] {
+  const keepWorld = mode === 'hand';
+
+  let kept: T[] = frames;
+  if (frames.length > MAX_STORED_FRAMES) {
+    const step = (frames.length - 1) / (MAX_STORED_FRAMES - 1);
+    kept = Array.from({ length: MAX_STORED_FRAMES }, (_, i) => frames[Math.round(i * step)]);
+  }
+
+  return kept.map((f) => ({ ...f, pose: compactPose(f.pose, keepWorld) }));
 }
 
 /**
@@ -1195,6 +1384,10 @@ export type CyclePhase = 'rest' | 'lifting' | 'holding' | 'lowering';
 
 /**
  * Full-cycle rep counter for dynamic exercises with a known rest pose.
+ *
+ * Superseded by RomCycleRepCounter and no longer wired to anything — both the
+ * patient session and the editor's test mode go through createRepCounter.
+ * Kept only so the behaviour stays available (and tested) for comparison.
  * A rep = rest → target (held long enough) → back to rest, so partial reps and
  * "pumping" near the target without returning don't count. Requires criteria
  * with restAngle (analyzeExercise reports atRest); exercises without one should
@@ -1473,4 +1666,43 @@ export class RomCycleRepCounter {
   getCount() {
     return this.repCount;
   }
+}
+
+// ---- Rep-counter selection (one decision, two call sites) ----
+
+/** Any counter createRepCounter can hand back. `phase` is present only on the
+ * cyclic one, so callers narrow with `'phase' in result`. */
+export type RepCounter = GenericRepCounter | RomCycleRepCounter;
+
+/**
+ * True when reps should be counted as full movement cycles: a dynamic exercise
+ * whose criteria define a rest pose, which is what makes analysis.progress
+ * measurable. Everything else (static holds, dynamic exercises with no rest
+ * angle) counts holds instead.
+ */
+export function isCyclicExercise(
+  exerciseType: string | null | undefined,
+  poseCriteria: PoseCriteria | null | undefined
+): boolean {
+  return (
+    exerciseType === 'dynamic' &&
+    (poseCriteria?.criteria ?? []).some((c) => typeof c.restAngle === 'number')
+  );
+}
+
+/**
+ * Build the rep counter for an exercise. The patient session and the editor's
+ * test mode both go through here — they used to construct counters separately
+ * and drifted apart (the editor demanded a landing inside the tight angle band
+ * while the session fired on ROM travel), so tuning in the editor predicted
+ * nothing about a real session.
+ */
+export function createRepCounter(
+  exerciseType: string | null | undefined,
+  poseCriteria: PoseCriteria | null | undefined,
+  holdThresholdMs = 500
+): RepCounter {
+  return isCyclicExercise(exerciseType, poseCriteria)
+    ? new RomCycleRepCounter(holdThresholdMs)
+    : new GenericRepCounter(holdThresholdMs);
 }

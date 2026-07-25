@@ -34,10 +34,20 @@ import {
   useMotionTemplate,
   useReducedMotion,
   useSpring,
+  type MotionValue,
   type TargetAndTransition,
   type Transition,
 } from 'framer-motion'
-import { useCallback, useEffect, useRef, useState, type CSSProperties, type PointerEvent, type ReactNode } from 'react'
+import {
+  useCallback,
+  useEffect,
+  useId,
+  useRef,
+  useState,
+  type CSSProperties,
+  type PointerEvent,
+  type ReactNode,
+} from 'react'
 import { vibrate } from '@/lib/rewardFx'
 
 /**
@@ -132,7 +142,53 @@ const BLOOM_STYLE: CSSProperties = {
   pointerEvents: 'none',
 }
 
+/**
+ * The ambient sheen: a soft light that drifts across the coin forever. Most
+ * patients are on phones, where the pointer highlight never fires, so this is
+ * what keeps the gold alive at rest. Oversized and moved by transform so the
+ * travel costs a composite rather than a repaint.
+ */
+const AMBIENT_STYLE: CSSProperties = {
+  position: 'absolute',
+  left: '-35%',
+  top: '-80%',
+  width: '170%',
+  height: '260%',
+  pointerEvents: 'none',
+  zIndex: 0,
+  background: 'radial-gradient(closest-side, rgba(255, 255, 255, 0.42), transparent 70%)',
+}
+
+/** Slow enough to read as light in the room, not as an animation. */
+const DRIFT = {
+  duration: 13,
+  repeat: Infinity,
+  repeatType: 'mirror',
+  ease: 'easeInOut',
+} as const
+
 const STAR_PATH = 'M10 0l2.5 6.5H19l-5.5 4 2 6.5L10 13l-5.5 4 2-6.5-5.5-4h6.5z'
+
+/**
+ * The star, stamped rather than drawn: light gathers at the top facets and
+ * falls away at the bottom, and `.star-badge svg` adds the shadow it casts
+ * into the metal. Shared so every badge carries the same glyph.
+ */
+export function StarGlyph({ size = 20 }: { size?: number }) {
+  const id = useId()
+  return (
+    <svg width={size} height={size} viewBox="0 0 20 20" aria-hidden>
+      <defs>
+        <linearGradient id={id} x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stopColor="#F7E7A6" />
+          <stop offset="42%" stopColor="#C9A227" />
+          <stop offset="100%" stopColor="#8A6B1E" />
+        </linearGradient>
+      </defs>
+      <path d={STAR_PATH} fill={`url(#${id})`} />
+    </svg>
+  )
+}
 
 interface StarBadgeProps {
   children?: ReactNode
@@ -184,6 +240,10 @@ export function StarBadge({
   const specular = useMotionTemplate`radial-gradient(58px circle at ${lightX}% ${lightY}%, rgba(255, 255, 255, 0.6), transparent 70%)`
   const specularOpacity = useSpring(0, PRESS_SPRING)
 
+  // Phones have no pointer, so the coin borrows the device itself as its
+  // gimbal — the badge catches light as the patient moves the handset.
+  useDeviceTilt(!reduced && !finePointer && inView, rotateX, rotateY)
+
   const awards = useAwardCount(value)
   const [blooming, setBlooming] = useState(false)
 
@@ -219,9 +279,7 @@ export function StarBadge({
   const content =
     value != null ? (
       <>
-        <svg width={starSize} height={starSize} viewBox="0 0 20 20" fill="currentColor">
-          <path d={STAR_PATH} />
-        </svg>
+        <StarGlyph size={starSize} />
         <RollingCount value={value} reduced={!!reduced} />
       </>
     ) : (
@@ -262,6 +320,16 @@ export function StarBadge({
         onPointerUp={() => scale.set(tilt ? 1.03 : 1)}
         onPointerCancel={settle}
       >
+        {animated && (
+          <motion.span
+            aria-hidden
+            style={AMBIENT_STYLE}
+            initial={{ transform: 'translate(-16%, 8%)' }}
+            animate={{ transform: ['translate(-16%, 8%)', 'translate(18%, -6%)'] }}
+            transition={DRIFT}
+          />
+        )}
+
         {tilt && (
           <motion.span
             aria-hidden
@@ -323,6 +391,41 @@ function RollingCount({ value, reduced }: { value: number; reduced: boolean }) {
       </AnimatePresence>
     </span>
   )
+}
+
+/** Handset tilt is a coarse signal; keep the coin's response well under hover's. */
+const DEVICE_TILT = 5
+
+/**
+ * Tilts the coin with the handset's own orientation. The first reading becomes
+ * neutral, so a patient holding the phone at their usual angle sees a level
+ * badge rather than one permanently tipped. iOS only delivers these events
+ * after an explicit permission prompt, which this is not worth interrupting a
+ * session for — there, the badge simply keeps its ambient sheen.
+ */
+function useDeviceTilt(enabled: boolean, rotateX: MotionValue<number>, rotateY: MotionValue<number>) {
+  useEffect(() => {
+    if (!enabled || typeof window === 'undefined' || !('DeviceOrientationEvent' in window)) return
+
+    let base: { beta: number; gamma: number } | null = null
+    const clamp = (value: number) => Math.max(-DEVICE_TILT, Math.min(DEVICE_TILT, value))
+
+    const onOrient = (event: DeviceOrientationEvent) => {
+      const { beta, gamma } = event
+      if (beta == null || gamma == null) return
+      if (!base) base = { beta, gamma }
+      // Tipping the phone away from you leans the coin's top away too.
+      rotateX.set(clamp((beta - base.beta) * 0.4))
+      rotateY.set(clamp((gamma - base.gamma) * 0.4))
+    }
+
+    window.addEventListener('deviceorientation', onOrient)
+    return () => {
+      window.removeEventListener('deviceorientation', onOrient)
+      rotateX.set(0)
+      rotateY.set(0)
+    }
+  }, [enabled, rotateX, rotateY])
 }
 
 /** Hover effects belong to devices that can actually hover. */

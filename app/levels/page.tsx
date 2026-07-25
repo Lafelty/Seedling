@@ -19,7 +19,7 @@ function LevelsSkeleton() {
         <div className="skeleton" style={{ height: '6px', borderRadius: 'var(--radius-full)' }} />
       </div>
       {/* Inline, not `.lvl-grid`: that rule ships with the loaded page. */}
-      <div style={{ display: 'grid', gap: 'var(--space-4)', gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 260px), 1fr))' }}>
+      <div style={{ display: 'grid', gap: 'var(--space-4)', gridAutoRows: '1fr', gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 260px), 1fr))' }}>
         {[0, 1, 2, 3].map((i) => (
           <div key={i} className="skeleton" style={{ height: '208px', borderRadius: 'var(--radius-lg)' }} />
         ))}
@@ -42,10 +42,34 @@ function statusOf(node: GroupNode) {
   }
 }
 
+/** Stable per-box index, so a box keeps the same mark and the same tint. */
+function hashId(id: string) {
+  let hash = 0
+  for (let i = 0; i < id.length; i++) hash = (hash * 31 + id.charCodeAt(i)) >>> 0
+  return hash
+}
+
 /**
- * A growing thing per box, picked from the box's own id. Boxes need to be
- * telling apart at a glance without any of them looking further along than
- * another, so identity comes from form, not from rank or colour.
+ * One light green per box. Four greens of the same lightness and weight — they
+ * tell boxes apart without any of them reading as further along, higher, or
+ * next. A cleared box leaves this family for gold instead.
+ */
+const BOX_TINTS = [
+  { wash: 'rgba(124, 199, 134, 0.30)', edge: 'rgba(120, 187, 128, 0.55)', ink: '#2F6B45', bar: '#5FAF6B' }, // leaf
+  { wash: 'rgba(150, 214, 184, 0.32)', edge: 'rgba(126, 194, 166, 0.55)', ink: '#2C6A5B', bar: '#54B296' }, // mint
+  { wash: 'rgba(186, 222, 140, 0.34)', edge: 'rgba(163, 203, 120, 0.55)', ink: '#4E6B27', bar: '#8CC252' }, // spring
+  { wash: 'rgba(146, 208, 205, 0.32)', edge: 'rgba(124, 187, 186, 0.55)', ink: '#2A6465', bar: '#57AFAF' }, // eucalyptus
+]
+
+const CLEARED_TINT = { wash: 'rgba(201, 184, 138, 0.28)', edge: 'rgba(201, 184, 138, 0.60)', ink: '#7A6A3E', bar: '#C9B88A' }
+
+function tintOf(id: string, cleared: boolean) {
+  return cleared ? CLEARED_TINT : BOX_TINTS[hashId(id) % BOX_TINTS.length]
+}
+
+/**
+ * A growing thing per box, picked from the box's own id. Form carries most of
+ * the identity; the box's own green carries the rest.
  */
 function BoxMark({ id, cleared }: { id: string; cleared: boolean }) {
   const marks = [
@@ -71,8 +95,8 @@ function BoxMark({ id, cleared }: { id: string; cleared: boolean }) {
       <path d="M9 15c2-1 4-1 6 0M10.5 11.5c2-1 4-2 6-2M12.5 8.5c1-1 2.5-2 4-2" />
     </g>,
   ]
-  let hash = 0
-  for (let i = 0; i < id.length; i++) hash = (hash * 31 + id.charCodeAt(i)) >>> 0
+  const hash = hashId(id)
+  const tint = tintOf(id, cleared)
 
   return (
     <span
@@ -84,8 +108,8 @@ function BoxMark({ id, cleared }: { id: string; cleared: boolean }) {
         display: 'grid',
         placeItems: 'center',
         borderRadius: 'var(--radius-full)',
-        background: cleared ? 'rgba(201, 184, 138, 0.30)' : 'rgba(74, 107, 90, 0.10)',
-        color: cleared ? '#8A7A4E' : 'var(--primary)',
+        background: tint.wash,
+        color: tint.ink,
       }}
     >
       <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round">
@@ -220,31 +244,33 @@ export default function LevelsPage() {
           outline: none;
         }
         @media (hover: hover) and (pointer: fine) {
-          .lvl-card:hover { box-shadow: 0 12px 28px rgba(74, 107, 90, 0.16); }
+          .lvl-card:hover { box-shadow: 0 12px 28px var(--box-edge, rgba(74, 107, 90, 0.16)); }
           .lvl-card:hover .lvl-cta svg { transform: translateX(3px); }
         }
-        .lvl-card:focus-visible { box-shadow: 0 0 0 3px rgba(74, 107, 90, 0.45); }
+        .lvl-card:focus-visible { box-shadow: 0 0 0 3px var(--box-edge, rgba(74, 107, 90, 0.45)); }
         .lvl-cta svg { transition: transform var(--dur-fast) var(--ease-out); }
         .lvl-pose + .lvl-pose { border-top: 1px solid var(--border); }
 
         /* Overall progress, carried by a rail instead of its own card. */
         .lvl-rail {
           margin-top: var(--space-4);
-          height: 6px;
+          height: 8px;
           border-radius: var(--radius-full);
-          background: rgba(74, 107, 90, 0.14);
+          background: rgba(124, 199, 134, 0.22);
           overflow: hidden;
         }
         .lvl-rail-fill {
           display: block;
           height: 100%;
           border-radius: var(--radius-full);
-          background: linear-gradient(90deg, var(--primary), #C9B88A);
+          background: linear-gradient(90deg, #8CC252, #54B296 55%, var(--primary));
           transition: width var(--dur-grow) var(--ease-out);
         }
 
         /* Boxes sit side by side as equals — no queue, no numbering, nothing
-           to suggest one has to come before another. */
+           to suggest one has to come before another. Same size, too:
+           \`grid-auto-rows: 1fr\` gives every row the tallest row's height, and
+           the card fills it, so no box is bigger than any other. */
         .lvl-grid {
           list-style: none;
           margin: 0;
@@ -252,19 +278,22 @@ export default function LevelsPage() {
           display: grid;
           gap: var(--space-4);
           grid-template-columns: 1fr;
+          grid-auto-rows: 1fr;
         }
         @media (min-width: 620px) {
           .lvl-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
         }
-        .lvl-grid > li { display: flex; }
+        .lvl-grid > li { display: flex; min-width: 0; }
 
-        /* Two lines of description on every card, so no box grows taller than
-           its neighbours and starts looking more important than them. */
+        /* Two lines of description on every card, reserved whether or not the
+           box has one, so equal-height rows never have to stretch to cover a
+           difference in text. */
         .lvl-clamp {
           display: -webkit-box;
           -webkit-line-clamp: 2;
           -webkit-box-orient: vertical;
           overflow: hidden;
+          min-height: calc(2 * 1.5 * var(--text-sm));
         }
 
         .lvl-chip {
@@ -277,29 +306,28 @@ export default function LevelsPage() {
           text-transform: uppercase;
           padding: var(--space-1) var(--space-3);
           border-radius: var(--radius-full);
-          background: rgba(74, 107, 90, 0.12);
-          color: var(--primary);
+          background: var(--box-wash, rgba(74, 107, 90, 0.12));
+          color: var(--box-ink, var(--primary));
         }
-        .lvl-chip[data-cleared='true'] { background: rgba(201, 184, 138, 0.28); color: #8A7A4E; }
-        /* An untouched box has nothing to announce — the chip stays a label,
-           not a badge, so three "not started" cards don't shout at once. */
-        .lvl-chip[data-started='false'] { background: transparent; color: var(--muted); padding-inline: 0; }
+        /* An untouched box has nothing to announce — the chip stays a label in
+           the box's own green, not a badge, so three "not started" cards don't
+           shout at once. */
+        .lvl-chip[data-started='false'] { background: transparent; padding-inline: 0; }
 
         .lvl-bar {
           display: block;
-          height: 6px;
+          height: 8px;
           border-radius: var(--radius-full);
-          background: rgba(74, 107, 90, 0.12);
+          background: var(--box-wash, rgba(74, 107, 90, 0.12));
           overflow: hidden;
         }
         .lvl-bar > span {
           display: block;
           height: 100%;
           border-radius: var(--radius-full);
-          background: var(--primary);
+          background: var(--box-bar, var(--primary));
           transition: width var(--dur-grow) var(--ease-out);
         }
-        .lvl-card[data-cleared='true'] .lvl-bar > span { background: #C9B88A; }
 
         @media (prefers-reduced-motion: reduce) {
           .lvl-card, .lvl-cta svg, .lvl-rail-fill, .lvl-bar > span { transition: none; }
@@ -308,7 +336,7 @@ export default function LevelsPage() {
 
       {/* The wash spans the viewport; the path itself stays a column, so the
           tint must not be pinned to the column's width. */}
-      <div style={{ background: 'linear-gradient(180deg, rgba(74, 107, 90, 0.08), transparent 340px)' }}>
+      <div style={{ background: 'linear-gradient(180deg, rgba(140, 194, 82, 0.16), rgba(84, 178, 150, 0.10) 180px, transparent 380px)' }}>
       <main className="min-h-screen max-w-2xl mx-auto px-4 py-8 pb-24">
         {/* Header. Progress rides in the sentence and the rail rather than its
             own slab, and says nothing about which box to pick. */}
@@ -345,6 +373,7 @@ export default function LevelsPage() {
               const pct = node.total > 0 ? Math.round((node.clearedCount / node.total) * 100) : 0
               const cta = cleared ? 'Review' : started ? 'Continue' : 'Start'
               const isOpen = active?.group.id === node.group.id
+              const tint = tintOf(node.group.id, cleared)
 
               return (
                 <li key={node.group.id}>
@@ -368,16 +397,22 @@ export default function LevelsPage() {
                     }}
                     style={{
                       animationDelay: `${index * 60}ms`,
+                      // Same box, same size, every time: the row is already
+                      // equal-height, and the card takes all of it.
                       height: '100%',
+                      width: '100%',
+                      minWidth: 0,
                       display: 'flex',
                       flexDirection: 'column',
                       gap: 'var(--space-3)',
-                      // A finished box warms toward gold. Every other box looks
-                      // exactly like every other box — none is "next".
-                      background: cleared
-                        ? 'linear-gradient(160deg, rgba(201, 184, 138, 0.20), var(--surface) 72%)'
-                        : 'var(--surface)',
-                      borderColor: cleared ? 'rgba(201, 184, 138, 0.55)' : 'var(--border)',
+                      // Each box gets its own green; a finished one warms to
+                      // gold. Different colour, equal weight — none is "next".
+                      ['--box-wash' as string]: tint.wash,
+                      ['--box-edge' as string]: tint.edge,
+                      ['--box-ink' as string]: tint.ink,
+                      ['--box-bar' as string]: tint.bar,
+                      background: `linear-gradient(160deg, ${tint.wash}, var(--surface) 72%)`,
+                      borderColor: tint.edge,
                       cursor: 'pointer',
                       // The panel takes over the shared layout; leaving the card
                       // visible underneath would show it twice mid-morph.
@@ -403,11 +438,11 @@ export default function LevelsPage() {
                       <h2 style={{ fontSize: 'var(--text-lg)', fontWeight: 600, color: 'var(--ink)' }}>
                         {node.group.name}
                       </h2>
-                      {node.group.description && (
-                        <p className="lvl-clamp" style={{ fontSize: 'var(--text-sm)', color: 'var(--muted)', lineHeight: 1.5, marginTop: 'var(--space-1)' }}>
-                          {node.group.description}
-                        </p>
-                      )}
+                      {/* Rendered even when empty: the reserved two lines keep
+                          a box without a description the same size as one with. */}
+                      <p className="lvl-clamp" style={{ fontSize: 'var(--text-sm)', color: 'var(--muted)', lineHeight: 1.5, marginTop: 'var(--space-1)' }}>
+                        {node.group.description}
+                      </p>
                     </motion.div>
 
                     <div style={{ display: 'grid', gap: 'var(--space-2)' }}>
@@ -426,7 +461,7 @@ export default function LevelsPage() {
                             gap: 'var(--space-1)',
                             fontSize: 'var(--text-sm)',
                             fontWeight: 700,
-                            color: cleared ? '#8A7A4E' : 'var(--primary)',
+                            color: tint.ink,
                           }}
                         >
                           {cta}
@@ -505,6 +540,7 @@ function ExpandedBox({
   const { cleared, started, label } = statusOf(node)
   const pct = node.total > 0 ? Math.round((node.clearedCount / node.total) * 100) : 0
   const cta = cleared ? 'Review box' : started ? 'Continue box' : 'Start box'
+  const tint = tintOf(node.group.id, cleared)
 
   return (
     <>
@@ -532,13 +568,16 @@ function ExpandedBox({
             display: 'flex',
             flexDirection: 'column',
             gap: 'var(--space-4)',
+            // The box keeps its own green when it opens.
+            ['--box-wash' as string]: tint.wash,
+            ['--box-edge' as string]: tint.edge,
+            ['--box-ink' as string]: tint.ink,
+            ['--box-bar' as string]: tint.bar,
             // Opaque base under the tint: the card's gradient alone is partly
             // transparent, which is invisible on the page but not over it.
             backgroundColor: 'var(--surface)',
-            backgroundImage: cleared
-              ? 'linear-gradient(160deg, rgba(201, 184, 138, 0.22), transparent 72%)'
-              : 'linear-gradient(160deg, rgba(74, 107, 90, 0.13), transparent 72%)',
-            borderColor: cleared ? 'rgba(201, 184, 138, 0.55)' : 'var(--border)',
+            backgroundImage: `linear-gradient(160deg, ${tint.wash}, transparent 72%)`,
+            borderColor: tint.edge,
             boxShadow: '0 24px 60px rgba(38, 48, 42, 0.22)',
           }}
         >
@@ -610,8 +649,8 @@ function ExpandedBox({
                         display: 'grid',
                         placeItems: 'center',
                         borderRadius: 'var(--radius-full)',
-                        background: poseCleared ? 'rgba(201, 184, 138, 0.45)' : poseLocked ? 'var(--border)' : 'rgba(74, 107, 90, 0.18)',
-                        color: poseCleared ? '#8A7A4E' : 'var(--primary)',
+                        background: poseCleared ? tint.bar : poseLocked ? 'var(--border)' : tint.wash,
+                        color: tint.ink,
                       }}
                     >
                       {poseCleared && (

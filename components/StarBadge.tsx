@@ -190,7 +190,10 @@ export function StarBadge({
       ref={ref}
       title={title}
       className={`star-badge ${className}`.trim()}
-      style={{ position: 'relative', overflow: 'hidden', ...style }}
+      // The resting transform must be spelled out. Motion derives the origin of
+      // a string transform by zeroing its numbers, so without this the badge
+      // settles at `scale(0)` the first time a hover/tap variant resolves.
+      style={{ position: 'relative', overflow: 'hidden', transform: 'scale(1)', ...style }}
       variants={ROOT_VARIANTS}
       whileHover={finePointer ? 'hover' : undefined}
       whileTap="tap"

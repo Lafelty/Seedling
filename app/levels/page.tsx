@@ -9,87 +9,90 @@ import { buildLevelMap, type CompletedSession, type GroupNode, type LevelExercis
 
 export const dynamic = 'force-dynamic'
 
-/** Circular progress ring with a glyph or number in the middle. */
-function RingBadge({
-  pct,
-  cleared,
-  locked,
-  children,
-  size = 52,
-}: {
-  pct: number
-  cleared: boolean
-  locked: boolean
-  children: React.ReactNode
-  size?: number
-}) {
-  const stroke = 4
-  const r = (size - stroke) / 2
-  const c = 2 * Math.PI * r
-  const off = c - (pct / 100) * c
-  const track = locked ? 'var(--border)' : 'rgba(74, 107, 90, 0.16)'
-  const fill = cleared ? '#C9B88A' : 'var(--primary)'
-  return (
-    <div style={{ position: 'relative', width: size, height: size, flexShrink: 0 }}>
-      <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} style={{ transform: 'rotate(-90deg)' }}>
-        <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke={track} strokeWidth={stroke} />
-        {!locked && (
-          <circle
-            cx={size / 2}
-            cy={size / 2}
-            r={r}
-            fill="none"
-            stroke={fill}
-            strokeWidth={stroke}
-            strokeLinecap="round"
-            strokeDasharray={c}
-            strokeDashoffset={off}
-            className="lvl-ring"
-          />
-        )}
-      </svg>
-      <div
-        style={{
-          position: 'absolute',
-          inset: 0,
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          color: locked ? 'var(--muted)' : cleared ? '#8A7A4E' : 'var(--primary)',
-        }}
-      >
-        {children}
-      </div>
-    </div>
-  )
-}
-
 function LevelsSkeleton() {
   return (
-    <main className="min-h-screen max-w-4xl mx-auto px-4 py-8 pb-24">
+    // Mirrors the real layout, so nothing jumps when the boxes arrive.
+    <main className="min-h-screen max-w-2xl mx-auto px-4 py-8 pb-24">
       <div className="mb-8">
-        <div className="skeleton" style={{ width: '160px', height: '32px', marginBottom: 'var(--space-2)' }} />
+        <div className="skeleton" style={{ width: '180px', height: '32px', marginBottom: 'var(--space-2)' }} />
         <div className="skeleton" style={{ width: '280px', height: '16px', marginBottom: 'var(--space-4)' }} />
-        <div className="skeleton" style={{ height: '92px', borderRadius: 'var(--radius-lg)' }} />
+        <div className="skeleton" style={{ height: '6px', borderRadius: 'var(--radius-full)' }} />
       </div>
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 320px))', gap: 'var(--space-5)', justifyContent: 'center' }}>
+      {/* Inline, not `.lvl-grid`: that rule ships with the loaded page. */}
+      <div style={{ display: 'grid', gap: 'var(--space-4)', gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 260px), 1fr))' }}>
         {[0, 1, 2, 3].map((i) => (
-          <div key={i} className="skeleton" style={{ height: '200px', borderRadius: 'var(--radius-lg)' }} />
+          <div key={i} className="skeleton" style={{ height: '208px', borderRadius: 'var(--radius-lg)' }} />
         ))}
       </div>
     </main>
   )
 }
 
-/** Status wording is the same in the grid and in the expanded panel. */
-function statusOf(node: GroupNode, isCurrent: boolean) {
-  const locked = node.status === 'locked'
+/**
+ * How a box is doing — never where it sits in a queue. `buildLevelMap` only
+ * ever marks a group `cleared` or `unlocked`: boxes are not gated behind each
+ * other, and the page must not imply that they are.
+ */
+function statusOf(node: GroupNode) {
   const cleared = node.status === 'cleared'
   return {
-    locked,
     cleared,
-    label: locked ? 'Locked' : cleared ? 'Complete' : isCurrent ? 'Current' : 'Open',
+    started: node.clearedCount > 0,
+    label: cleared ? 'Complete' : node.clearedCount > 0 ? 'In progress' : 'Not started',
   }
+}
+
+/**
+ * A growing thing per box, picked from the box's own id. Boxes need to be
+ * telling apart at a glance without any of them looking further along than
+ * another, so identity comes from form, not from rank or colour.
+ */
+function BoxMark({ id, cleared }: { id: string; cleared: boolean }) {
+  const marks = [
+    // Leaf on a stem
+    <g key="leaf">
+      <path d="M12 21c0-5 1-8 3-10" />
+      <path d="M15 11c3-1 5-4 5-8-4 0-7 2-8 5-1 3 0 4 3 3Z" />
+    </g>,
+    // Two-leaf sprout
+    <g key="sprout">
+      <path d="M12 21v-8" />
+      <path d="M12 13c-4 0-6-2-6-6 4 0 6 2 6 6Z" />
+      <path d="M12 13c4 0 6-2 6-6-4 0-6 2-6 6Z" />
+    </g>,
+    // Bud
+    <g key="bud">
+      <path d="M12 21v-6" />
+      <path d="M12 15c-3 0-5-2-5-5s2-7 5-7 5 4 5 7-2 5-5 5Z" />
+    </g>,
+    // Frond
+    <g key="frond">
+      <path d="M7 21C7 13 10 7 17 4" />
+      <path d="M9 15c2-1 4-1 6 0M10.5 11.5c2-1 4-2 6-2M12.5 8.5c1-1 2.5-2 4-2" />
+    </g>,
+  ]
+  let hash = 0
+  for (let i = 0; i < id.length; i++) hash = (hash * 31 + id.charCodeAt(i)) >>> 0
+
+  return (
+    <span
+      aria-hidden
+      style={{
+        width: 48,
+        height: 48,
+        flexShrink: 0,
+        display: 'grid',
+        placeItems: 'center',
+        borderRadius: 'var(--radius-full)',
+        background: cleared ? 'rgba(201, 184, 138, 0.30)' : 'rgba(74, 107, 90, 0.10)',
+        color: cleared ? '#8A7A4E' : 'var(--primary)',
+      }}
+    >
+      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round">
+        {marks[hash % marks.length]}
+      </svg>
+    </span>
+  )
 }
 
 export default function LevelsPage() {
@@ -206,8 +209,6 @@ export default function LevelsPage() {
   const visibleBoxes = map.filter((node) => node.total > 0)
   const clearedBoxes = visibleBoxes.filter((n) => n.status === 'cleared').length
   const overallPct = visibleBoxes.length > 0 ? Math.round((clearedBoxes / visibleBoxes.length) * 100) : 0
-  // The first box that isn't finished is where the patient is "up to".
-  const currentId = visibleBoxes.find((n) => n.status !== 'cleared')?.group.id ?? null
 
   return (
     // `reducedMotion="user"` makes every layout morph below honour the OS
@@ -242,39 +243,66 @@ export default function LevelsPage() {
           transition: width var(--dur-grow) var(--ease-out);
         }
 
-        /* The path: one trail down the page, a node per box. Reads as a route
-           on a phone, which is where the patients are. */
-        .lvl-path { list-style: none; margin: 0; padding: 0; }
-        .lvl-step { position: relative; padding-left: 76px; padding-bottom: var(--space-5); }
-        .lvl-step:last-child { padding-bottom: 0; }
-        .lvl-node {
-          position: absolute;
-          left: 0;
-          top: 0;
-          width: 56px;
-          height: 56px;
+        /* Boxes sit side by side as equals — no queue, no numbering, nothing
+           to suggest one has to come before another. */
+        .lvl-grid {
+          list-style: none;
+          margin: 0;
+          padding: 0;
           display: grid;
-          place-items: center;
+          gap: var(--space-4);
+          grid-template-columns: 1fr;
         }
-        .lvl-spine {
-          position: absolute;
-          left: 27px;
-          top: 60px;
-          bottom: -4px;
-          width: 2px;
-          border-radius: 2px;
-          background: var(--border);
+        @media (min-width: 620px) {
+          .lvl-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
         }
-        .lvl-step:last-child .lvl-spine { display: none; }
-        .lvl-step[data-state='cleared'] .lvl-spine {
-          background: linear-gradient(180deg, #C9B88A, rgba(201, 184, 138, 0.4));
-        }
-        .lvl-step[data-state='current'] .lvl-spine {
-          background: linear-gradient(180deg, var(--primary), var(--border));
+        .lvl-grid > li { display: flex; }
+
+        /* Two lines of description on every card, so no box grows taller than
+           its neighbours and starts looking more important than them. */
+        .lvl-clamp {
+          display: -webkit-box;
+          -webkit-line-clamp: 2;
+          -webkit-box-orient: vertical;
+          overflow: hidden;
         }
 
+        .lvl-chip {
+          display: inline-flex;
+          align-items: center;
+          flex-shrink: 0;
+          font-size: var(--text-xs);
+          font-weight: 700;
+          letter-spacing: 0.04em;
+          text-transform: uppercase;
+          padding: var(--space-1) var(--space-3);
+          border-radius: var(--radius-full);
+          background: rgba(74, 107, 90, 0.12);
+          color: var(--primary);
+        }
+        .lvl-chip[data-cleared='true'] { background: rgba(201, 184, 138, 0.28); color: #8A7A4E; }
+        /* An untouched box has nothing to announce — the chip stays a label,
+           not a badge, so three "not started" cards don't shout at once. */
+        .lvl-chip[data-started='false'] { background: transparent; color: var(--muted); padding-inline: 0; }
+
+        .lvl-bar {
+          display: block;
+          height: 6px;
+          border-radius: var(--radius-full);
+          background: rgba(74, 107, 90, 0.12);
+          overflow: hidden;
+        }
+        .lvl-bar > span {
+          display: block;
+          height: 100%;
+          border-radius: var(--radius-full);
+          background: var(--primary);
+          transition: width var(--dur-grow) var(--ease-out);
+        }
+        .lvl-card[data-cleared='true'] .lvl-bar > span { background: #C9B88A; }
+
         @media (prefers-reduced-motion: reduce) {
-          .lvl-card, .lvl-cta svg, .lvl-rail-fill { transition: none; }
+          .lvl-card, .lvl-cta svg, .lvl-rail-fill, .lvl-bar > span { transition: none; }
         }
       `}</style>
 
@@ -282,16 +310,16 @@ export default function LevelsPage() {
           tint must not be pinned to the column's width. */}
       <div style={{ background: 'linear-gradient(180deg, rgba(74, 107, 90, 0.08), transparent 340px)' }}>
       <main className="min-h-screen max-w-2xl mx-auto px-4 py-8 pb-24">
-        {/* Header. The progress that used to sit in its own slab now rides in
-            the sentence and the rail — the path itself is the focal point. */}
+        {/* Header. Progress rides in the sentence and the rail rather than its
+            own slab, and says nothing about which box to pick. */}
         <div className="mb-8 animate-fadeIn">
-          <h1 style={{ color: 'var(--primary)' }}>Your path</h1>
+          <h1 style={{ color: 'var(--primary)' }}>Your boxes</h1>
           <p style={{ color: 'var(--muted)', marginTop: 'var(--space-1)' }}>
             {visibleBoxes.length === 0
               ? 'Work through each box of poses at your own pace'
               : overallPct === 100
-              ? 'Every box cleared — beautiful work.'
-              : `${clearedBoxes} of ${visibleBoxes.length} boxes behind you. One pose at a time.`}
+              ? 'Every box complete — beautiful work.'
+              : `Open any box you like. ${clearedBoxes} of ${visibleBoxes.length} finished so far.`}
           </p>
 
           {visibleBoxes.length > 0 && (
@@ -311,55 +339,23 @@ export default function LevelsPage() {
             </Link>
           </div>
         ) : (
-          <ol className="lvl-path">
+          <ul className="lvl-grid">
             {visibleBoxes.map((node, index) => {
-              const locked = node.status === 'locked'
-              const cleared = node.status === 'cleared'
-              const isCurrent = node.group.id === currentId
+              const { cleared, started, label } = statusOf(node)
               const pct = node.total > 0 ? Math.round((node.clearedCount / node.total) * 100) : 0
-              const cta = cleared ? 'Review' : node.clearedCount > 0 ? 'Continue' : 'Start'
-              const statusLabel = locked ? 'Locked' : cleared ? 'Complete' : isCurrent ? 'Current' : 'Open'
-
+              const cta = cleared ? 'Review' : started ? 'Continue' : 'Start'
               const isOpen = active?.group.id === node.group.id
-              const state = cleared ? 'cleared' : locked ? 'locked' : isCurrent ? 'current' : 'open'
 
               return (
-                <li
-                  key={node.group.id}
-                  className="lvl-step animate-fadeIn"
-                  data-state={state}
-                  style={{ animationDelay: `${index * 70}ms` }}
-                >
-                  {/* The trail between boxes: walked stretches are gold, the one
-                      the patient is on fades toward what hasn't been done yet. */}
-                  <span className="lvl-spine" aria-hidden />
-
-                  <motion.div layoutId={`box-ring-${node.group.id}`} className="lvl-node">
-                    <RingBadge pct={pct} cleared={cleared} locked={locked} size={isCurrent ? 56 : 44}>
-                      {cleared ? (
-                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
-                          <path d="M5 12l5 5L19 7" />
-                        </svg>
-                      ) : locked ? (
-                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                          <rect x="5" y="11" width="14" height="9" rx="2" />
-                          <path d="M8 11V7a4 4 0 0 1 8 0v4" />
-                        </svg>
-                      ) : (
-                        <span style={{ fontSize: isCurrent ? 'var(--text-base)' : 'var(--text-sm)', fontWeight: 800 }}>
-                          {index + 1}
-                        </span>
-                      )}
-                    </RingBadge>
-                  </motion.div>
-
+                <li key={node.group.id}>
                   <motion.div
                     layoutId={`box-${node.group.id}`}
-                    className="lvl-card card"
+                    className="lvl-card card animate-fadeIn"
+                    data-cleared={cleared}
                     role="button"
                     tabIndex={0}
                     aria-expanded={isOpen}
-                    aria-label={`${node.group.name}, box ${index + 1}, ${pct}% complete, ${statusLabel.toLowerCase()}`}
+                    aria-label={`${node.group.name}, ${node.clearedCount} of ${node.total} poses done, ${label.toLowerCase()}`}
                     onClick={(event) => {
                       openerRef.current = event.currentTarget
                       setActive(node)
@@ -371,71 +367,57 @@ export default function LevelsPage() {
                       setActive(node)
                     }}
                     style={{
+                      animationDelay: `${index * 60}ms`,
+                      height: '100%',
                       display: 'flex',
                       flexDirection: 'column',
                       gap: 'var(--space-3)',
+                      // A finished box warms toward gold. Every other box looks
+                      // exactly like every other box — none is "next".
                       background: cleared
                         ? 'linear-gradient(160deg, rgba(201, 184, 138, 0.20), var(--surface) 72%)'
-                        : isCurrent
-                        ? 'linear-gradient(160deg, rgba(74, 107, 90, 0.13), var(--surface) 72%)'
                         : 'var(--surface)',
-                      borderColor: cleared
-                        ? 'rgba(201, 184, 138, 0.55)'
-                        : isCurrent
-                        ? 'var(--primary)'
-                        : 'var(--border)',
-                      borderWidth: isCurrent ? '2px' : '1px',
-                      // Locked boxes stay legible: quieter, never greyed to mush.
-                      opacity: locked ? 0.72 : 1,
+                      borderColor: cleared ? 'rgba(201, 184, 138, 0.55)' : 'var(--border)',
                       cursor: 'pointer',
                       // The panel takes over the shared layout; leaving the card
                       // visible underneath would show it twice mid-morph.
                       visibility: isOpen ? 'hidden' : 'visible',
                     }}
                   >
-                    <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 'var(--space-3)' }}>
-                      <motion.div layoutId={`box-title-${node.group.id}`} style={{ minWidth: 0 }}>
-                        <h2 style={{ fontSize: isCurrent ? 'var(--text-xl)' : 'var(--text-lg)', fontWeight: 600, color: 'var(--ink)' }}>
-                          {node.group.name}
-                        </h2>
-                        {/* Only the box in play spends room on its description;
-                            the rest earn it back by opening. */}
-                        {isCurrent && node.group.description && (
-                          <p style={{ fontSize: 'var(--text-sm)', color: 'var(--muted)', lineHeight: 1.5, marginTop: 'var(--space-1)' }}>
-                            {node.group.description}
-                          </p>
-                        )}
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 'var(--space-3)' }}>
+                      <motion.div layoutId={`box-mark-${node.group.id}`}>
+                        <BoxMark id={node.group.id} cleared={cleared} />
                       </motion.div>
 
                       <motion.span
                         layoutId={`box-chip-${node.group.id}`}
-                        style={{
-                          display: 'inline-flex',
-                          alignItems: 'center',
-                          flexShrink: 0,
-                          fontSize: 'var(--text-xs)',
-                          fontWeight: 700,
-                          letterSpacing: '0.04em',
-                          textTransform: 'uppercase',
-                          padding: cleared || isCurrent ? 'var(--space-1) var(--space-3)' : 0,
-                          borderRadius: 'var(--radius-full)',
-                          background: cleared
-                            ? 'rgba(201, 184, 138, 0.28)'
-                            : isCurrent
-                            ? 'rgba(74, 107, 90, 0.16)'
-                            : 'transparent',
-                          color: cleared ? '#8A7A4E' : isCurrent ? 'var(--primary)' : 'var(--muted)',
-                        }}
+                        className="lvl-chip"
+                        data-cleared={cleared}
+                        data-started={started}
                       >
-                        {statusLabel}
+                        {label}
                       </motion.span>
                     </div>
 
-                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 'var(--space-2)' }}>
-                      <span style={{ fontSize: 'var(--text-sm)', color: 'var(--muted)', fontWeight: 600 }}>
-                        {locked ? 'Clear the box before this one' : `${node.clearedCount}/${node.total} poses`}
+                    <motion.div layoutId={`box-title-${node.group.id}`} style={{ flex: 1, minWidth: 0 }}>
+                      <h2 style={{ fontSize: 'var(--text-lg)', fontWeight: 600, color: 'var(--ink)' }}>
+                        {node.group.name}
+                      </h2>
+                      {node.group.description && (
+                        <p className="lvl-clamp" style={{ fontSize: 'var(--text-sm)', color: 'var(--muted)', lineHeight: 1.5, marginTop: 'var(--space-1)' }}>
+                          {node.group.description}
+                        </p>
+                      )}
+                    </motion.div>
+
+                    <div style={{ display: 'grid', gap: 'var(--space-2)' }}>
+                      <span className="lvl-bar" role="img" aria-label={`${pct}% of this box done`}>
+                        <span style={{ width: `${pct}%` }} />
                       </span>
-                      {!locked && (
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 'var(--space-2)' }}>
+                        <span style={{ fontSize: 'var(--text-sm)', color: 'var(--muted)', fontWeight: 600 }}>
+                          {node.clearedCount} of {node.total} poses
+                        </span>
                         <span
                           className="lvl-cta"
                           style={{
@@ -453,13 +435,13 @@ export default function LevelsPage() {
                             <path d="M13 6l6 6-6 6" />
                           </svg>
                         </span>
-                      )}
+                      </div>
                     </div>
                   </motion.div>
                 </li>
               )
             })}
-          </ol>
+          </ul>
         )}
       </main>
       </div>
@@ -469,8 +451,6 @@ export default function LevelsPage() {
           <ExpandedBox
             key={active.group.id}
             node={active}
-            index={visibleBoxes.findIndex((n) => n.group.id === active.group.id)}
-            isCurrent={active.group.id === currentId}
             panelRef={panelRef}
             closeRef={closeRef}
             onClose={() => setActive(null)}
@@ -513,22 +493,18 @@ export default function LevelsPage() {
  */
 function ExpandedBox({
   node,
-  index,
-  isCurrent,
   panelRef,
   closeRef,
   onClose,
 }: {
   node: GroupNode
-  index: number
-  isCurrent: boolean
   panelRef: React.RefObject<HTMLDivElement | null>
   closeRef: React.RefObject<HTMLButtonElement | null>
   onClose: () => void
 }) {
-  const { locked, cleared, label } = statusOf(node, isCurrent)
+  const { cleared, started, label } = statusOf(node)
   const pct = node.total > 0 ? Math.round((node.clearedCount / node.total) * 100) : 0
-  const cta = cleared ? 'Review box' : node.clearedCount > 0 ? 'Continue box' : 'Start box'
+  const cta = cleared ? 'Review box' : started ? 'Continue box' : 'Start box'
 
   return (
     <>
@@ -561,47 +537,18 @@ function ExpandedBox({
             backgroundColor: 'var(--surface)',
             backgroundImage: cleared
               ? 'linear-gradient(160deg, rgba(201, 184, 138, 0.22), transparent 72%)'
-              : locked
-              ? 'none'
               : 'linear-gradient(160deg, rgba(74, 107, 90, 0.13), transparent 72%)',
-            borderColor: cleared ? 'rgba(201, 184, 138, 0.55)' : isCurrent ? 'var(--primary)' : 'var(--border)',
+            borderColor: cleared ? 'rgba(201, 184, 138, 0.55)' : 'var(--border)',
             boxShadow: '0 24px 60px rgba(38, 48, 42, 0.22)',
           }}
         >
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 'var(--space-2)' }}>
-            <motion.div layoutId={`box-ring-${node.group.id}`}>
-              <RingBadge pct={pct} cleared={cleared} locked={locked}>
-                {cleared ? (
-                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
-                    <path d="M5 12l5 5L19 7" />
-                  </svg>
-                ) : locked ? (
-                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                    <rect x="5" y="11" width="14" height="9" rx="2" />
-                    <path d="M8 11V7a4 4 0 0 1 8 0v4" />
-                  </svg>
-                ) : (
-                  <span style={{ fontSize: 'var(--text-base)', fontWeight: 800 }}>{index + 1}</span>
-                )}
-              </RingBadge>
+            <motion.div layoutId={`box-mark-${node.group.id}`}>
+              <BoxMark id={node.group.id} cleared={cleared} />
             </motion.div>
 
             <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-2)' }}>
-              <motion.span
-                layoutId={`box-chip-${node.group.id}`}
-                style={{
-                  display: 'inline-flex',
-                  alignItems: 'center',
-                  fontSize: 'var(--text-xs)',
-                  fontWeight: 700,
-                  letterSpacing: '0.04em',
-                  textTransform: 'uppercase',
-                  padding: 'var(--space-1) var(--space-3)',
-                  borderRadius: 'var(--radius-full)',
-                  background: cleared ? 'rgba(201, 184, 138, 0.28)' : isCurrent ? 'rgba(74, 107, 90, 0.16)' : 'rgba(0,0,0,0.04)',
-                  color: cleared ? '#8A7A4E' : isCurrent ? 'var(--primary)' : 'var(--muted)',
-                }}
-              >
+              <motion.span layoutId={`box-chip-${node.group.id}`} className="lvl-chip" data-cleared={cleared} data-started={started}>
                 {label}
               </motion.span>
               <button
@@ -621,8 +568,6 @@ function ExpandedBox({
           </div>
 
           <motion.div layoutId={`box-title-${node.group.id}`}>
-            {/* No "Box N" label: the ring beside it already carries the number,
-                and the card it grew from doesn't have one either. */}
             <h2 id={`box-heading-${node.group.id}`} style={{ fontSize: 'var(--text-xl)', fontWeight: 600, color: 'var(--ink)' }}>
               {node.group.name}
             </h2>
@@ -693,19 +638,15 @@ function ExpandedBox({
 
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 'var(--space-3)', borderTop: '1px solid var(--border)', paddingTop: 'var(--space-3)' }}>
             <span style={{ fontSize: 'var(--text-sm)', color: 'var(--muted)', fontWeight: 600 }}>
-              {node.clearedCount}/{node.total} poses
+              {node.clearedCount} of {node.total} poses · {pct}%
             </span>
-            {locked ? (
-              <span style={{ fontSize: 'var(--text-sm)', color: 'var(--muted)' }}>Clear the previous box to open this one</span>
-            ) : (
-              <Link href={`/levels/${node.group.id}`} className="pill-btn pill-btn-primary" style={{ textDecoration: 'none' }}>
-                {cta}
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                  <path d="M5 12h14" />
-                  <path d="M13 6l6 6-6 6" />
-                </svg>
-              </Link>
-            )}
+            <Link href={`/levels/${node.group.id}`} className="pill-btn pill-btn-primary" style={{ textDecoration: 'none' }}>
+              {cta}
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M5 12h14" />
+                <path d="M13 6l6 6-6 6" />
+              </svg>
+            </Link>
           </div>
         </motion.div>
       </div>

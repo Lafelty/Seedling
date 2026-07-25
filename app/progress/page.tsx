@@ -6,6 +6,7 @@ import { getProgress, setProgressUid, applyServerProgress, type ProgressData } f
 import { createClient } from '@/lib/supabase/client';
 import { startOfMonth, endOfMonth, eachDayOfInterval, format, isSameDay, isSameMonth, addMonths, startOfDay, subDays } from 'date-fns';
 import { DayFace, MOOD_BG, computeDayMood, type DayMood } from '@/components/DayFace';
+import { StarBadge } from '@/components/StarBadge';
 
 interface DaySession {
   id: string;
@@ -345,12 +346,12 @@ export default function ProgressPage() {
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 'var(--space-3)', flexWrap: 'wrap', marginBottom: 'var(--space-4)' }}>
           <h2 style={{ color: 'var(--primary)' }}>{format(selectedDate, 'EEEE, MMMM d')}</h2>
           {selectedCompleted && (
-            <span className="star-badge" style={{ fontSize: 'var(--text-sm)', padding: 'var(--space-1) var(--space-3)' }}>
+            <StarBadge as="span" style={{ fontSize: 'var(--text-sm)', padding: 'var(--space-1) var(--space-3)' }}>
               <svg width="14" height="14" viewBox="0 0 20 20" fill="currentColor">
                 <path d="M10 0l2.5 6.5H19l-5.5 4 2 6.5L10 13l-5.5 4 2-6.5-5.5-4h6.5z" />
               </svg>
               <span>Star earned</span>
-            </span>
+            </StarBadge>
           )}
         </div>
 

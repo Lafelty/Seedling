@@ -5,6 +5,7 @@ import { useParams, useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { createClient } from '@/lib/supabase/client'
 import { NumberField } from '@/components/NumberField'
+import { StarBadge } from '@/components/StarBadge'
 import { getTreeStage } from '@/lib/progress'
 import type { ProfileSummary as Profile } from '@/lib/supabase/types'
 
@@ -169,12 +170,12 @@ export default function AdminUserPage() {
           </h2>
 
           <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-3)', flexWrap: 'wrap' }}>
-            <span className="star-badge">
+            <StarBadge as="span">
               <svg width="20" height="20" viewBox="0 0 20 20" fill="currentColor">
                 <path d="M10 0l2.5 6.5H19l-5.5 4 2 6.5L10 13l-5.5 4 2-6.5-5.5-4h6.5z" />
               </svg>
               <span>{profile.total_stars}</span>
-            </span>
+            </StarBadge>
 
             <NumberField
               aria-label="Total stars"

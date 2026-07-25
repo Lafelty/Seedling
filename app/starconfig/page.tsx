@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { createClient } from '@/lib/supabase/client'
+import { StarBadge } from '@/components/StarBadge'
 import type { ProfileSummary as Profile } from '@/lib/supabase/types'
 
 export const dynamic = 'force-dynamic'
@@ -186,13 +187,14 @@ export default function StarConfigPage() {
                         <Link
                           href={`/admin/users/${profile.id}`}
                           title="Edit stars"
-                          className="star-badge"
-                          style={{ textDecoration: 'none', fontSize: 'var(--text-sm)', padding: 'var(--space-1) var(--space-3)' }}
+                          style={{ textDecoration: 'none' }}
                         >
-                          <svg width="14" height="14" viewBox="0 0 20 20" fill="currentColor">
-                            <path d="M10 0l2.5 6.5H19l-5.5 4 2 6.5L10 13l-5.5 4 2-6.5-5.5-4h6.5z" />
-                          </svg>
-                          <span>{profile.total_stars}</span>
+                          <StarBadge as="span" style={{ fontSize: 'var(--text-sm)', padding: 'var(--space-1) var(--space-3)' }}>
+                            <svg width="14" height="14" viewBox="0 0 20 20" fill="currentColor">
+                              <path d="M10 0l2.5 6.5H19l-5.5 4 2 6.5L10 13l-5.5 4 2-6.5-5.5-4h6.5z" />
+                            </svg>
+                            <span>{profile.total_stars}</span>
+                          </StarBadge>
                         </Link>
                       </td>
                       <td style={{ padding: 'var(--space-3)', fontSize: 'var(--text-sm)', color: 'var(--ink)' }}>

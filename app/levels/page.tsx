@@ -6,6 +6,8 @@ import { useRouter } from 'next/navigation'
 import { AnimatePresence, MotionConfig, motion } from 'framer-motion'
 import { createClient } from '@/lib/supabase/client'
 import { buildLevelMap, type CompletedSession, type GroupNode, type LevelExercise, type LevelGroup } from '@/lib/levels'
+import { tintOf } from '@/lib/levels-theme'
+import BoxMark from '@/components/BoxMark'
 
 export const dynamic = 'force-dynamic'
 
@@ -40,83 +42,6 @@ function statusOf(node: GroupNode) {
     started: node.clearedCount > 0,
     label: cleared ? 'Complete' : node.clearedCount > 0 ? 'In progress' : 'Not started',
   }
-}
-
-/** Stable per-box index, so a box keeps the same mark and the same tint. */
-function hashId(id: string) {
-  let hash = 0
-  for (let i = 0; i < id.length; i++) hash = (hash * 31 + id.charCodeAt(i)) >>> 0
-  return hash
-}
-
-/**
- * One light green per box. Four greens of the same lightness and weight — they
- * tell boxes apart without any of them reading as further along, higher, or
- * next. A cleared box leaves this family for gold instead.
- */
-const BOX_TINTS = [
-  { wash: 'rgba(124, 199, 134, 0.30)', edge: 'rgba(120, 187, 128, 0.55)', ink: '#2F6B45', bar: '#5FAF6B' }, // leaf
-  { wash: 'rgba(150, 214, 184, 0.32)', edge: 'rgba(126, 194, 166, 0.55)', ink: '#2C6A5B', bar: '#54B296' }, // mint
-  { wash: 'rgba(186, 222, 140, 0.34)', edge: 'rgba(163, 203, 120, 0.55)', ink: '#4E6B27', bar: '#8CC252' }, // spring
-  { wash: 'rgba(146, 208, 205, 0.32)', edge: 'rgba(124, 187, 186, 0.55)', ink: '#2A6465', bar: '#57AFAF' }, // eucalyptus
-]
-
-const CLEARED_TINT = { wash: 'rgba(201, 184, 138, 0.28)', edge: 'rgba(201, 184, 138, 0.60)', ink: '#7A6A3E', bar: '#C9B88A' }
-
-function tintOf(id: string, cleared: boolean) {
-  return cleared ? CLEARED_TINT : BOX_TINTS[hashId(id) % BOX_TINTS.length]
-}
-
-/**
- * A growing thing per box, picked from the box's own id. Form carries most of
- * the identity; the box's own green carries the rest.
- */
-function BoxMark({ id, cleared }: { id: string; cleared: boolean }) {
-  const marks = [
-    // Leaf on a stem
-    <g key="leaf">
-      <path d="M12 21c0-5 1-8 3-10" />
-      <path d="M15 11c3-1 5-4 5-8-4 0-7 2-8 5-1 3 0 4 3 3Z" />
-    </g>,
-    // Two-leaf sprout
-    <g key="sprout">
-      <path d="M12 21v-8" />
-      <path d="M12 13c-4 0-6-2-6-6 4 0 6 2 6 6Z" />
-      <path d="M12 13c4 0 6-2 6-6-4 0-6 2-6 6Z" />
-    </g>,
-    // Bud
-    <g key="bud">
-      <path d="M12 21v-6" />
-      <path d="M12 15c-3 0-5-2-5-5s2-7 5-7 5 4 5 7-2 5-5 5Z" />
-    </g>,
-    // Frond
-    <g key="frond">
-      <path d="M7 21C7 13 10 7 17 4" />
-      <path d="M9 15c2-1 4-1 6 0M10.5 11.5c2-1 4-2 6-2M12.5 8.5c1-1 2.5-2 4-2" />
-    </g>,
-  ]
-  const hash = hashId(id)
-  const tint = tintOf(id, cleared)
-
-  return (
-    <span
-      aria-hidden
-      style={{
-        width: 48,
-        height: 48,
-        flexShrink: 0,
-        display: 'grid',
-        placeItems: 'center',
-        borderRadius: 'var(--radius-full)',
-        background: tint.wash,
-        color: tint.ink,
-      }}
-    >
-      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round">
-        {marks[hash % marks.length]}
-      </svg>
-    </span>
-  )
 }
 
 export default function LevelsPage() {

@@ -4,6 +4,8 @@ import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { createClient } from '@/lib/supabase/client'
+import { NumberField } from '@/components/NumberField'
+import { SmoothInput } from '@/components/SmoothInput'
 
 export const dynamic = 'force-dynamic'
 
@@ -351,38 +353,34 @@ export default function AdminGroupsPage() {
           }}>
             <label style={fieldLabelStyle}>
               Order
-              <input
-                type="number"
+              <NumberField
                 min={1}
                 value={ex.rank_in_group}
-                onChange={(e) => updateExerciseLocal(ex.id, { rank_in_group: Number(e.target.value) })}
+                onValueChange={(value) => updateExerciseLocal(ex.id, { rank_in_group: value ?? 1 })}
                 style={{ ...inputStyle, width: '64px', display: 'block', marginTop: '3px' }}
               />
             </label>
 
             <label style={fieldLabelStyle}>
               Min form %
-              <input
-                type="number"
+              <NumberField
                 min={0}
                 max={100}
                 value={ex.unlock_min_score}
-                onChange={(e) => updateExerciseLocal(ex.id, { unlock_min_score: Number(e.target.value) })}
+                onValueChange={(value) => updateExerciseLocal(ex.id, { unlock_min_score: value ?? 0 })}
                 style={{ ...inputStyle, width: '76px', display: 'block', marginTop: '3px' }}
               />
             </label>
 
             <label style={fieldLabelStyle}>
               Max seconds
-              <input
-                type="number"
+              <NumberField
                 min={1}
+                nullable
                 placeholder="none"
-                value={ex.unlock_max_seconds ?? ''}
-                onChange={(e) =>
-                  updateExerciseLocal(ex.id, {
-                    unlock_max_seconds: e.target.value === '' ? null : Number(e.target.value),
-                  })
+                value={ex.unlock_max_seconds}
+                onValueChange={(value) =>
+                  updateExerciseLocal(ex.id, { unlock_max_seconds: value })
                 }
                 style={{ ...inputStyle, width: '96px', display: 'block', marginTop: '3px' }}
               />
@@ -640,7 +638,7 @@ export default function AdminGroupsPage() {
               <div style={{ display: 'flex', gap: 'var(--space-3)', flexWrap: 'wrap', alignItems: 'flex-end' }}>
                 <label style={{ ...fieldLabelStyle, flex: '0 1 220px' }}>
                   Name
-                  <input
+                  <SmoothInput
                     autoFocus
                     value={newName}
                     onChange={(e) => setNewName(e.target.value)}
@@ -650,7 +648,7 @@ export default function AdminGroupsPage() {
                 </label>
                 <label style={{ ...fieldLabelStyle, flex: '1 1 260px' }}>
                   Description (optional)
-                  <input
+                  <SmoothInput
                     value={newDescription}
                     onChange={(e) => setNewDescription(e.target.value)}
                     placeholder="What this box trains"
@@ -847,7 +845,7 @@ export default function AdminGroupsPage() {
                       }}>
                         <label style={{ ...fieldLabelStyle, flex: '0 1 200px' }}>
                           Name
-                          <input
+                          <SmoothInput
                             value={group.name}
                             onChange={(e) => updateGroupLocal(group.id, { name: e.target.value })}
                             style={{ ...inputStyle, display: 'block', width: '100%', marginTop: '3px', fontWeight: 600 }}
@@ -855,7 +853,7 @@ export default function AdminGroupsPage() {
                         </label>
                         <label style={{ ...fieldLabelStyle, flex: '1 1 220px' }}>
                           Description
-                          <input
+                          <SmoothInput
                             value={group.description ?? ''}
                             onChange={(e) => updateGroupLocal(group.id, { description: e.target.value || null })}
                             style={{ ...inputStyle, display: 'block', width: '100%', marginTop: '3px' }}
@@ -863,10 +861,9 @@ export default function AdminGroupsPage() {
                         </label>
                         <label style={fieldLabelStyle}>
                           Order
-                          <input
-                            type="number"
+                          <NumberField
                             value={group.sort_order}
-                            onChange={(e) => updateGroupLocal(group.id, { sort_order: Number(e.target.value) })}
+                            onValueChange={(value) => updateGroupLocal(group.id, { sort_order: value ?? 0 })}
                             style={{ ...inputStyle, width: '64px', display: 'block', marginTop: '3px' }}
                           />
                         </label>

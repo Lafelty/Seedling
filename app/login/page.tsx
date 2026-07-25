@@ -4,8 +4,15 @@ import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { createClient } from '@/lib/supabase/client'
+import { SmoothInput } from '@/components/SmoothInput'
 
 export const dynamic = 'force-dynamic'
+
+/**
+ * Basic shape check that stands in for the native `type="email"` validation the
+ * smooth-caret field cannot use (it needs `type="text"` to expose the caret).
+ */
+const EMAIL_PATTERN = '[^@\\s]+@[^@\\s]+\\.[^@\\s]+'
 
 export default function LoginPage() {
   const [email, setEmail] = useState('')
@@ -86,9 +93,15 @@ export default function LoginPage() {
             >
               Email
             </label>
-            <input
+            <SmoothInput
               id="email"
-              type="email"
+              type="text"
+              inputMode="email"
+              autoComplete="email"
+              autoCapitalize="none"
+              spellCheck={false}
+              pattern={EMAIL_PATTERN}
+              title="Enter an email address like you@example.com"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
               required
@@ -119,9 +132,10 @@ export default function LoginPage() {
               Password
             </label>
             <div style={{ position: 'relative' }}>
-              <input
+              <SmoothInput
                 id="password"
                 type={showPassword ? 'text' : 'password'}
+                autoComplete="current-password"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 required

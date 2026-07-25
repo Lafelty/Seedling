@@ -14,6 +14,8 @@ import {
   ResponsiveContainer,
 } from 'recharts'
 import { createClient } from '@/lib/supabase/client'
+import { NumberField } from '@/components/NumberField'
+import { SmoothInput, SmoothTextarea } from '@/components/SmoothInput'
 import {
   measureAngle,
   deriveCriteriaFromRecordings,
@@ -1214,7 +1216,7 @@ export default function EditExercisePage({ params }: { params: Promise<{ id: str
                   <label className="block text-sm font-medium text-[#1F2421] mb-1">
                     Exercise Name *
                   </label>
-                  <input
+                  <SmoothInput
                     type="text"
                     value={exerciseName}
                     onChange={(e) => setExerciseName(e.target.value)}
@@ -1227,7 +1229,7 @@ export default function EditExercisePage({ params }: { params: Promise<{ id: str
                   <label className="block text-sm font-medium text-[#1F2421] mb-1">
                     Description
                   </label>
-                  <textarea
+                  <SmoothTextarea
                     value={exerciseDescription}
                     onChange={(e) => setExerciseDescription(e.target.value)}
                     placeholder="Brief description of the exercise"
@@ -1437,50 +1439,37 @@ export default function EditExercisePage({ params }: { params: Promise<{ id: str
                       <div className="grid grid-cols-4 gap-3">
                         <div>
                           <label className="block text-xs text-[#5C635D] mb-1">Rest (°)</label>
-                          <input
-                            type="number"
-                            value={criterion.restAngle ?? ''}
+                          <NumberField
+                            nullable
+                            value={criterion.restAngle}
                             placeholder="—"
-                            onChange={(e) => {
-                              const v = parseInt(e.target.value, 10)
-                              updateAngleCriterion(i, 'restAngle', Number.isNaN(v) ? undefined : v)
-                            }}
+                            onValueChange={(value) =>
+                              updateAngleCriterion(i, 'restAngle', value ?? undefined)
+                            }
                             className="w-full px-2 py-1 text-sm border border-[#E7E1D7] rounded focus:outline-none focus:ring-1 focus:ring-[#C4612F]"
                           />
                         </div>
                         <div>
                           <label className="block text-xs text-[#5C635D] mb-1">Target (°)</label>
-                          <input
-                            type="number"
+                          <NumberField
                             value={criterion.targetAngle}
-                            onChange={(e) => {
-                              const v = parseInt(e.target.value, 10)
-                              updateAngleCriterion(i, 'targetAngle', Number.isNaN(v) ? 0 : v)
-                            }}
+                            onValueChange={(value) => updateAngleCriterion(i, 'targetAngle', value ?? 0)}
                             className="w-full px-2 py-1 text-sm border border-[#E7E1D7] rounded focus:outline-none focus:ring-1 focus:ring-[#C4612F]"
                           />
                         </div>
                         <div>
                           <label className="block text-xs text-[#5C635D] mb-1">Min (°)</label>
-                          <input
-                            type="number"
+                          <NumberField
                             value={criterion.minAngle}
-                            onChange={(e) => {
-                              const v = parseInt(e.target.value, 10)
-                              updateAngleCriterion(i, 'minAngle', Number.isNaN(v) ? 0 : v)
-                            }}
+                            onValueChange={(value) => updateAngleCriterion(i, 'minAngle', value ?? 0)}
                             className="w-full px-2 py-1 text-sm border border-[#E7E1D7] rounded focus:outline-none focus:ring-1 focus:ring-[#C4612F]"
                           />
                         </div>
                         <div>
                           <label className="block text-xs text-[#5C635D] mb-1">Max (°)</label>
-                          <input
-                            type="number"
+                          <NumberField
                             value={criterion.maxAngle}
-                            onChange={(e) => {
-                              const v = parseInt(e.target.value, 10)
-                              updateAngleCriterion(i, 'maxAngle', Number.isNaN(v) ? 0 : v)
-                            }}
+                            onValueChange={(value) => updateAngleCriterion(i, 'maxAngle', value ?? 0)}
                             className="w-full px-2 py-1 text-sm border border-[#E7E1D7] rounded focus:outline-none focus:ring-1 focus:ring-[#C4612F]"
                           />
                         </div>
@@ -1588,20 +1577,16 @@ export default function EditExercisePage({ params }: { params: Promise<{ id: str
                         <label className="block text-xs text-[#5C635D] mb-1">
                           Max Height Difference (px)
                         </label>
-                        <input
-                          type="number"
+                        <NumberField
                           value={rule.maxDifference}
-                          onChange={(e) => {
-                            const v = parseInt(e.target.value, 10)
-                            updateLevelingRule(i, 'maxDifference', Number.isNaN(v) ? 0 : v)
-                          }}
+                          onValueChange={(value) => updateLevelingRule(i, 'maxDifference', value ?? 0)}
                           className="w-full px-2 py-1 text-sm border border-[#E7E1D7] rounded focus:outline-none focus:ring-1 focus:ring-[#C4612F]"
                         />
                       </div>
 
                       <div>
                         <label className="block text-xs text-[#5C635D] mb-1">Message</label>
-                        <input
+                        <SmoothInput
                           type="text"
                           value={rule.message}
                           onChange={(e) => updateLevelingRule(i, 'message', e.target.value)}
@@ -1646,10 +1631,10 @@ export default function EditExercisePage({ params }: { params: Promise<{ id: str
                   <label className="block text-sm font-medium text-[#1F2421] mb-1">
                     Target Reps
                   </label>
-                  <input
-                    type="number"
+                  <NumberField
+                    min={1}
                     value={targetReps}
-                    onChange={(e) => setTargetReps(parseInt(e.target.value))}
+                    onValueChange={(value) => setTargetReps(value ?? 1)}
                     className="w-full px-3 py-2 border border-[#E7E1D7] rounded-lg focus:outline-none focus:ring-2 focus:ring-[#C4612F]"
                   />
                 </div>
@@ -1658,10 +1643,10 @@ export default function EditExercisePage({ params }: { params: Promise<{ id: str
                   <label className="block text-sm font-medium text-[#1F2421] mb-1">
                     Hold Duration (ms)
                   </label>
-                  <input
-                    type="number"
+                  <NumberField
+                    min={0}
                     value={holdDuration}
-                    onChange={(e) => setHoldDuration(parseInt(e.target.value))}
+                    onValueChange={(value) => setHoldDuration(value ?? 0)}
                     className="w-full px-3 py-2 border border-[#E7E1D7] rounded-lg focus:outline-none focus:ring-2 focus:ring-[#C4612F]"
                   />
                 </div>
@@ -1678,7 +1663,7 @@ export default function EditExercisePage({ params }: { params: Promise<{ id: str
                     <label className="block text-xs text-[#5C635D] mb-1 capitalize">
                       {key.replace(/([A-Z])/g, ' $1')}
                     </label>
-                    <input
+                    <SmoothInput
                       type="text"
                       value={value}
                       onChange={(e) =>

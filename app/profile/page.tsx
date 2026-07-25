@@ -4,8 +4,20 @@ import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { createClient } from '@/lib/supabase/client'
+import { SmoothInput } from '@/components/SmoothInput'
+import { sanitizeNumericDraft } from '@/lib/numericInput'
 
 export const dynamic = 'force-dynamic'
+
+/**
+ * Basic shape check that stands in for the native `type="email"` validation the
+ * smooth-caret field cannot use (it needs `type="text"` to expose the caret).
+ * `saveProfile` still checks the guardian address before writing.
+ */
+const EMAIL_PATTERN = '[^@\\s]+@[^@\\s]+\\.[^@\\s]+'
+
+/** Height and weight stay strings so an empty field can mean "not set". */
+const DECIMAL = { format: 'decimal' as const }
 
 const inputStyle: React.CSSProperties = {
   width: '100%',
@@ -197,8 +209,9 @@ export default function ProfilePage() {
 
         <div style={{ marginBottom: 'var(--space-4)' }}>
           <label style={labelStyle} htmlFor="profile-name">Name</label>
-          <input
+          <SmoothInput
             id="profile-name"
+            autoComplete="name"
             value={name}
             onChange={(e) => setName(e.target.value)}
             placeholder="Your name"
@@ -209,28 +222,24 @@ export default function ProfilePage() {
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 'var(--space-3)' }}>
           <div>
             <label style={labelStyle} htmlFor="profile-height">Height (cm)</label>
-            <input
+            <SmoothInput
               id="profile-height"
-              type="number"
               inputMode="decimal"
-              min={50}
-              max={250}
+              autoComplete="off"
               value={heightCm}
-              onChange={(e) => setHeightCm(e.target.value)}
+              onChange={(e) => setHeightCm(sanitizeNumericDraft(e.target.value, DECIMAL))}
               placeholder="e.g. 165"
               style={inputStyle}
             />
           </div>
           <div>
             <label style={labelStyle} htmlFor="profile-weight">Weight (kg)</label>
-            <input
+            <SmoothInput
               id="profile-weight"
-              type="number"
               inputMode="decimal"
-              min={20}
-              max={300}
+              autoComplete="off"
               value={weightKg}
-              onChange={(e) => setWeightKg(e.target.value)}
+              onChange={(e) => setWeightKg(sanitizeNumericDraft(e.target.value, DECIMAL))}
               placeholder="e.g. 60"
               style={inputStyle}
             />
@@ -255,9 +264,14 @@ export default function ProfilePage() {
 
         <div style={{ marginBottom: 'var(--space-4)' }}>
           <label style={labelStyle} htmlFor="guardian-email">Guardian email</label>
-          <input
+          <SmoothInput
             id="guardian-email"
-            type="email"
+            inputMode="email"
+            autoComplete="off"
+            autoCapitalize="none"
+            spellCheck={false}
+            pattern={EMAIL_PATTERN}
+            title="Enter an email address like family@example.com"
             value={guardianEmail}
             onChange={(e) => setGuardianEmail(e.target.value)}
             placeholder="family@example.com"

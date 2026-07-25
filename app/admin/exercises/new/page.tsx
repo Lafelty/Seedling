@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { createClient } from '@/lib/supabase/client'
+import { SmoothInput, SmoothTextarea } from '@/components/SmoothInput'
 import {
   initDetector,
   detect,
@@ -860,7 +861,7 @@ export default function NewExercisePage() {
                   <label className="block text-sm font-medium text-[#1F2421] mb-1">
                     Exercise Name *
                   </label>
-                  <input
+                  <SmoothInput
                     type="text"
                     value={exerciseName}
                     onChange={(e) => setExerciseName(e.target.value)}
@@ -873,7 +874,7 @@ export default function NewExercisePage() {
                   <label className="block text-sm font-medium text-[#1F2421] mb-1">
                     Description
                   </label>
-                  <textarea
+                  <SmoothTextarea
                     value={exerciseDescription}
                     onChange={(e) => setExerciseDescription(e.target.value)}
                     placeholder="Brief description of the exercise"

@@ -14,13 +14,15 @@ import {
   detect,
   analyzeExercise,
   subjectInFrame,
-  GenericRepCounter,
-  RomCycleRepCounter,
+  createRepCounter,
+  isCyclicExercise,
   disposeDetector,
   pickReferencePose,
   buildGuideFrames,
   connectionsForMode,
   anchorPairForMode,
+  canonicalFrameSize,
+  type RepCounter,
   type TrackingMode,
   type Pose,
   type ExerciseAnalysis,
@@ -76,7 +78,7 @@ export default function SessionPage() {
   const router = useRouter()
   const videoRef = useRef<HTMLVideoElement>(null)
   const canvasRef = useRef<HTMLCanvasElement>(null)
-  const repCounterRef = useRef<GenericRepCounter | RomCycleRepCounter | null>(null)
+  const repCounterRef = useRef<RepCounter | null>(null)
   // DTW path scoring for cyclic exercises — null when the exercise has no
   // usable demo curves (feature silently off).
   const trajectoryRef = useRef<TrajectoryTracker | null>(null)
@@ -185,14 +187,13 @@ export default function SessionPage() {
           guideStepsRef.current = buildGuideFrames(data.recorded_paths, data.pose_criteria)
           // Dynamic exercises with a known rest pose count full movement cycles
           // (rest → target → hold → back to rest); everything else counts holds.
-          const cyclic =
-            data.exercise_type === 'dynamic' &&
-            (data.pose_criteria?.criteria ?? []).some(
-              (c: { restAngle?: number }) => typeof c.restAngle === 'number'
-            )
-          repCounterRef.current = cyclic
-            ? new RomCycleRepCounter(data.hold_duration_ms ?? 500)
-            : new GenericRepCounter(data.hold_duration_ms ?? 500)
+          // Shared with the editor's test mode so both count reps identically.
+          const cyclic = isCyclicExercise(data.exercise_type, data.pose_criteria)
+          repCounterRef.current = createRepCounter(
+            data.exercise_type,
+            data.pose_criteria,
+            data.hold_duration_ms ?? 500
+          )
           // Cyclic reps have a clear start/end, so each one can be DTW-scored
           // against the therapist's recorded movement curve.
           trajectoryRef.current = cyclic
@@ -309,26 +310,41 @@ export default function SessionPage() {
     // Wait for exercise to load before setting up camera
     if (exerciseLoading || !exercise) return
 
+    // `stream` used to be assigned only after getUserMedia resolved, so an
+    // unmount before that (StrictMode's double-mount, a fast navigation) ran
+    // cleanup against null and never stopped the tracks — camera light stuck
+    // on, MediaStream leaked. Publish the stream before any further await, and
+    // stop it on the spot if cleanup already ran. Every later step is gated on
+    // the same flag so a torn-down session can't flip state back on.
+    let cancelled = false
     let stream: MediaStream | null = null
 
     async function setupCamera() {
       try {
-        stream = await navigator.mediaDevices.getUserMedia({
+        const acquired = await navigator.mediaDevices.getUserMedia({
           video: { width: 1280, height: 720, facingMode: 'user' },
         })
+        if (cancelled) {
+          acquired.getTracks().forEach((track) => track.stop())
+          return
+        }
+        stream = acquired
 
         if (videoRef.current) {
-          videoRef.current.srcObject = stream
+          videoRef.current.srcObject = acquired
           await new Promise((resolve) => {
             if (videoRef.current) {
               videoRef.current.onloadedmetadata = resolve
             }
           })
+          if (cancelled) return
           await videoRef.current.play()
         }
+        if (cancelled) return
 
         // Initialize the detector for this exercise's tracking mode
         const initialized = await initDetector(exercise?.tracking_mode ?? 'body')
+        if (cancelled) return
         if (!initialized) {
           console.warn('Pose detector failed to initialize, continuing without AI')
         } else {
@@ -341,6 +357,7 @@ export default function SessionPage() {
         // Start tap doubles as the audio unlock.
         setSessionState('ready')
       } catch (err) {
+        if (cancelled) return // play() rejects on teardown — not a camera failure
         console.error('Camera error:', err)
         setCameraError('Camera access denied. Please allow camera access to continue.')
       }
@@ -349,6 +366,7 @@ export default function SessionPage() {
     setupCamera()
 
     return () => {
+      cancelled = true
       if (stream) {
         stream.getTracks().forEach((track) => track.stop())
       }
@@ -504,8 +522,13 @@ export default function SessionPage() {
       setPostureFeedback(displayFeedback)
       setFeedbackMessage(displayMessage)
 
-      // Track form quality time (refs — read later by saveSessionToDb)
-      if (displayFeedback === 'good') {
+      // Track form quality time (refs — read later by saveSessionToDb).
+      // Scored off the RAW engine verdict, never displayFeedback: the phase
+      // coaching above forces 'good' for the whole lowering phase and for an
+      // earned hold, so scoring the displayed value measured time spent in a
+      // phase rather than correctness — moving slowly unlocked levels
+      // (form_quality_score gates unlock_min_score, see lib/levels.ts).
+      if (analysis.feedback === 'good') {
         goodPostureTimeRef.current += deltaTime
       }
       totalActiveTimeRef.current += deltaTime
@@ -1051,6 +1074,14 @@ export default function SessionPage() {
     )
   }
 
+  // Overlay geometry. Keypoints are in canonical space (see canonicalFrameSize),
+  // which shares the video's aspect ratio but not its pixel dimensions — so the
+  // SVG viewBox has to be the canonical box, not videoWidth × videoHeight.
+  const overlayBox = canonicalFrameSize(
+    videoRef.current?.videoWidth ?? 0,
+    videoRef.current?.videoHeight ?? 0
+  )
+
   return (
     <div className="fixed inset-0 overflow-hidden session">
       {ToastComponent}
@@ -1071,7 +1102,7 @@ export default function SessionPage() {
       {(sessionState === 'active' || sessionState === 'countdown') && videoRef.current && (guidePose ?? ghostPose) && (
         <svg
           className="absolute inset-0 pointer-events-none"
-          viewBox={`0 0 ${videoRef.current.videoWidth} ${videoRef.current.videoHeight}`}
+          viewBox={`0 0 ${overlayBox.w} ${overlayBox.h}`}
           preserveAspectRatio="xMidYMid slice"
           style={{ width: '100%', height: '100%', transform: 'scaleX(-1)' }}
         >
@@ -1095,8 +1126,8 @@ export default function SessionPage() {
             // guide in the frame so it can still demonstrate.
             const pls = detectedPose ? find(detectedPose, anchorA) : null
             const prs = detectedPose ? find(detectedPose, anchorB) : null
-            const vw = videoRef.current.videoWidth
-            const vh = videoRef.current.videoHeight
+            const vw = overlayBox.w
+            const vh = overlayBox.h
             const pMid = pls && prs
               ? { x: (pls.x + prs.x) / 2, y: (pls.y + prs.y) / 2 }
               : { x: vw / 2, y: vh * 0.42 }
@@ -1135,7 +1166,7 @@ export default function SessionPage() {
       {sessionState === 'active' && detectedPose && videoRef.current && (
         <svg
           className="absolute inset-0 pointer-events-none"
-          viewBox={`0 0 ${videoRef.current.videoWidth} ${videoRef.current.videoHeight}`}
+          viewBox={`0 0 ${overlayBox.w} ${overlayBox.h}`}
           preserveAspectRatio="xMidYMid slice"
           style={{ width: '100%', height: '100%', transform: 'scaleX(-1)' }}
         >

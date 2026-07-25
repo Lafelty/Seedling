@@ -1,3 +1,20 @@
+import { format } from 'date-fns';
+
+/**
+ * Every day key in this app is a LOCAL calendar day, formatted with date-fns
+ * `format(d, 'yyyy-MM-dd')` — the same call the dashboard and progress pages
+ * use when they bucket sessions.
+ *
+ * These used to be derived with `toISOString().split('T')[0]`, which is UTC. At
+ * UTC+7 a session logged before 07:00 local landed on the previous UTC day, so
+ * the keys produced here did not match the keys the pages looked up: streaks
+ * read 0 on a day the patient had practiced, week-strip faces rendered as rest
+ * days, and the "today" ring sat on the wrong cell around midnight.
+ */
+export function dayKey(date: Date): string {
+  return format(date, 'yyyy-MM-dd');
+}
+
 export interface ProgressData {
   totalStars: number;
   dailyStars: number;
@@ -78,7 +95,7 @@ export function getProgress(): ProgressData {
 }
 
 function todayStr(): string {
-  return new Date().toISOString().split('T')[0];
+  return dayKey(new Date());
 }
 
 /**
@@ -94,11 +111,11 @@ export function computeStreak(completedDates: string[]): number {
   const today = todayStr();
   if (!set.has(today)) {
     cursor.setDate(cursor.getDate() - 1);
-    if (!set.has(cursor.toISOString().split('T')[0])) return 0; // gap at today and yesterday
+    if (!set.has(dayKey(cursor))) return 0; // gap at today and yesterday
   }
 
   let streak = 0;
-  while (set.has(cursor.toISOString().split('T')[0])) {
+  while (set.has(dayKey(cursor))) {
     streak++;
     cursor.setDate(cursor.getDate() - 1);
   }
@@ -178,7 +195,7 @@ export function getDayStrip(): DayStatus[] {
   for (let i = 6; i >= 0; i--) {
     const date = new Date(today);
     date.setDate(date.getDate() - i);
-    const dateStr = date.toISOString().split('T')[0];
+    const dateStr = dayKey(date);
 
     days.push({
       date: dateStr,

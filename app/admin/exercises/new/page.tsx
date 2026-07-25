@@ -11,7 +11,9 @@ import {
   deriveCriteriaFromRecordings,
   connectionsForMode,
   trimIdleFrames,
+  compactRecordedFrames,
   waitForDetectorIdle,
+  canonicalFrameSize,
   type TrackingMode,
   type Pose,
 } from '@/lib/poseDetection'
@@ -29,6 +31,9 @@ interface RecordedDemo {
   duration: number
   recordedAt: Date
   source?: 'camera' | 'upload'
+  // Canonical box the keypoints were captured in — stored with the demo so the
+  // editor can size its playback canvas without guessing from the coordinates.
+  frameSize: { width: number; height: number }
 }
 
 export default function NewExercisePage() {
@@ -80,23 +85,35 @@ export default function NewExercisePage() {
 
   // Camera setup
   useEffect(() => {
+    // `stream` used to be assigned only after getUserMedia resolved, so an
+    // unmount before that (StrictMode's double-mount, a fast navigation) ran
+    // cleanup against null and the tracks were never stopped — camera light
+    // stuck on, MediaStream leaked. Publish the stream before any further
+    // await, and stop it on the spot if cleanup already ran.
+    let cancelled = false
     let stream: MediaStream | null = null
 
     const startCamera = async () => {
       try {
-        stream = await navigator.mediaDevices.getUserMedia({
+        const acquired = await navigator.mediaDevices.getUserMedia({
           video: {
             width: 640,
             height: 480,
             facingMode: 'user',
           },
         })
+        if (cancelled) {
+          acquired.getTracks().forEach((track) => track.stop())
+          return
+        }
+        stream = acquired
 
         if (videoRef.current) {
-          videoRef.current.srcObject = stream
+          videoRef.current.srcObject = acquired
           await videoRef.current.play()
         }
       } catch (error) {
+        if (cancelled) return // play() rejects on teardown — not a camera failure
         console.error('Camera error:', error)
         setCameraError('Camera access denied')
       }
@@ -105,6 +122,7 @@ export default function NewExercisePage() {
     startCamera()
 
     return () => {
+      cancelled = true
       if (stream) {
         stream.getTracks().forEach((track) => track.stop())
       }
@@ -198,25 +216,27 @@ export default function NewExercisePage() {
     }
   }, [modelReady, trackingMode])
 
-  // Countdown before recording
+  // Countdown before recording. The updater only computes the next number —
+  // it used to also clearInterval, flip the recording state, and wipe the frame
+  // buffer. State updaters must be pure, and StrictMode invokes them twice in
+  // development, so recording could start twice or the buffer could be cleared
+  // after capture had already begun. The transition lives in its own effect.
   useEffect(() => {
     if (recordingState !== 'countdown') return
-
     const interval = setInterval(() => {
-      setCountdown((prev) => {
-        if (prev <= 1) {
-          clearInterval(interval)
-          setRecordingState('recording')
-          recordingStartTime.current = Date.now()
-          recordedFramesRef.current = []
-          return 3
-        }
-        return prev - 1
-      })
+      setCountdown((prev) => Math.max(0, prev - 1))
     }, 1000)
-
     return () => clearInterval(interval)
   }, [recordingState])
+
+  // Countdown reached zero — start capturing.
+  useEffect(() => {
+    if (recordingState !== 'countdown' || countdown > 0) return
+    recordedFramesRef.current = []
+    recordingStartTime.current = Date.now()
+    setRecordingState('recording')
+    setCountdown(3)
+  }, [recordingState, countdown])
 
   // Wipe the overlay when the detector loses the subject, so a stale skeleton
   // doesn't freeze on screen.
@@ -266,9 +286,11 @@ export default function NewExercisePage() {
     const ctx = canvas.getContext('2d')
     if (!ctx) return
 
-    // Match canvas size to video
-    canvas.width = video.videoWidth
-    canvas.height = video.videoHeight
+    // Keypoints are in canonical space, so the canvas must be too — same aspect
+    // ratio as the video, so the CSS-stretched overlay still lines up.
+    const box = canonicalFrameSize(video.videoWidth, video.videoHeight)
+    canvas.width = box.w
+    canvas.height = box.h
     ctx.clearRect(0, 0, canvas.width, canvas.height)
 
     // Red while recording, green otherwise. Read from the ref because the detect
@@ -295,15 +317,21 @@ export default function NewExercisePage() {
 
     // Cut the idle seconds before the movement starts and after it ends —
     // dead frames drag the derived rest pose and tolerances toward "standing
-    // still". Static holds come back untouched.
-    const frames = trimIdleFrames(rawFrames, trackingMode)
+    // still". Static holds come back untouched. Then thin what's left down to
+    // a storable size (trim first — it needs the full frame rate).
+    const frames = compactRecordedFrames(trimIdleFrames(rawFrames, trackingMode), trackingMode)
 
+    const box = canonicalFrameSize(
+      videoRef.current?.videoWidth ?? 0,
+      videoRef.current?.videoHeight ?? 0
+    )
     const demo: RecordedDemo = {
       id: `demo-${Date.now()}`,
       frames: [...frames],
       duration: frames[frames.length - 1].timestamp,
       recordedAt: new Date(),
       source: 'camera',
+      frameSize: { width: box.w, height: box.h },
     }
 
     setRecordings((prev) => [...prev, demo])
@@ -345,8 +373,9 @@ export default function NewExercisePage() {
     if (!canvas) return
     const ctx = canvas.getContext('2d')
     if (!ctx) return
-    canvas.width = video.videoWidth
-    canvas.height = video.videoHeight
+    const box = canonicalFrameSize(video.videoWidth, video.videoHeight)
+    canvas.width = box.w
+    canvas.height = box.h
     ctx.clearRect(0, 0, canvas.width, canvas.height)
     drawKeypointSet(ctx, pose.keypoints, '#10b981')
     pose.extraHands?.forEach((h) => drawKeypointSet(ctx, h.keypoints, '#10b981'))
@@ -483,13 +512,15 @@ export default function NewExercisePage() {
         return
       }
 
-      const trimmed = trimIdleFrames(frames, trackingMode)
+      const trimmed = compactRecordedFrames(trimIdleFrames(frames, trackingMode), trackingMode)
+      const box = canonicalFrameSize(video.videoWidth, video.videoHeight)
       const demo: RecordedDemo = {
         id: `demo-${Date.now()}`,
         frames: [...trimmed],
         duration: trimmed[trimmed.length - 1].timestamp,
         recordedAt: new Date(),
         source: 'upload',
+        frameSize: { width: box.w, height: box.h },
       }
       setRecordings((prev) => [...prev, demo])
       setRecordingState('reviewing')
@@ -546,6 +577,7 @@ export default function NewExercisePage() {
           frames: r.frames,
           duration: r.duration,
           recordedAt: r.recordedAt.toISOString(),
+          frameSize: r.frameSize,
         })),
         pose_criteria: {
           ...derivedCriteria,
@@ -636,8 +668,9 @@ export default function NewExercisePage() {
                       </div>
                     )}
 
-                    {/* Countdown overlay */}
-                    {recordingState === 'countdown' && (
+                    {/* Countdown overlay — hidden at zero so the tick that
+                        hands off to recording never paints a "0" */}
+                    {recordingState === 'countdown' && countdown > 0 && (
                       <div className="absolute inset-0 flex flex-col items-center justify-center gap-4 bg-black/60">
                         <span className="text-sm font-medium uppercase tracking-[0.2em] text-white/80">
                           Get ready

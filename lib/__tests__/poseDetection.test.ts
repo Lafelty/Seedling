@@ -7,6 +7,13 @@ import {
   analyzeExercise,
   deriveCriteriaFromRecordings,
   trimIdleFrames,
+  compactRecordedFrames,
+  MAX_STORED_FRAMES,
+  canonicalFrameSize,
+  CANONICAL_FRAME_HEIGHT,
+  frameSizeForDemo,
+  isCyclicExercise,
+  createRepCounter,
   GenericRepCounter,
   CycleRepCounter,
   RomCycleRepCounter,
@@ -220,6 +227,208 @@ describe('deriveCriteriaFromRecordings', () => {
   it('produces no criteria from an empty recording', () => {
     const criteria = deriveCriteriaFromRecordings([{ frames: [] }], 'body');
     expect(criteria.criteria).toEqual([]);
+  });
+});
+
+// ---- canonical keypoint space ----
+
+describe('canonicalFrameSize', () => {
+  it('maps the legacy 640x480 recording space to itself', () => {
+    // Every recording stored before canonicalization was captured at 640x480,
+    // so their numbers — and the thresholds authored against them — must survive.
+    expect(canonicalFrameSize(640, 480)).toEqual({ w: 640, h: 480 });
+  });
+
+  it('pins the height and follows the source aspect ratio', () => {
+    expect(canonicalFrameSize(1280, 720).h).toBe(CANONICAL_FRAME_HEIGHT);
+    expect(canonicalFrameSize(1280, 720).w).toBeCloseTo((480 * 16) / 9);
+    expect(canonicalFrameSize(1080, 1920).w).toBeCloseTo(270); // portrait phone clip
+  });
+
+  it('scales x and y by the same factor, so angles are unchanged', () => {
+    for (const [w, h] of [
+      [640, 480],
+      [1280, 720],
+      [1080, 1920],
+    ]) {
+      const c = canonicalFrameSize(w, h);
+      expect(c.w / w).toBeCloseTo(c.h / h);
+    }
+  });
+
+  it('falls back to a 4:3 box when the source size is not known yet', () => {
+    expect(canonicalFrameSize(0, 0)).toEqual({ w: 640, h: 480 });
+  });
+});
+
+describe('frameSizeForDemo', () => {
+  const demoWith = (maxX: number, maxY: number) => ({
+    frames: [{ pose: { keypoints: [kp('left_shoulder', maxX, maxY)] } }],
+  });
+
+  it('uses the size the recorder stored', () => {
+    expect(
+      frameSizeForDemo({ ...demoWith(50, 50), frameSize: { width: 270, height: 480 } })
+    ).toEqual({ width: 270, height: 480 });
+  });
+
+  it('covers a legacy demo recorded in raw portrait pixels', () => {
+    // Regression: a 1080x1920 clip stored coordinates far outside a fixed
+    // 640x480 canvas, so the editor's Motion Path drew it off-screen.
+    const size = frameSizeForDemo(demoWith(1000, 1900));
+    expect(size.width).toBeGreaterThanOrEqual(1000);
+    expect(size.height).toBeGreaterThanOrEqual(1900);
+  });
+
+  it('never shrinks below the canonical frame', () => {
+    // A demo where the subject sat in one corner must not render zoomed in.
+    expect(frameSizeForDemo(demoWith(80, 60))).toEqual({ width: 640, height: 480 });
+  });
+
+  it('ignores low-confidence keypoints when measuring the extent', () => {
+    const demo = {
+      frames: [{ pose: { keypoints: [kp('left_shoulder', 100, 100), kp('nose', 5000, 5000, 0.1)] } }],
+    };
+    expect(frameSizeForDemo(demo)).toEqual({ width: 640, height: 480 });
+  });
+
+  it('falls back to the canonical frame for a missing demo', () => {
+    expect(frameSizeForDemo(null)).toEqual({ width: 640, height: 480 });
+  });
+});
+
+// ---- storage compaction ----
+
+describe('compactRecordedFrames', () => {
+  const world = { x: 0.1234567, y: -0.2, z: 0.30000001 };
+  const frameAt = (t: number, deg: number) => ({
+    timestamp: t,
+    pose: {
+      ...elbowPose(deg),
+      keypoints: elbowPose(deg).keypoints.map((k) => ({ ...k, world })),
+    },
+  });
+  const longRun = (n: number) =>
+    Array.from({ length: n }, (_, i) => frameAt(i * 33, 30 + (90 * i) / (n - 1)));
+
+  it('caps a full-rate capture at MAX_STORED_FRAMES', () => {
+    const out = compactRecordedFrames(longRun(600), 'body');
+    expect(out).toHaveLength(MAX_STORED_FRAMES);
+  });
+
+  it('keeps the first and last frame, so rest and the extreme survive', () => {
+    const frames = longRun(600);
+    const out = compactRecordedFrames(frames, 'body');
+    expect(out[0].timestamp).toBe(frames[0].timestamp);
+    expect(out[out.length - 1].timestamp).toBe(frames[frames.length - 1].timestamp);
+  });
+
+  it('leaves a short recording at full length', () => {
+    expect(compactRecordedFrames(longRun(40), 'body')).toHaveLength(40);
+  });
+
+  it('drops world coordinates for body, where criteria are derived in 2D', () => {
+    const out = compactRecordedFrames(longRun(30), 'body');
+    expect(out.every((f) => f.pose.keypoints.every((k) => k.world === undefined))).toBe(true);
+  });
+
+  it('keeps (rounded) world coordinates for hands, which derive in 3D', () => {
+    const out = compactRecordedFrames(longRun(30), 'hand');
+    expect(out[0].pose.keypoints[0].world).toEqual({ x: 0.1235, y: -0.2, z: 0.3 });
+  });
+
+  it('derives the same criteria from the compacted demo', () => {
+    // Decimating shifts which frames feed the p5/p95 percentiles, so the
+    // derived extremes can move a degree. The bands are never narrower than
+    // BAND_FLOOR_DEG (10° body), so that is far inside what validation cares
+    // about — the point is that compaction does not change the exercise.
+    const TOLERANCE_DEG = 2;
+    const frames = longRun(200);
+    const before = deriveCriteriaFromRecordings([{ frames }], 'body');
+    const after = deriveCriteriaFromRecordings(
+      [{ frames: compactRecordedFrames(frames, 'body') }],
+      'body'
+    );
+    const b = before.criteria.find((c) => c.joint === 'left_elbow')!;
+    const a = after.criteria.find((c) => c.joint === 'left_elbow')!;
+    expect(Math.abs(a.targetAngle - b.targetAngle)).toBeLessThanOrEqual(TOLERANCE_DEG);
+    expect(Math.abs(a.restAngle! - b.restAngle!)).toBeLessThanOrEqual(TOLERANCE_DEG);
+    expect(a.relativeTo).toEqual(b.relativeTo);
+  });
+
+  it('preserves a missing score rather than inventing visibility', () => {
+    const noScore: Array<{ timestamp: number; pose: Pose }> = [
+      { timestamp: 0, pose: { keypoints: [{ x: 1.11, y: 2.22, name: 'left_elbow' }] } },
+    ];
+    const out = compactRecordedFrames(noScore, 'body');
+    expect(out[0].pose.keypoints[0].score).toBeUndefined();
+    expect(out[0].pose.keypoints[0]).toMatchObject({ x: 1.1, y: 2.2 });
+  });
+
+  it('compacts extra hands too', () => {
+    const frames = [
+      {
+        timestamp: 0,
+        pose: {
+          keypoints: [kp('wrist', 1.234, 5.678, 1, world)],
+          extraHands: [{ keypoints: [kp('wrist', 9.876, 4.321, 1, world)], score: 0.98765 }],
+        },
+      },
+    ];
+    const out = compactRecordedFrames(frames, 'hand');
+    expect(out[0].pose.extraHands![0].keypoints[0]).toMatchObject({ x: 9.9, y: 4.3 });
+    expect(out[0].pose.extraHands![0].score).toBe(0.99);
+  });
+});
+
+// ---- shared rep-counter selection ----
+
+describe('createRepCounter', () => {
+  const cyclic: PoseCriteria = ELBOW_CRITERIA;
+  const noRest: PoseCriteria = {
+    ...ELBOW_CRITERIA,
+    criteria: [{ ...ELBOW_CRITERIA.criteria[0], restAngle: undefined }],
+  };
+
+  it('treats only dynamic exercises with a rest angle as cyclic', () => {
+    expect(isCyclicExercise('dynamic', cyclic)).toBe(true);
+    expect(isCyclicExercise('static', cyclic)).toBe(false);
+    expect(isCyclicExercise('dynamic', noRest)).toBe(false);
+    expect(isCyclicExercise('dynamic', null)).toBe(false);
+  });
+
+  it('builds the ROM counter for cyclic exercises, not the band counter', () => {
+    // Regression: the editor's test mode built a CycleRepCounter while the
+    // session built a RomCycleRepCounter, so tuning predicted nothing.
+    const rc = createRepCounter('dynamic', cyclic, 500);
+    expect(rc).toBeInstanceOf(RomCycleRepCounter);
+    expect(rc).not.toBeInstanceOf(CycleRepCounter);
+  });
+
+  it('builds the hold counter for everything else', () => {
+    expect(createRepCounter('static', cyclic, 500)).toBeInstanceOf(GenericRepCounter);
+    expect(createRepCounter('dynamic', noRest, 500)).toBeInstanceOf(GenericRepCounter);
+  });
+
+  it('counts a cyclic rep off ROM travel, with no landing in the angle band', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(100_000);
+    const rc = createRepCounter('dynamic', cyclic, 500);
+
+    // meetsAllCriteria stays false throughout — only `progress` moves.
+    const at = (p: number): ExerciseAnalysis => ({
+      meetsAllCriteria: false,
+      atRest: false,
+      feedback: 'adjust',
+      message: '',
+      failedCriteria: [],
+      progress: p,
+    });
+    rc.count(at(0.05));
+    rc.count(at(0.85));
+    vi.advanceTimersByTime(400);
+    expect(rc.count(at(0.05)).repCount).toBe(1);
+    vi.useRealTimers();
   });
 });
 

@@ -23,6 +23,10 @@ export interface RecordedDemo {
   frames: RecordedFrame[];
   duration?: number;
   recordedAt?: string;
+  /** Canonical-space box the keypoints were captured in (see
+   * canonicalFrameSize). Absent on rows recorded before canonicalization —
+   * frameSizeForDemo falls back to the recorded coordinate extent there. */
+  frameSize?: { width: number; height: number };
 }
 
 export interface Database {

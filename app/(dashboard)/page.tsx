@@ -4,11 +4,11 @@ import Link from 'next/link';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { createClient } from '@/lib/supabase/client';
-import { getProgress, getDayStrip, markOnboardingComplete, setProgressUid, applyServerProgress, type ProgressData, type DayStatus } from '@/lib/progress';
+import { getProgress, getDayStrip, markOnboardingComplete, setProgressUid, applyServerProgress, dayKey, type ProgressData, type DayStatus } from '@/lib/progress';
 import { getGardenStage, getGardenStageName, getGardenImagePath, getStarsToNextBloom, getGardenProgressPercent } from '@/lib/garden';
 import { playBloomSparkle, vibrate } from '@/lib/rewardFx';
 import confetti from 'canvas-confetti';
-import { format, startOfDay, subDays } from 'date-fns';
+import { format, parseISO, startOfDay, subDays } from 'date-fns';
 import { DayFace, MOOD_BG, computeDayMood } from '@/components/DayFace';
 
 interface WeekSession {
@@ -362,9 +362,13 @@ export default function DashboardPage() {
               {/* Week Strip */}
               <div className="flex gap-2 sm:gap-3 justify-between">
                 {dayStrip.map((day, index) => {
-                  const date = new Date(day.date);
+                  // Day keys are LOCAL calendar days (lib/progress.ts dayKey).
+                  // `new Date('yyyy-MM-dd')` would read them back as UTC
+                  // midnight and render the wrong weekday west of UTC, and a
+                  // UTC "today" would ring the wrong cell near midnight.
+                  const date = parseISO(day.date);
                   const dayLetter = date.toLocaleDateString('en-US', { weekday: 'short' }).charAt(0);
-                  const today = new Date().toISOString().split('T')[0];
+                  const today = dayKey(new Date());
                   const isToday = day.date === today;
                   const isFuture = day.date > today;
 

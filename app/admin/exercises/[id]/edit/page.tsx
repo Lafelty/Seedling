@@ -21,11 +21,13 @@ import {
   detect,
   disposeDetector,
   analyzeExercise,
-  GenericRepCounter,
-  CycleRepCounter,
+  createRepCounter,
+  frameSizeForDemo,
+  canonicalFrameSize,
   referencesForMode,
   keypointNamesForMode,
   connectionsForMode,
+  type RepCounter,
   type TrackingMode,
   type Pose,
   type PoseCriteria,
@@ -66,7 +68,7 @@ export default function EditExercisePage({ params }: { params: Promise<{ id: str
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const testVideoRef = useRef<HTMLVideoElement>(null)
   const testCanvasRef = useRef<HTMLCanvasElement>(null)
-  const testRepCounterRef = useRef<GenericRepCounter | CycleRepCounter | null>(null)
+  const testRepCounterRef = useRef<RepCounter | null>(null)
 
   const [loading, setLoading] = useState(true)
   const [exercise, setExercise] = useState<Exercise | null>(null)
@@ -147,6 +149,14 @@ export default function EditExercisePage({ params }: { params: Promise<{ id: str
   const testMessagesRef = useRef(feedbackMessages)
   testMessagesRef.current = feedbackMessages
 
+  // Coordinate box the selected demo's keypoints live in — the Motion Path
+  // canvas is sized to it. Legacy demos have no stored frameSize, so this scans
+  // their keypoints; memoized so playback doesn't redo that 30× a second.
+  const demoFrameBox = useMemo(
+    () => frameSizeForDemo(exercise?.recorded_paths[selectedDemo]),
+    [exercise, selectedDemo]
+  )
+
   useEffect(() => {
     loadExercise()
   }, [])
@@ -189,27 +199,38 @@ export default function EditExercisePage({ params }: { params: Promise<{ id: str
 
     const start = async () => {
       try {
-        stream = await navigator.mediaDevices.getUserMedia({
-          video: { width: 640, height: 480, facingMode: 'user' },
+        const acquired = await navigator.mediaDevices.getUserMedia({
+          // Same request the patient session makes, so test mode sees the same
+          // framing and field of view it does.
+          video: { width: 1280, height: 720, facingMode: 'user' },
         })
+        // Stopping the test before getUserMedia resolved would otherwise leave
+        // `stream` null in cleanup and the camera running.
+        if (!running) {
+          acquired.getTracks().forEach((t) => t.stop())
+          return
+        }
+        stream = acquired
         const video = testVideoRef.current
         if (!video) return
-        video.srcObject = stream
+        video.srcObject = acquired
         await video.play()
+        if (!running) return
 
         const ok = await initDetector(mode)
+        if (!running) return
         if (!ok) {
           setTestCameraError('Failed to load pose detection model')
           return
         }
-        // Same counter selection the patient session makes — against the type
-        // as currently edited, not the saved one.
-        const cyclic =
-          exerciseType === 'dynamic' &&
-          testCriteriaRef.current.criteria.some((c) => typeof c.restAngle === 'number')
-        testRepCounterRef.current = cyclic
-          ? new CycleRepCounter(holdDuration)
-          : new GenericRepCounter(holdDuration)
+        // Literally the counter the patient session builds — same factory, so
+        // rep counts and phases here predict a real session. Applied to the
+        // type as currently edited, not the saved one.
+        testRepCounterRef.current = createRepCounter(
+          exerciseType,
+          testCriteriaRef.current,
+          holdDuration
+        )
 
         const loop = async () => {
           if (!running || !testVideoRef.current) return
@@ -274,6 +295,7 @@ export default function EditExercisePage({ params }: { params: Promise<{ id: str
         }
         loop()
       } catch (err) {
+        if (!running) return // play() rejects on teardown — not a camera failure
         console.error('Test camera error:', err)
         setTestCameraError('Camera access denied')
       }
@@ -393,23 +415,22 @@ export default function EditExercisePage({ params }: { params: Promise<{ id: str
     const ctx = canvas.getContext('2d')
     if (!ctx) return
 
-    // Set canvas size
-    canvas.width = 640
-    canvas.height = 480
+    // Size the canvas to the box this demo's coordinates actually live in — a
+    // fixed 640×480 drew a portrait phone clip (coordinates up to 1080×1920)
+    // entirely off-screen. Coordinates are then drawn 1:1, and object-contain
+    // scales the result into the panel without distorting it.
+    canvas.width = demoFrameBox.width
+    canvas.height = demoFrameBox.height
 
     // Clear canvas
     ctx.clearRect(0, 0, canvas.width, canvas.height)
-
-    // Scale factor (recorded frames might be different resolution)
-    const scaleX = canvas.width / 640
-    const scaleY = canvas.height / 480
 
     // Paint one hand/body set: dots (+ labels on the primary) and bones.
     const paintSet = (keypoints: Pose['keypoints'], withLabels: boolean) => {
       keypoints.forEach((kp) => {
         if (kp.score && kp.score > 0.3) {
           ctx.beginPath()
-          ctx.arc(kp.x * scaleX, kp.y * scaleY, mode === 'hand' ? 4 : 6, 0, 2 * Math.PI)
+          ctx.arc(kp.x, kp.y, mode === 'hand' ? 4 : 6, 0, 2 * Math.PI)
 
           // Highlight target body parts
           if (targetBodyParts.includes(kp.name || '')) {
@@ -423,7 +444,7 @@ export default function EditExercisePage({ params }: { params: Promise<{ id: str
           if (withLabels && kp.name && (mode !== 'hand' || kp.name.endsWith('_tip'))) {
             ctx.fillStyle = '#1F2421'
             ctx.font = '10px sans-serif'
-            ctx.fillText(kp.name, kp.x * scaleX + 8, kp.y * scaleY)
+            ctx.fillText(kp.name, kp.x + 8, kp.y)
           }
         }
       })
@@ -441,8 +462,8 @@ export default function EditExercisePage({ params }: { params: Promise<{ id: str
           end.score > 0.3
         ) {
           ctx.beginPath()
-          ctx.moveTo(start.x * scaleX, start.y * scaleY)
-          ctx.lineTo(end.x * scaleX, end.y * scaleY)
+          ctx.moveTo(start.x, start.y)
+          ctx.lineTo(end.x, end.y)
           ctx.strokeStyle = '#10b981'
           ctx.lineWidth = 2
           ctx.stroke()
@@ -464,8 +485,8 @@ export default function EditExercisePage({ params }: { params: Promise<{ id: str
       if ((joint.score ?? 0) <= 0.3 || (refA.score ?? 0) <= 0.3 || (refB.score ?? 0) <= 0.3)
         return
 
-      const jx = joint.x * scaleX
-      const jy = joint.y * scaleY
+      const jx = joint.x
+      const jy = joint.y
 
       ctx.strokeStyle = '#C4612F'
       ctx.lineWidth = 1.5
@@ -473,13 +494,13 @@ export default function EditExercisePage({ params }: { params: Promise<{ id: str
       ;[refA, refB].forEach((ref) => {
         ctx.beginPath()
         ctx.moveTo(jx, jy)
-        ctx.lineTo(ref.x * scaleX, ref.y * scaleY)
+        ctx.lineTo(ref.x, ref.y)
         ctx.stroke()
       })
       ctx.setLineDash([])
 
-      const a1 = Math.atan2(refA.y * scaleY - jy, refA.x * scaleX - jx)
-      const a2 = Math.atan2(refB.y * scaleY - jy, refB.x * scaleX - jx)
+      const a1 = Math.atan2(refA.y - jy, refA.x - jx)
+      const a2 = Math.atan2(refB.y - jy, refB.x - jx)
       let sweep = a2 - a1
       while (sweep > Math.PI) sweep -= 2 * Math.PI
       while (sweep < -Math.PI) sweep += 2 * Math.PI
@@ -512,8 +533,10 @@ export default function EditExercisePage({ params }: { params: Promise<{ id: str
     const ctx = canvas.getContext('2d')
     if (!ctx) return
 
-    canvas.width = video.videoWidth || 640
-    canvas.height = video.videoHeight || 480
+    // Canonical box, not video pixels — that is the space keypoints live in.
+    const box = canonicalFrameSize(video.videoWidth, video.videoHeight)
+    canvas.width = box.w
+    canvas.height = box.h
     ctx.clearRect(0, 0, canvas.width, canvas.height)
     if (!pose) return
 
@@ -857,9 +880,11 @@ export default function EditExercisePage({ params }: { params: Promise<{ id: str
 
               {/* Canvas */}
               <div className="relative aspect-video bg-[#1F2421] rounded-xl overflow-hidden mb-4">
+                {/* object-contain: the canvas is sized to the demo's own
+                    coordinate box, which is not always the panel's 16:9 */}
                 <canvas
                   ref={canvasRef}
-                  className="absolute inset-0 w-full h-full scale-x-[-1]"
+                  className="absolute inset-0 w-full h-full object-contain scale-x-[-1]"
                 />
               </div>
 

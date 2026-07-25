@@ -48,7 +48,7 @@ CREATE POLICY "Users can view active exercises"
   FOR SELECT
   USING (is_active = TRUE AND auth.uid() IS NOT NULL);
 
--- 4) Grant admin case-insensitively (auth emails are stored lowercased).
-UPDATE profiles
-SET is_admin = TRUE
-WHERE lower(email) = lower('adminNeena@gmail.com');
+-- 4) Admin grants are NOT done here. A hardcoded address in a re-runnable
+--    migration re-grants therapist rights to whoever controls that address at
+--    the time it is applied. Use supabase/scripts/set-admin.sql, which takes the
+--    address as a parameter.

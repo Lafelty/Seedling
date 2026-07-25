@@ -85,6 +85,9 @@ export default function SessionPage() {
   // posed at guideStepsRef.current[round(p * (len-1))] for a position p in [0,1].
   const guideStepsRef = useRef<Pose[]>([])
   const animationFrameRef = useRef<number | undefined>(undefined)
+  // completeSession() is fired from the detection loop; this makes it one-shot
+  // so a stray frame can never double-save the session or its rep rows.
+  const completingRef = useRef(false)
 
   // Exercise state
   const [exercise, setExercise] = useState<Exercise | null>(null)
@@ -422,8 +425,17 @@ export default function SessionPage() {
   useEffect(() => {
     if (sessionState !== 'active' || !videoRef.current || !exercise || !repCounterRef.current) return
 
+    // Effect-scoped kill switch. Checking `sessionState` inside the closure
+    // cannot end the loop — the effect only runs when it is already 'active',
+    // so the captured value never changes. And the async body outlives the
+    // cleanup's cancelAnimationFrame: `await detect()` resolves after unmount
+    // or pause and schedules another frame that nothing is tracking. Set false
+    // in cleanup, checked at the top and after the await. Same pattern as the
+    // editor's test loop (app/admin/exercises/[id]/edit/page.tsx).
+    let running = true
+
     async function detectAndAnalyze() {
-      if (!videoRef.current || sessionState !== 'active' || !exercise || !repCounterRef.current) return
+      if (!running || !videoRef.current || !exercise || !repCounterRef.current) return
 
       // Track time for form quality calculation
       const now = Date.now()
@@ -432,6 +444,9 @@ export default function SessionPage() {
 
       // Detect pose
       const pose = await detect(videoRef.current, exercise.tracking_mode ?? 'body')
+      // Paused / navigated away while inference was in flight — drop this frame
+      // rather than counting a rep and accumulating posture time for it.
+      if (!running) return
       setDetectedPose(pose)
 
       if (pose && pose.keypoints) {
@@ -569,8 +584,10 @@ export default function SessionPage() {
     detectAndAnalyze()
 
     return () => {
+      running = false
       if (animationFrameRef.current) {
         cancelAnimationFrame(animationFrameRef.current)
+        animationFrameRef.current = undefined
       }
     }
   }, [sessionState, exercise])
@@ -618,20 +635,23 @@ export default function SessionPage() {
       : 0
 
     const supabase = createClient()
-    const { error: sessionError } = await supabase
-      .from('therapy_sessions')
-      .update({
-        completed_at: completed ? endTime.toISOString() : null,
-        duration_seconds: durationSeconds,
-        completed_reps: repCountRef.current,
-        form_quality_score: formQualityScore,
-      })
-      .eq('id', sessionIdRef.current)
+    // The completion columns are UPDATE-revoked for client roles
+    // (20260725000000_session_write_lockdown.sql) so that stars_awarded can't be
+    // reset from the console and re-claimed. The RPC stamps them server-side,
+    // checks ownership, clamps the values, and returns false if the session was
+    // already completed (a completed session is final).
+    const { data: stamped, error: sessionError } = await supabase.rpc('complete_session', {
+      p_session_id: sessionIdRef.current,
+      p_completed: completed,
+      p_duration_seconds: durationSeconds,
+      p_completed_reps: repCountRef.current,
+      p_form_quality_score: formQualityScore,
+    })
 
     if (sessionError) {
       console.error('Error updating session:', sessionError)
     } else {
-      console.log('✅ Session updated:', { durationSeconds, formQualityScore, completed })
+      console.log('✅ Session updated:', { durationSeconds, formQualityScore, completed, stamped })
     }
 
     const sessionId = sessionIdRef.current
@@ -692,6 +712,8 @@ export default function SessionPage() {
   }
 
   async function completeSession() {
+    if (completingRef.current) return
+    completingRef.current = true
     setSessionState('completed')
     const before = getProgress()
 

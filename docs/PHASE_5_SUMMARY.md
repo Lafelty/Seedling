@@ -201,8 +201,10 @@ Route (app)
 ## Next Steps (Beyond Phase 5)
 
 ### Admin Setup Checklist
-1. Sign up at `/signup` with `adminNeena@gmail.com` / `654321`
-2. Run `supabase/scripts/set-admin.sql` in Supabase SQL Editor to set `is_admin = TRUE`
+1. Sign up at `/signup` with the therapist's address and a password you do not
+   write down anywhere in this repository
+2. Run `supabase/scripts/set-admin.sql` in Supabase SQL Editor, passing that
+   address, to set `is_admin = TRUE`
 3. Test recording interface at `/admin/exercises/new`
 4. Record 2-3 demos, save as draft exercise
 5. Test refinement editor at `/admin/exercises/{id}/edit`

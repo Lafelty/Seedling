@@ -83,28 +83,20 @@ export interface Database {
           notes: string | null;
           created_at: string;
         };
+        // Opening a session only: INSERT is column-granted, and the completion
+        // columns plus stars_awarded are not in the grant — they are defaults or
+        // are stamped by complete_session(). See
+        // 20260725000000_session_write_lockdown.sql.
         Insert: {
-          id?: string;
           user_id: string;
           exercise_id?: string | null;
           exercise_type?: string;
           started_at: string;
-          completed_at?: string | null;
-          duration_seconds?: number | null;
           target_reps?: number;
-          completed_reps?: number;
-          form_quality_score?: number | null;
-          stars_awarded?: boolean;
-          notes?: string | null;
-          created_at?: string;
-        };
-        Update: {
-          completed_at?: string | null;
-          duration_seconds?: number | null;
-          completed_reps?: number;
-          form_quality_score?: number | null;
           notes?: string | null;
         };
+        // No client UPDATE privilege at all — use the complete_session() RPC.
+        Update: Record<string, never>;
         Relationships: [];
       };
       rep_data: {
@@ -222,6 +214,21 @@ export interface Database {
       award_stars: { Args: { p_session_id: string }; Returns: number };
       // Admin-only absolute set of a patient's stars; returns the new total.
       admin_set_stars: { Args: { p_user_id: string; p_stars: number }; Returns: number };
+      // Stamps a session's completion columns server-side (ownership checked,
+      // values clamped). Returns false when the session was already completed —
+      // a completed session is final, so stars_awarded cannot be re-armed. The
+      // client holds no UPDATE privilege on therapy_sessions; see
+      // 20260725000000_session_write_lockdown.sql.
+      complete_session: {
+        Args: {
+          p_session_id: string;
+          p_completed: boolean;
+          p_duration_seconds: number;
+          p_completed_reps: number;
+          p_form_quality_score: number;
+        };
+        Returns: boolean;
+      };
     };
     Enums: Record<string, never>;
     CompositeTypes: Record<string, never>;

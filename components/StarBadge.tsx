@@ -1,37 +1,44 @@
 'use client'
 
 /**
- * The gold star badge and its motion.
+ * The gold star badge: a struck coin that catches light, and blooms when a
+ * star lands.
  *
- * Layers, back to front:
- *   1. a specular highlight that trails the pointer on a spring (fine pointers
- *      only) — the thing that makes the gold read as metal rather than paint
- *   2. the contents, behind a diagonal mask that dissolves them as the gleam
- *      crosses
- *   3. a 1px gleam travelling the pill's border
+ * At rest it behaves like a physical object. The pointer tips it in 3D on a
+ * spring, and the specular highlight stays where the light is rather than
+ * following the cursor — so the coin turns under a fixed lamp instead of
+ * dragging a glow around with it. A pale-gold gleam crosses the border every
+ * few seconds. That is the whole idle vocabulary: quiet, no bounce.
  *
- * The highlight is pale gold, not white: white over the gold gradient reads as
- * silver. Gradient, border and shadow still live in `.star-badge`.
+ * The award is the one moment that spends motion. When the count rises, the
+ * number rolls up behind a clip, a single ring of light expands out of the
+ * badge and dissolves, and the coin brightens. It reads as something growing,
+ * which is the app's metaphor, rather than as a prize going off.
  *
- * The idle gleam only runs while the badge is on screen, and every animated
- * property is `transform` or `opacity`. Transforms are written as full strings
- * rather than Motion's `scale`/`x` shorthands, which run on the main thread.
+ * Layers inside the coin, back to front: specular highlight, contents behind a
+ * travelling mask, then the 1px border gleam. Gradient, bevel and shadow live
+ * in `.star-badge`.
  *
- * Reduced motion keeps the badge and its hover shadow but drops all movement.
+ * Everything animated is `transform` or `opacity`. The coin's transform is one
+ * composed string driven by springs, so tilt, hover and press never fight over
+ * the same property. The idle gleam parks while the badge is off screen.
+ *
+ * Reduced motion drops the tilt, the gleam and the ring; the count crossfades
+ * instead of rolling, and the bevel and hover shadow stay.
  */
 
 import {
+  AnimatePresence,
   motion,
   useInView,
   useMotionTemplate,
-  useMotionValue,
   useReducedMotion,
   useSpring,
   type TargetAndTransition,
   type Transition,
-  type Variants,
 } from 'framer-motion'
-import { useEffect, useRef, useState, type CSSProperties, type PointerEvent, type ReactNode } from 'react'
+import { useCallback, useEffect, useRef, useState, type CSSProperties, type PointerEvent, type ReactNode } from 'react'
+import { vibrate } from '@/lib/rewardFx'
 
 /**
  * One gleam per ~4s. A gleam is decorative and the badge is permanent page
@@ -40,11 +47,16 @@ import { useEffect, useRef, useState, type CSSProperties, type PointerEvent, typ
  */
 const SWEEP = { duration: 1.05, repeat: Infinity, ease: 'linear', repeatDelay: 3.2 } as const
 
-/** Press feedback, in Apple's spring terms. Short, barely any bounce. */
-const PRESS_SPRING = { type: 'spring', duration: 0.3, bounce: 0.2 } as const
+/** Heavy enough to feel like metal, damped enough never to wobble. */
+const TILT_SPRING = { stiffness: 260, damping: 26, mass: 0.6 }
+const PRESS_SPRING = { stiffness: 420, damping: 32, mass: 0.5 }
 
-/** The award pop: one-shot, strong ease-out, under 300ms of real movement. */
-const POP: Transition = { duration: 0.42, times: [0, 0.35, 1], ease: [0.23, 1, 0.32, 1] }
+/** ease-out-expo. The ring leaves fast and settles slowly, like light spreading. */
+const BLOOM: Transition = { duration: 0.78, ease: [0.16, 1, 0.3, 1] }
+const ROLL: Transition = { duration: 0.42, ease: [0.16, 1, 0.3, 1] }
+
+/** Degrees of tilt at the badge's edge. Past ~10 the text starts to smear. */
+const MAX_TILT = 8
 
 const SHINE = 'rgba(255, 248, 219, 0.95)'
 
@@ -61,16 +73,6 @@ const RING_MASK = 'linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0
 
 const MASK_START = { '--mask-x': '100%' } as unknown as TargetAndTransition
 const MASK_END = { '--mask-x': '-100%' } as unknown as TargetAndTransition
-
-const ROOT_VARIANTS: Variants = {
-  hover: { transform: 'scale(1.03)' },
-  tap: { transform: 'scale(0.97)' },
-}
-
-/** Only the highlight reacts to hover; the ring keeps its own idle loop. */
-const SPECULAR_VARIANTS: Variants = {
-  hover: { opacity: 1 },
-}
 
 const CONTENT_STYLE: CSSProperties = {
   // The badge's flex row moves in here: the mask needs one element wrapping
@@ -120,6 +122,16 @@ const GLEAM_STYLE: CSSProperties = {
   background: `linear-gradient(-75deg, transparent 30%, ${SHINE} 50%, transparent 70%)`,
 }
 
+/** Lives outside the coin's clip, so it can leave the pill's edge. */
+const BLOOM_STYLE: CSSProperties = {
+  position: 'absolute',
+  inset: -2,
+  borderRadius: 'var(--radius-full)',
+  border: '1px solid rgba(201, 184, 138, 0.85)',
+  boxShadow: '0 0 18px rgba(201, 184, 138, 0.55)',
+  pointerEvents: 'none',
+}
+
 const STAR_PATH = 'M10 0l2.5 6.5H19l-5.5 4 2 6.5L10 13l-5.5 4 2-6.5-5.5-4h6.5z'
 
 interface StarBadgeProps {
@@ -131,7 +143,7 @@ interface StarBadgeProps {
   title?: string
   /**
    * Star count. Passing it (instead of `children`) renders the star and the
-   * number, and pops the badge when the count goes up.
+   * number, rolls the number when it changes, and blooms when it goes up.
    */
   value?: number
   starSize?: number
@@ -153,24 +165,56 @@ export function StarBadge({
   const inView = useInView(ref)
   const animated = !reduced && inView
 
-  // Motion's `whileHover` fires on touch taps, which leaves a badge stuck in
-  // its hover state after the finger lifts.
+  // Motion's pointer states fire on touch taps too, which leaves a badge stuck
+  // lit after the finger lifts. Tilt and highlight are for pointers that hover.
   const finePointer = useFinePointer()
+  const tilt = !reduced && finePointer
 
-  const pointerX = useSpring(0, SPECULAR_SPRING)
-  const pointerY = useSpring(0, SPECULAR_SPRING)
-  const specular = useMotionTemplate`radial-gradient(52px circle at ${pointerX}px ${pointerY}px, rgba(255, 255, 255, 0.55), transparent 72%)`
+  const rotateX = useSpring(0, TILT_SPRING)
+  const rotateY = useSpring(0, TILT_SPRING)
+  const scale = useSpring(1, PRESS_SPRING)
+  // One composed transform: tilt, hover and press can never overwrite each
+  // other, and there is no implicit resting value for Motion to guess at.
+  const transform = useMotionTemplate`perspective(420px) rotateX(${rotateX}deg) rotateY(${rotateY}deg) scale(${scale})`
 
-  const celebration = useAwardCount(value)
+  // The lamp is fixed in the badge's own space. Tilting toward the pointer
+  // slides the reflection the other way, which is what a real surface does.
+  const lightX = useSpring(50, TILT_SPRING)
+  const lightY = useSpring(30, TILT_SPRING)
+  const specular = useMotionTemplate`radial-gradient(58px circle at ${lightX}% ${lightY}%, rgba(255, 255, 255, 0.6), transparent 70%)`
+  const specularOpacity = useSpring(0, PRESS_SPRING)
 
-  function trackPointer(event: PointerEvent<HTMLElement>) {
-    const box = event.currentTarget.getBoundingClientRect()
-    pointerX.set(event.clientX - box.left)
-    pointerY.set(event.clientY - box.top)
-  }
+  const awards = useAwardCount(value)
+  const [blooming, setBlooming] = useState(false)
 
-  // Both tags take the same props; the cast keeps JSX off a union component type.
+  useEffect(() => {
+    if (awards > 0 && !reduced) setBlooming(true)
+  }, [awards, reduced])
+
+  const onPointerMove = useCallback(
+    (event: PointerEvent<HTMLElement>) => {
+      if (!tilt) return
+      const box = event.currentTarget.getBoundingClientRect()
+      // -0.5 … 0.5 from the centre of the badge.
+      const dx = (event.clientX - box.left) / box.width - 0.5
+      const dy = (event.clientY - box.top) / box.height - 0.5
+      rotateY.set(dx * MAX_TILT * 2)
+      rotateX.set(-dy * MAX_TILT * 2)
+      lightX.set(50 - dx * 60)
+      lightY.set(50 - dy * 60)
+    },
+    [tilt, rotateX, rotateY, lightX, lightY]
+  )
+
+  const settle = useCallback(() => {
+    rotateX.set(0)
+    rotateY.set(0)
+    scale.set(1)
+    specularOpacity.set(0)
+  }, [rotateX, rotateY, scale, specularOpacity])
+
   const Root = (as === 'span' ? motion.span : motion.div) as typeof motion.div
+  const Wrapper = as === 'span' ? 'span' : 'div'
 
   const content =
     value != null ? (
@@ -178,72 +222,108 @@ export function StarBadge({
         <svg width={starSize} height={starSize} viewBox="0 0 20 20" fill="currentColor">
           <path d={STAR_PATH} />
         </svg>
-        {/* Tabular figures: the badge must not resize as the count ticks over. */}
-        <span style={{ fontVariantNumeric: 'tabular-nums' }}>{value}</span>
+        <RollingCount value={value} reduced={!!reduced} />
       </>
     ) : (
       children
     )
 
   return (
-    <Root
-      ref={ref}
-      title={title}
-      className={`star-badge ${className}`.trim()}
-      // The resting transform must be spelled out. Motion derives the origin of
-      // a string transform by zeroing its numbers, so without this the badge
-      // settles at `scale(0)` the first time a hover/tap variant resolves.
-      style={{ position: 'relative', overflow: 'hidden', transform: 'scale(1)', ...style }}
-      variants={ROOT_VARIANTS}
-      whileHover={finePointer ? 'hover' : undefined}
-      whileTap="tap"
-      transition={PRESS_SPRING}
-      onPointerMove={finePointer && !reduced ? trackPointer : undefined}
-    >
-      {finePointer && !reduced && (
+    // Neutral wrapper: the bloom has to escape the coin's own clip.
+    <Wrapper style={{ position: 'relative', display: 'inline-flex' }}>
+      {/* Unmounts the moment it finishes: a spent ring is invisible but still
+          a layer the compositor has to carry. */}
+      {blooming && (
         <motion.span
+          key={awards}
           aria-hidden
-          style={{ ...SPECULAR_STYLE, backgroundImage: specular }}
-          variants={SPECULAR_VARIANTS}
-          initial={{ opacity: 0 }}
-          transition={{ duration: 0.18, ease: [0.23, 1, 0.32, 1] }}
+          style={BLOOM_STYLE}
+          initial={{ opacity: 0.95, transform: 'scale(0.94)' }}
+          animate={{ opacity: 0, transform: 'scale(1.45)' }}
+          transition={BLOOM}
+          onAnimationComplete={() => setBlooming(false)}
         />
       )}
 
-      <motion.span
-        style={CONTENT_STYLE}
-        initial={MASK_START}
-        animate={animated ? MASK_END : MASK_START}
-        transition={animated ? SWEEP : { duration: 0 }}
+      <Root
+        ref={ref}
+        title={title}
+        aria-label={value != null ? `${value} stars` : undefined}
+        className={`star-badge ${className}`.trim()}
+        style={{ position: 'relative', overflow: 'hidden', transform, ...style }}
+        onPointerMove={onPointerMove}
+        onPointerEnter={() => {
+          if (!tilt) return
+          scale.set(1.03)
+          specularOpacity.set(1)
+        }}
+        onPointerLeave={settle}
+        onPointerDown={() => scale.set(0.97)}
+        onPointerUp={() => scale.set(tilt ? 1.03 : 1)}
+        onPointerCancel={settle}
       >
-        {/* Remounting replays the pop; awards are rare, so a restart is fine. */}
+        {tilt && (
+          <motion.span
+            aria-hidden
+            style={{ ...SPECULAR_STYLE, backgroundImage: specular, opacity: specularOpacity }}
+          />
+        )}
+
         <motion.span
-          key={celebration}
-          style={{ display: 'inline-flex', alignItems: 'center', gap: 'inherit' }}
-          animate={celebration && !reduced ? { transform: ['scale(1)', 'scale(1.22)', 'scale(1)'] } : undefined}
-          transition={POP}
+          style={CONTENT_STYLE}
+          initial={MASK_START}
+          animate={animated ? MASK_END : MASK_START}
+          transition={animated ? SWEEP : { duration: 0 }}
         >
           {content}
         </motion.span>
-      </motion.span>
 
-      <span aria-hidden style={RING_STYLE}>
-        <motion.span
-          style={GLEAM_STYLE}
-          initial={{ transform: 'translateX(50%)', opacity: 0 }}
-          animate={
-            animated
-              ? { transform: ['translateX(50%)', 'translateX(-50%)'], opacity: [0, 1, 0] }
-              : { opacity: 0 }
-          }
-          transition={animated ? SWEEP : { duration: 0 }}
-        />
-      </span>
-    </Root>
+        <span aria-hidden style={RING_STYLE}>
+          <motion.span
+            style={GLEAM_STYLE}
+            initial={{ transform: 'translateX(50%)', opacity: 0 }}
+            animate={
+              animated
+                ? { transform: ['translateX(50%)', 'translateX(-50%)'], opacity: [0, 1, 0] }
+                : { opacity: 0 }
+            }
+            transition={animated ? SWEEP : { duration: 0 }}
+          />
+        </span>
+      </Root>
+    </Wrapper>
   )
 }
 
-const SPECULAR_SPRING = { stiffness: 220, damping: 26, mass: 0.4 }
+/**
+ * The count, rolling up behind a clip when it changes. Grid stacking keeps the
+ * outgoing and incoming numbers in the same cell, so nothing reflows mid-roll.
+ */
+function RollingCount({ value, reduced }: { value: number; reduced: boolean }) {
+  return (
+    <span
+      style={{
+        display: 'grid',
+        overflow: 'hidden',
+        // Tabular figures: the badge must not resize as the count ticks over.
+        fontVariantNumeric: 'tabular-nums',
+      }}
+    >
+      <AnimatePresence initial={false}>
+        <motion.span
+          key={value}
+          style={{ gridArea: '1 / 1' }}
+          initial={reduced ? { opacity: 0 } : { opacity: 0, y: '100%' }}
+          animate={reduced ? { opacity: 1 } : { opacity: 1, y: '0%' }}
+          exit={reduced ? { opacity: 0 } : { opacity: 0, y: '-100%' }}
+          transition={ROLL}
+        >
+          {value}
+        </motion.span>
+      </AnimatePresence>
+    </span>
+  )
+}
 
 /** Hover effects belong to devices that can actually hover. */
 function useFinePointer(): boolean {
@@ -262,8 +342,8 @@ function useFinePointer(): boolean {
 
 /**
  * Counts how many times the star count has gone *up* while mounted. Only
- * increases celebrate — a correction downward is not an award, and the first
- * value is just the badge rendering.
+ * increases bloom — a correction downward is not an award, and the first value
+ * is just the badge rendering.
  */
 function useAwardCount(value: number | undefined): number {
   const previous = useRef(value)
@@ -271,7 +351,11 @@ function useAwardCount(value: number | undefined): number {
 
   useEffect(() => {
     if (value == null) return
-    if (previous.current != null && value > previous.current) setAwards((count) => count + 1)
+    if (previous.current != null && value > previous.current) {
+      setAwards((count) => count + 1)
+      // Phones get the award in the hand as well as the eye.
+      vibrate(12)
+    }
     previous.current = value
   }, [value])
 

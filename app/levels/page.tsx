@@ -260,10 +260,19 @@ export default function LevelsPage() {
            a mark, so the seed and the plant land inside the card instead of
            hanging off the ends; the vertical margin is the half of a mark that
            overhangs the 8px bar, so none of them reach the text below. */
-        .lvl-bar-wrap { position: relative; display: block; margin-block: 11px; }
+        .lvl-bar-wrap { position: relative; display: block; margin-block: 13px; }
+
+        /* The leaves on the stage a patient is currently on breathe, so the
+           mark that matters moves and the other three sit still. */
+        @keyframes lvl-sway {
+          0%, 100% { transform: rotate(-3.5deg); }
+          50%      { transform: rotate(3.5deg); }
+        }
+        .lvl-sway { animation: lvl-sway 4.5s var(--ease-out, ease-in-out) infinite; }
 
         @media (prefers-reduced-motion: reduce) {
           .lvl-card, .lvl-cta svg, .lvl-rail-fill, .lvl-bar > span { transition: none; }
+          .lvl-sway { animation: none; }
         }
       `}</style>
 

@@ -96,7 +96,17 @@ export default function GrowthStages({
           <GrowthMark
             stage={stage}
             last={last}
-            state={stage === reached ? 'current' : stage < reached ? 'past' : 'ahead'}
+            state={
+              stage === reached
+                ? 'current'
+                : stage < reached
+                ? 'past'
+                : // The one immediately ahead is what clearing a pose buys, so
+                  // it gets its own class to wake up on hover.
+                stage === reached + 1
+                ? 'next'
+                : 'ahead'
+            }
           />
         </span>
       ))}
@@ -104,12 +114,20 @@ export default function GrowthStages({
   )
 }
 
-function GrowthMark({ stage, last, state }: { stage: number; last: number; state: 'past' | 'current' | 'ahead' }) {
+function GrowthMark({
+  stage,
+  last,
+  state,
+}: {
+  stage: number
+  last: number
+  state: 'past' | 'current' | 'next' | 'ahead'
+}) {
   // Gradients live in the document, so two marks sharing an id would share a
   // fill. `useId` keeps each scene's own — stripped to letters and digits,
   // since React wraps the id in punctuation (`«r0»`) that `url(#…)` chokes on.
   const uid = `gs${useId().replace(/[^a-zA-Z0-9]/g, '')}`
-  const ahead = state === 'ahead'
+  const ahead = state === 'ahead' || state === 'next'
   const current = state === 'current'
   // "Grown" is the end of this box's own road, not stage three: a one-pose box
   // finishes at the sprout.
@@ -119,9 +137,20 @@ function GrowthMark({ stage, last, state }: { stage: number; last: number; state
   return (
     <span
       // The halo on the live mark breathes, so the eye lands on where the
-      // patient actually is before it reads anything. Both classes carry their
-      // own box-shadow; only the resting marks set one inline.
-      className={grown ? 'lvl-mark-done' : current ? 'lvl-mark-now' : undefined}
+      // patient actually is before it reads anything. These classes carry the
+      // box-shadow and the drained look of a stage still ahead; only the
+      // resting marks set a shadow inline.
+      className={
+        grown
+          ? 'lvl-mark-done'
+          : current
+          ? 'lvl-mark-now'
+          : state === 'next'
+          ? 'lvl-mark-ahead lvl-mark-next'
+          : ahead
+          ? 'lvl-mark-ahead'
+          : undefined
+      }
       style={{
         width: size,
         height: size,
@@ -133,9 +162,8 @@ function GrowthMark({ stage, last, state }: { stage: number; last: number; state
         background: 'var(--surface)',
         border: `2px solid ${ahead ? 'var(--border)' : 'var(--box-edge, rgba(74, 107, 90, 0.45))'}`,
         // What is still ahead keeps its shape but drains of colour — a preview,
-        // not something the patient has to act on.
-        filter: ahead ? 'grayscale(1)' : undefined,
-        opacity: ahead ? 0.38 : 1,
+        // not something the patient has to act on. The draining lives in
+        // `.lvl-mark-ahead` rather than here, so hovering the card can undo it.
         boxShadow: current ? undefined : '0 1px 3px rgba(38, 48, 42, 0.12)',
         transition: 'width var(--dur-fast) var(--ease-out), height var(--dur-fast) var(--ease-out), opacity var(--dur-fast) var(--ease-out)',
       }}

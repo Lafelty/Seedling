@@ -169,12 +169,39 @@ export default function LevelsPage() {
           transition: box-shadow var(--dur-fast) var(--ease-out), border-color var(--dur-fast) var(--ease-out);
           outline: none;
         }
+        /* The lift rides the \`li\`, not the card: the card is the shared-layout
+           element, and framer-motion owns its transform while a panel opens.
+           \`:has\` drops the lift for whichever box is open, so the morph does
+           not start from a raised rect and land from a flat one. */
+        .lvl-grid > li { transition: transform var(--dur-fast) var(--ease-out); }
+        .lvl-grid > li:active { transform: translateY(-1px) scale(0.994); }
+        .lvl-grid > li:has(.lvl-card[aria-expanded='true']) { transform: none; }
+
         @media (hover: hover) and (pointer: fine) {
-          .lvl-card:hover { box-shadow: 0 12px 28px var(--box-edge, rgba(74, 107, 90, 0.16)); }
-          .lvl-card:hover .lvl-cta svg { transform: translateX(3px); }
+          .lvl-grid > li:hover { transform: translateY(-4px); }
+          .lvl-card:hover {
+            box-shadow: 0 18px 34px var(--box-edge, rgba(74, 107, 90, 0.16));
+            border-color: var(--box-bar, var(--primary));
+          }
+          .lvl-card:hover .lvl-cta svg { transform: translateX(4px); }
+          /* Hovering shows the patient what the next pose buys them: the stage
+             they have not reached warms up and leans forward. */
+          .lvl-card:hover .lvl-mark-next { filter: none; opacity: 0.9; transform: scale(1.1); }
+          /* And a sheen runs the length of what they have already done. */
+          .lvl-card:hover .lvl-bar-fill::after { animation: lvl-sheen 900ms var(--ease-out); }
         }
         .lvl-card:focus-visible { box-shadow: 0 0 0 3px var(--box-edge, rgba(74, 107, 90, 0.45)); }
         .lvl-cta svg { transition: transform var(--dur-fast) var(--ease-out); }
+
+        .lvl-mark-ahead {
+          filter: grayscale(1);
+          opacity: 0.38;
+          transition: filter var(--dur-fast) var(--ease-out), opacity var(--dur-fast) var(--ease-out), transform var(--dur-fast) var(--ease-out);
+        }
+        @keyframes lvl-sheen {
+          from { transform: translateX(-100%); }
+          to   { transform: translateX(100%); }
+        }
         .lvl-pose + .lvl-pose { border-top: 1px solid var(--border); }
 
         /* Overall progress, carried by a rail instead of its own card. */
@@ -253,6 +280,16 @@ export default function LevelsPage() {
           border-radius: var(--radius-full);
           background: var(--box-bar, var(--primary));
           transition: width var(--dur-grow) var(--ease-out);
+          /* Holds the sheen inside the run of work already done. */
+          position: relative;
+          overflow: hidden;
+        }
+        .lvl-bar-fill::after {
+          content: '';
+          position: absolute;
+          inset: 0;
+          transform: translateX(-100%);
+          background: linear-gradient(100deg, transparent 20%, rgba(255, 255, 255, 0.55) 50%, transparent 80%);
         }
 
         /* The growth marks sit on the bar, not inside it — \`.lvl-bar\` clips
@@ -284,10 +321,14 @@ export default function LevelsPage() {
         }
 
         @media (prefers-reduced-motion: reduce) {
-          .lvl-card, .lvl-cta svg, .lvl-rail-fill, .lvl-bar > span { transition: none; }
-          .lvl-sway, .lvl-mark-now { animation: none; }
+          .lvl-card, .lvl-cta svg, .lvl-rail-fill, .lvl-bar > span,
+          .lvl-grid > li, .lvl-mark-ahead { transition: none; }
+          .lvl-sway, .lvl-mark-now, .lvl-bar-fill::after { animation: none; }
           /* Without the pulse the live mark still needs its halo. */
           .lvl-mark-now { box-shadow: 0 0 0 4px var(--box-wash), 0 1px 3px rgba(38, 48, 42, 0.16); }
+          /* Colour is still a fine way to answer "what's next" — travel isn't. */
+          .lvl-grid > li:hover, .lvl-grid > li:active { transform: none; }
+          .lvl-card:hover .lvl-mark-next { transform: none; }
         }
       `}</style>
 
@@ -413,7 +454,7 @@ export default function LevelsPage() {
                           role="img"
                           aria-label={`${pct}% of this box done — ${growthStageName(node.clearedCount, node.total).toLowerCase()} stage`}
                         >
-                          <span style={{ width: `${pct}%` }} />
+                          <span className="lvl-bar-fill" style={{ width: `${pct}%` }} />
                         </span>
                         <GrowthStages clearedCount={node.clearedCount} total={node.total} />
                       </div>

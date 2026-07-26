@@ -45,7 +45,8 @@ export const CLEARED_TINT: BoxTint = {
   wash: 'rgba(201, 184, 138, 0.28)',
   soft: 'rgba(201, 184, 138, 0.13)',
   edge: 'rgba(201, 184, 138, 0.60)',
-  ink: '#7A6A3E',
+  // Deep enough to clear 4.5:1 on its own wash, which #7A6A3E did not.
+  ink: '#6B5C33',
   bar: '#C9B88A',
 };
 

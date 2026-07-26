@@ -13,9 +13,10 @@ export const dynamic = 'force-dynamic'
 /**
  * The box's own mark, ringed by how much of the box is done. Identity in the
  * middle, progress around it — one object instead of a badge plus a number.
- * It sits on the box's own colour, so it works in white rather than in ink.
+ * It sits on the box's own colour, so the track it runs on is white — the
+ * tint's own wash would be invisible against the surface behind it.
  */
-function MarkRing({ id, pct, cleared, size = 72 }: { id: string; pct: number; cleared: boolean; size?: number }) {
+function MarkRing({ id, pct, cleared, tint, size = 72 }: { id: string; pct: number; cleared: boolean; tint: BoxTint; size?: number }) {
   const stroke = 5
   const r = (size - stroke) / 2
   const c = 2 * Math.PI * r
@@ -28,13 +29,13 @@ function MarkRing({ id, pct, cleared, size = 72 }: { id: string; pct: number; cl
         aria-hidden
         style={{ position: 'absolute', inset: 0, transform: 'rotate(-90deg)' }}
       >
-        <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke="rgba(255, 255, 255, 0.28)" strokeWidth={stroke} />
+        <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke="#FFFFFF" strokeWidth={stroke} />
         <circle
           cx={size / 2}
           cy={size / 2}
           r={r}
           fill="none"
-          stroke="#FFFFFF"
+          stroke={tint.ink}
           strokeWidth={stroke}
           strokeLinecap="round"
           strokeDasharray={c}
@@ -42,7 +43,7 @@ function MarkRing({ id, pct, cleared, size = 72 }: { id: string; pct: number; cl
           style={{ transition: 'stroke-dashoffset var(--dur-grow) var(--ease-out)' }}
         />
       </svg>
-      <BoxMark id={id} cleared={cleared} size={size - stroke * 2 - 10} tone="onDark" />
+      <BoxMark id={id} cleared={cleared} size={size - stroke * 2 - 10} tone="onTint" />
     </div>
   )
 }
@@ -217,24 +218,25 @@ export default function LevelGroupPage() {
           .pose-back svg { transition: transform var(--dur-fast) var(--ease-out); }
 
           /* ─── The box's own slab ───
-             Every tint's ink clears 4.5:1 against white, so the label text on
-             it is plain white rather than a tinted near-white. */
+             A whole surface of the box's colour, but the colour itself stays
+             light. Filling it with the ink made a dark green wall at the top
+             of a screen that is meant to feel like daylight in a garden; the
+             commitment is in holding one flat tint rather than fading out of
+             it, not in how dark it is. */
           .pose-hero {
             margin-top: var(--space-3);
             margin-bottom: var(--space-6);
             display: flex;
             align-items: center;
             gap: var(--space-4);
-            background: linear-gradient(150deg, var(--box-ink), var(--box-ink) 40%, rgba(0, 0, 0, 0.16));
-            background-color: var(--box-ink);
-            border: 1px solid var(--box-ink);
-            box-shadow: 0 10px 28px var(--box-edge);
+            background-color: var(--surface);
+            background-image: linear-gradient(var(--box-wash), var(--box-wash));
+            border: 1px solid var(--box-edge);
+            box-shadow: 0 6px 20px var(--box-soft);
           }
-          .pose-hero h1 { color: #FFFFFF; font-size: var(--text-2xl); }
-          /* 0.92 rather than the usual 0.7-ish body alpha: on the gold of a
-             finished box, anything lighter drops under 4.5:1. */
-          .pose-hero-sub { color: rgba(255, 255, 255, 0.92); font-size: var(--text-sm); margin-top: 2px; }
-          .pose-hero-count { color: #FFFFFF; font-size: var(--text-sm); font-weight: 700; margin-top: var(--space-2); }
+          .pose-hero h1 { color: var(--ink); font-size: var(--text-2xl); }
+          .pose-hero-sub { color: #5C5C5C; font-size: var(--text-sm); margin-top: 2px; }
+          .pose-hero-count { color: var(--box-ink); font-size: var(--text-sm); font-weight: 700; margin-top: var(--space-2); }
 
           /* ─── The poses, as one list rather than a stack of cards ───
              Cards inside a card gave every pose its own border, gradient and
@@ -366,8 +368,8 @@ export default function LevelGroupPage() {
           .pose-effort { display: inline-flex; align-items: center; gap: var(--space-2); }
           .pose-status { font-weight: 700; color: var(--box-ink); }
           .pose-item[data-state='locked'] .pose-status { color: var(--pose-meta); }
-          /* A shade under the shared gold ink: #7A6A3E reads 4.3:1 against the
-             current row's wash, and 12px bold is normal text to WCAG. */
+          /* The same gold as a finished box's ink, deep enough to hold 4.5:1
+             on the current row's wash — 12px bold is normal text to WCAG. */
           .pose-best { display: inline-flex; align-items: center; gap: var(--space-1); color: #6B5C33; font-weight: 700; }
 
           /* One chip on one row — the pose the patient is up to. It rides the
@@ -445,7 +447,7 @@ export default function LevelGroupPage() {
             the box's colour outright rather than a wash of it — one committed
             surface at the top, so the green isn't only a fade and a stripe. */}
         <header className="pose-hero card animate-fadeIn">
-          <MarkRing id={node.group.id} pct={pct} cleared={boxCleared} />
+          <MarkRing id={node.group.id} pct={pct} cleared={boxCleared} tint={tint} />
 
           <div style={{ flex: 1, minWidth: 0 }}>
             <h1>{node.group.name}</h1>

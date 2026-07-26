@@ -12,16 +12,16 @@ export default function BoxMark({
   cleared,
   size = 48,
   /**
-   * `onDark` is for the box's own page, where the mark sits on a slab of the
-   * box's colour rather than on a light card — the tint's ink would all but
-   * disappear there.
+   * `onTint` is for the box's own page, where the mark sits on a surface
+   * already filled with the box's colour — its usual wash disc would vanish
+   * into it, so the disc goes white and the growing thing keeps the ink.
    */
   tone = 'onLight',
 }: {
   id: string
   cleared: boolean
   size?: number
-  tone?: 'onLight' | 'onDark'
+  tone?: 'onLight' | 'onTint'
 }) {
   const marks = [
     // Leaf on a stem
@@ -59,8 +59,8 @@ export default function BoxMark({
         display: 'grid',
         placeItems: 'center',
         borderRadius: 'var(--radius-full)',
-        background: tone === 'onDark' ? 'rgba(255, 255, 255, 0.16)' : tint.wash,
-        color: tone === 'onDark' ? '#FFFFFF' : tint.ink,
+        background: tone === 'onTint' ? '#FFFFFF' : tint.wash,
+        color: tint.ink,
       }}
     >
       <svg width={glyph} height={glyph} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round">

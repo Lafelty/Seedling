@@ -13,8 +13,9 @@ export const dynamic = 'force-dynamic'
 /**
  * The box's own mark, ringed by how much of the box is done. Identity in the
  * middle, progress around it — one object instead of a badge plus a number.
+ * It sits on the box's own colour, so it works in white rather than in ink.
  */
-function MarkRing({ id, pct, cleared, tint, size = 72 }: { id: string; pct: number; cleared: boolean; tint: BoxTint; size?: number }) {
+function MarkRing({ id, pct, cleared, size = 72 }: { id: string; pct: number; cleared: boolean; size?: number }) {
   const stroke = 5
   const r = (size - stroke) / 2
   const c = 2 * Math.PI * r
@@ -27,13 +28,13 @@ function MarkRing({ id, pct, cleared, tint, size = 72 }: { id: string; pct: numb
         aria-hidden
         style={{ position: 'absolute', inset: 0, transform: 'rotate(-90deg)' }}
       >
-        <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke={tint.wash} strokeWidth={stroke} />
+        <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke="rgba(255, 255, 255, 0.28)" strokeWidth={stroke} />
         <circle
           cx={size / 2}
           cy={size / 2}
           r={r}
           fill="none"
-          stroke={tint.ink}
+          stroke="#FFFFFF"
           strokeWidth={stroke}
           strokeLinecap="round"
           strokeDasharray={c}
@@ -41,7 +42,7 @@ function MarkRing({ id, pct, cleared, tint, size = 72 }: { id: string; pct: numb
           style={{ transition: 'stroke-dashoffset var(--dur-grow) var(--ease-out)' }}
         />
       </svg>
-      <BoxMark id={id} cleared={cleared} size={size - stroke * 2 - 10} />
+      <BoxMark id={id} cleared={cleared} size={size - stroke * 2 - 10} tone="onDark" />
     </div>
   )
 }
@@ -180,18 +181,24 @@ export default function LevelGroupPage() {
 
   return (
     <>
-      <main
-        className="min-h-screen max-w-2xl mx-auto px-4 py-8 pb-24"
+      {/* The colour spans the viewport while the poses stay a column, so the
+          tint must not be pinned to the column's width. */}
+      <div
         style={{
           // The page wears the box's own colour, so opening a box from the map
           // lands somewhere that plainly belongs to it.
           ['--box-wash' as string]: tint.wash,
+          ['--box-soft' as string]: tint.soft,
           ['--box-edge' as string]: tint.edge,
           ['--box-ink' as string]: tint.ink,
           ['--box-bar' as string]: tint.bar,
-          background: `linear-gradient(180deg, ${tint.wash}, transparent 360px)`,
+          // The colour holds the whole page instead of fading out at 360px —
+          // a tint that dies where the content starts leaves the content
+          // looking stranded on a different screen than the one it opened on.
+          background: `linear-gradient(180deg, ${tint.wash}, ${tint.soft} 420px, ${tint.soft})`,
         }}
       >
+      <main className="min-h-screen max-w-2xl mx-auto px-4 py-8 pb-24">
         <style>{`
           .pose-back {
             display: inline-flex;
@@ -208,6 +215,26 @@ export default function LevelGroupPage() {
             transition: background var(--dur-fast) var(--ease-out);
           }
           .pose-back svg { transition: transform var(--dur-fast) var(--ease-out); }
+
+          /* ─── The box's own slab ───
+             Every tint's ink clears 4.5:1 against white, so the label text on
+             it is plain white rather than a tinted near-white. */
+          .pose-hero {
+            margin-top: var(--space-3);
+            margin-bottom: var(--space-6);
+            display: flex;
+            align-items: center;
+            gap: var(--space-4);
+            background: linear-gradient(150deg, var(--box-ink), var(--box-ink) 40%, rgba(0, 0, 0, 0.16));
+            background-color: var(--box-ink);
+            border: 1px solid var(--box-ink);
+            box-shadow: 0 10px 28px var(--box-edge);
+          }
+          .pose-hero h1 { color: #FFFFFF; font-size: var(--text-2xl); }
+          /* 0.92 rather than the usual 0.7-ish body alpha: on the gold of a
+             finished box, anything lighter drops under 4.5:1. */
+          .pose-hero-sub { color: rgba(255, 255, 255, 0.92); font-size: var(--text-sm); margin-top: 2px; }
+          .pose-hero-count { color: #FFFFFF; font-size: var(--text-sm); font-weight: 700; margin-top: var(--space-2); }
 
           /* ─── The poses, as one list rather than a stack of cards ───
              Cards inside a card gave every pose its own border, gradient and
@@ -231,6 +258,11 @@ export default function LevelGroupPage() {
                --muted (#6B6B6B) drops to 4.4:1 over the wash and fails AA. */
             --pose-meta: #5C5C5C;
           }
+          /* Colour runs down the list in step with the work: done rows hold a
+             quiet tint, the pose being worked on holds the full wash, and what
+             hasn't been reached yet is plain. The tinted run is the progress,
+             which is why it stops where it does. */
+          .pose-item[data-state='cleared'] { background: var(--box-soft); }
           .pose-item[data-state='current'] {
             background: linear-gradient(160deg, var(--box-wash), var(--surface) 78%);
           }
@@ -409,29 +441,16 @@ export default function LevelGroupPage() {
           All boxes
         </Link>
 
-        {/* Header: what this box is, and how far in the patient is. */}
-        <header
-          className="card animate-fadeIn"
-          style={{
-            marginTop: 'var(--space-3)',
-            marginBottom: 'var(--space-6)',
-            display: 'flex',
-            alignItems: 'center',
-            gap: 'var(--space-4)',
-            background: `linear-gradient(160deg, ${tint.wash}, var(--surface) 72%)`,
-            borderColor: tint.edge,
-          }}
-        >
-          <MarkRing id={node.group.id} pct={pct} cleared={boxCleared} tint={tint} />
+        {/* Header: what this box is, and how far in the patient is. It wears
+            the box's colour outright rather than a wash of it — one committed
+            surface at the top, so the green isn't only a fade and a stripe. */}
+        <header className="pose-hero card animate-fadeIn">
+          <MarkRing id={node.group.id} pct={pct} cleared={boxCleared} />
 
           <div style={{ flex: 1, minWidth: 0 }}>
-            <h1 style={{ color: 'var(--ink)', fontSize: 'var(--text-2xl)' }}>{node.group.name}</h1>
-            {node.group.description && (
-              <p style={{ color: '#5C5C5C', fontSize: 'var(--text-sm)', marginTop: '2px' }}>
-                {node.group.description}
-              </p>
-            )}
-            <p style={{ color: tint.ink, fontSize: 'var(--text-sm)', fontWeight: 700, marginTop: 'var(--space-2)' }}>
+            <h1>{node.group.name}</h1>
+            {node.group.description && <p className="pose-hero-sub">{node.group.description}</p>}
+            <p className="pose-hero-count">
               {node.total === 0
                 ? 'No poses yet'
                 : boxCleared
@@ -563,6 +582,7 @@ export default function LevelGroupPage() {
           </ol>
         )}
       </main>
+      </div>
 
       {/* Same shell as every other page in the app. */}
       <nav className="bottom-nav">

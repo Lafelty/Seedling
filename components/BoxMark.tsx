@@ -7,7 +7,22 @@ import { hashId, tintOf } from '@/lib/levels-theme'
  * the identity, the box's own green carries the rest — so a patient recognises
  * the box they tapped on the page it opens into.
  */
-export default function BoxMark({ id, cleared, size = 48 }: { id: string; cleared: boolean; size?: number }) {
+export default function BoxMark({
+  id,
+  cleared,
+  size = 48,
+  /**
+   * `onDark` is for the box's own page, where the mark sits on a slab of the
+   * box's colour rather than on a light card — the tint's ink would all but
+   * disappear there.
+   */
+  tone = 'onLight',
+}: {
+  id: string
+  cleared: boolean
+  size?: number
+  tone?: 'onLight' | 'onDark'
+}) {
   const marks = [
     // Leaf on a stem
     <g key="leaf">
@@ -44,8 +59,8 @@ export default function BoxMark({ id, cleared, size = 48 }: { id: string; cleare
         display: 'grid',
         placeItems: 'center',
         borderRadius: 'var(--radius-full)',
-        background: tint.wash,
-        color: tint.ink,
+        background: tone === 'onDark' ? 'rgba(255, 255, 255, 0.16)' : tint.wash,
+        color: tone === 'onDark' ? '#FFFFFF' : tint.ink,
       }}
     >
       <svg width={glyph} height={glyph} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round">

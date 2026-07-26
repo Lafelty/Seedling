@@ -7,6 +7,7 @@ import { createClient } from '@/lib/supabase/client'
 import { buildLevelMap, type CompletedSession, type GroupNode, type LevelExercise, type LevelGroup } from '@/lib/levels'
 import { difficultySteps, tintOf, type BoxTint } from '@/lib/levels-theme'
 import BoxMark from '@/components/BoxMark'
+import PoseThumb from '@/components/PoseThumb'
 
 export const dynamic = 'force-dynamic'
 
@@ -107,7 +108,7 @@ export default function LevelGroupPage() {
         .eq('is_active', true),
       supabase
         .from('exercises')
-        .select('id, name, description, difficulty, group_id, rank_in_group, unlock_min_score, unlock_max_seconds')
+        .select('id, name, description, difficulty, group_id, rank_in_group, unlock_min_score, unlock_max_seconds, demo_images')
         .eq('is_active', true),
       supabase
         .from('therapy_sessions')
@@ -299,7 +300,7 @@ export default function LevelGroupPage() {
             position: relative;
             width: 100%;
             display: grid;
-            grid-template-columns: 36px minmax(0, 1fr) auto;
+            grid-template-columns: 36px auto minmax(0, 1fr) auto;
             align-items: center;
             gap: var(--space-3);
             padding: var(--space-4);
@@ -327,6 +328,10 @@ export default function LevelGroupPage() {
             font-weight: 700;
             font-variant-numeric: tabular-nums;
           }
+
+          /* The pose's own demo pictures, sized here rather than in the
+             component so the row can shrink them on a narrow phone. */
+          .pose-thumb { width: 64px; height: 64px; }
 
           .pose-body { min-width: 0; display: flex; flex-direction: column; gap: 2px; }
 
@@ -396,23 +401,55 @@ export default function LevelGroupPage() {
             color: var(--box-ink);
           }
           .pose-go[data-fill='true'] {
+            position: relative;
             min-height: 40px;
             padding-inline: var(--space-4);
             border-radius: var(--radius-full);
-            /* Every tint's ink passes 4.5:1 against white label text. */
-            background: var(--box-ink);
+            /* Every tint's ink passes 4.5:1 against white label text. The sweep
+               rides on top of the ink as a moving highlight — one paint, so the
+               pill needs no overflow clipping and the sprig can sit outside it. */
+            background-color: var(--box-ink);
+            background-image: linear-gradient(100deg, transparent 26%, rgba(255, 255, 255, 0.34) 40%, transparent 54%);
+            background-size: 260% 100%;
+            background-repeat: no-repeat;
             color: #FFFFFF;
             font-size: var(--text-sm);
             font-weight: 700;
-            box-shadow: 0 2px 8px var(--box-edge);
+            box-shadow: 0 2px 10px var(--box-edge), 0 0 0 3px var(--box-wash);
+            animation: pose-sheen 4.2s var(--ease-out) infinite;
           }
-          .pose-go svg { transition: transform var(--dur-fast) var(--ease-out); }
+          /* Long rest between passes: the sweep is meant to catch the eye once,
+             not to shimmer continuously next to text a patient is reading. */
+          @keyframes pose-sheen {
+            0% { background-position: 200% 0; }
+            40%, 100% { background-position: -110% 0; }
+          }
+
+          /* A leaf growing off the top of the action — the one place on the
+             page where the garden shows up as an object rather than a colour. */
+          .pose-sprig {
+            position: absolute;
+            top: -14px;
+            right: 6px;
+            width: 28px;
+            height: 28px;
+            pointer-events: none;
+            transform-origin: 60% 90%;
+            animation: pose-sway 3.4s var(--ease-out) infinite;
+            filter: drop-shadow(0 1px 2px rgba(28, 40, 32, 0.35));
+          }
+          @keyframes pose-sway {
+            0%, 100% { transform: rotate(-8deg); }
+            50% { transform: rotate(6deg) translateY(-1px); }
+          }
+          /* The sprig has its own sway; only the chevron slides. */
+          .pose-go svg:not(.pose-sprig) { transition: transform var(--dur-fast) var(--ease-out); }
 
           @media (hover: hover) and (pointer: fine) {
             .pose-back:hover { background: var(--box-wash); }
             .pose-back:hover svg { transform: translateX(-2px); }
             .pose-item[data-open='true']:hover { background: var(--box-wash); }
-            .pose-row:hover .pose-go svg { transform: translateX(3px); }
+            .pose-row:hover .pose-go svg:not(.pose-sprig) { transform: translateX(3px); }
             .pose-row:hover .pose-go[data-fill='true'] { filter: brightness(1.1); }
           }
           a.pose-row:active { background: var(--box-wash); }
@@ -422,9 +459,11 @@ export default function LevelGroupPage() {
              chevron stays in its column — it costs 18px and reads as a stray
              glyph on a line of its own. */
           @media (max-width: 400px) {
-            .pose-item[data-state='current'] .pose-row { grid-template-columns: 36px minmax(0, 1fr); }
+            .pose-thumb { width: 52px; height: 52px; }
+            .pose-row { gap: var(--space-2); padding: var(--space-3); }
+            .pose-item[data-state='current'] .pose-row { grid-template-columns: 36px auto minmax(0, 1fr); }
             .pose-item[data-state='current'] .pose-go {
-              grid-column: 2;
+              grid-column: 3;
               justify-self: start;
               margin-top: var(--space-2);
             }
@@ -433,6 +472,8 @@ export default function LevelGroupPage() {
 
           @media (prefers-reduced-motion: reduce) {
             .pose-go svg, .pose-back svg { transition: none; }
+            .pose-go[data-fill='true'] { animation: none; }
+            .pose-sprig { animation: none; }
           }
         `}</style>
 
@@ -510,6 +551,15 @@ export default function LevelGroupPage() {
                     )}
                   </span>
 
+                  {/* The pose as the therapist shot it, ahead of its name —
+                      a picture of the movement lands before words do. */}
+                  <PoseThumb
+                    images={Array.isArray(exercise.demo_images) ? exercise.demo_images : []}
+                    locked={locked}
+                    tint={tint}
+                    delayMs={index * 220}
+                  />
+
                   <div className="pose-body">
                     <h2 className="pose-name">{exercise.name}</h2>
 
@@ -543,6 +593,16 @@ export default function LevelGroupPage() {
 
                   {!locked && (
                     <span className="pose-go" data-fill={isCurrent}>
+                      {isCurrent && (
+                        <svg className="pose-sprig" viewBox="0 0 24 24" fill="none" aria-hidden>
+                          {/* The leaves are outlined: their top halves sit on the
+                              row's pale green, where an unlined light green leaf
+                              disappears. */}
+                          <path d="M12 22V12.5" stroke="#2A5F3C" strokeWidth="2.6" strokeLinecap="round" />
+                          <path d="M12 14c-4.4 0-6.6-2.2-6.6-6.6C9.8 7.4 12 9.6 12 14Z" fill="#8FD08C" stroke="#2A5F3C" strokeWidth="1.1" strokeLinejoin="round" />
+                          <path d="M12 14c4.4 0 6.6-2.2 6.6-6.6C14.2 7.4 12 9.6 12 14Z" fill="#C2EBAA" stroke="#2A5F3C" strokeWidth="1.1" strokeLinejoin="round" />
+                        </svg>
+                      )}
                       {isCurrent && action}
                       <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
                         {isCurrent ? (

@@ -7,7 +7,22 @@ import { hashId, tintOf } from '@/lib/levels-theme'
  * the identity, the box's own green carries the rest — so a patient recognises
  * the box they tapped on the page it opens into.
  */
-export default function BoxMark({ id, cleared, size = 48 }: { id: string; cleared: boolean; size?: number }) {
+export default function BoxMark({
+  id,
+  cleared,
+  size = 48,
+  /**
+   * `onTint` is for the box's own page, where the mark sits on a surface
+   * already filled with the box's colour — its usual wash disc would vanish
+   * into it, so the disc goes white and the growing thing keeps the ink.
+   */
+  tone = 'onLight',
+}: {
+  id: string
+  cleared: boolean
+  size?: number
+  tone?: 'onLight' | 'onTint'
+}) {
   const marks = [
     // Leaf on a stem
     <g key="leaf">
@@ -44,7 +59,7 @@ export default function BoxMark({ id, cleared, size = 48 }: { id: string; cleare
         display: 'grid',
         placeItems: 'center',
         borderRadius: 'var(--radius-full)',
-        background: tint.wash,
+        background: tone === 'onTint' ? '#FFFFFF' : tint.wash,
         color: tint.ink,
       }}
     >

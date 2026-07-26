@@ -8,6 +8,12 @@
 export interface BoxTint {
   /** Faint fill: card washes, chips, tracks. */
   wash: string;
+  /**
+   * A quieter `wash`, for surfaces that carry the colour without claiming
+   * attention: the page's own floor, and rows that are already done. It lets
+   * the tint hold a whole screen instead of fading out partway down it.
+   */
+  soft: string;
   /** Card border and focus ring. */
   edge: string;
   /** Text and icons on a light surface — all pass WCAG AA on white. */
@@ -28,17 +34,19 @@ export function hashId(id: string): number {
  * without any of them reading as further along, higher, or next.
  */
 export const BOX_TINTS: BoxTint[] = [
-  { wash: 'rgba(124, 199, 134, 0.30)', edge: 'rgba(120, 187, 128, 0.55)', ink: '#2F6B45', bar: '#5FAF6B' }, // leaf
-  { wash: 'rgba(150, 214, 184, 0.32)', edge: 'rgba(126, 194, 166, 0.55)', ink: '#2C6A5B', bar: '#54B296' }, // mint
-  { wash: 'rgba(186, 222, 140, 0.34)', edge: 'rgba(163, 203, 120, 0.55)', ink: '#4E6B27', bar: '#8CC252' }, // spring
-  { wash: 'rgba(146, 208, 205, 0.32)', edge: 'rgba(124, 187, 186, 0.55)', ink: '#2A6465', bar: '#57AFAF' }, // eucalyptus
+  { wash: 'rgba(124, 199, 134, 0.30)', soft: 'rgba(124, 199, 134, 0.13)', edge: 'rgba(120, 187, 128, 0.55)', ink: '#2F6B45', bar: '#5FAF6B' }, // leaf
+  { wash: 'rgba(150, 214, 184, 0.32)', soft: 'rgba(150, 214, 184, 0.14)', edge: 'rgba(126, 194, 166, 0.55)', ink: '#2C6A5B', bar: '#54B296' }, // mint
+  { wash: 'rgba(186, 222, 140, 0.34)', soft: 'rgba(186, 222, 140, 0.15)', edge: 'rgba(163, 203, 120, 0.55)', ink: '#4E6B27', bar: '#8CC252' }, // spring
+  { wash: 'rgba(146, 208, 205, 0.32)', soft: 'rgba(146, 208, 205, 0.14)', edge: 'rgba(124, 187, 186, 0.55)', ink: '#2A6465', bar: '#57AFAF' }, // eucalyptus
 ];
 
 /** A finished box leaves the green family for gold. */
 export const CLEARED_TINT: BoxTint = {
   wash: 'rgba(201, 184, 138, 0.28)',
+  soft: 'rgba(201, 184, 138, 0.13)',
   edge: 'rgba(201, 184, 138, 0.60)',
-  ink: '#7A6A3E',
+  // Deep enough to clear 4.5:1 on its own wash, which #7A6A3E did not.
+  ink: '#6B5C33',
   bar: '#C9B88A',
 };
 

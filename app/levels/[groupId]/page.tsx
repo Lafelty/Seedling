@@ -331,7 +331,7 @@ export default function LevelGroupPage() {
 
           /* The pose's own demo pictures, sized here rather than in the
              component so the row can shrink them on a narrow phone. */
-          .pose-thumb { width: 64px; height: 64px; }
+          .pose-thumb { width: 88px; height: 88px; }
 
           .pose-body { min-width: 0; display: flex; flex-direction: column; gap: 2px; }
 
@@ -429,12 +429,17 @@ export default function LevelGroupPage() {
              page where the garden shows up as an object rather than a colour. */
           .pose-sprig {
             position: absolute;
-            top: -14px;
-            right: 6px;
+            /* Centred on the pill and standing clear of it: the leaf grows out
+               of the middle of the action rather than off one corner.
+               Centring by margin, not translate, so the sway keyframes own the
+               transform outright. */
+            top: -20px;
+            left: 50%;
+            margin-left: -14px;
             width: 28px;
             height: 28px;
             pointer-events: none;
-            transform-origin: 60% 90%;
+            transform-origin: 50% 100%;
             animation: pose-sway 3.4s var(--ease-out) infinite;
             filter: drop-shadow(0 1px 2px rgba(28, 40, 32, 0.35));
           }
@@ -454,13 +459,12 @@ export default function LevelGroupPage() {
           }
           a.pose-row:active { background: var(--box-wash); }
 
-          /* Under 400px the filled action drops below the text instead of
-             squeezing the pose name into three characters per line. The bare
-             chevron stays in its column — it costs 18px and reads as a stray
-             glyph on a line of its own. */
-          @media (max-width: 400px) {
-            .pose-thumb { width: 52px; height: 52px; }
-            .pose-row { gap: var(--space-2); padding: var(--space-3); }
+          /* A picture, a name and a filled action can't share one line on a
+             phone: the pose name ends up two words wide. The action drops
+             below the text and keeps its full label. The bare chevron stays in
+             its column — it costs 18px and reads as a stray glyph on a line of
+             its own. */
+          @media (max-width: 560px) {
             .pose-item[data-state='current'] .pose-row { grid-template-columns: 36px auto minmax(0, 1fr); }
             .pose-item[data-state='current'] .pose-go {
               grid-column: 3;
@@ -468,6 +472,11 @@ export default function LevelGroupPage() {
               margin-top: var(--space-2);
             }
             .pose-item[data-state='current'] .pose-desc { -webkit-line-clamp: 2; }
+          }
+
+          @media (max-width: 400px) {
+            .pose-thumb { width: 72px; height: 72px; }
+            .pose-row { gap: var(--space-2); padding: var(--space-3); }
           }
 
           @media (prefers-reduced-motion: reduce) {

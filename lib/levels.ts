@@ -27,6 +27,12 @@ export interface LevelExercise {
   rank_in_group: number;
   unlock_min_score: number;
   unlock_max_seconds: number | null;
+  /**
+   * The therapist's demo pictures for this pose (exercises.demo_images).
+   * Optional because /levels itself doesn't fetch them — only a box's own page
+   * shows the pictures, and the map has no room for them.
+   */
+  demo_images?: string[] | null;
 }
 
 export interface CompletedSession {

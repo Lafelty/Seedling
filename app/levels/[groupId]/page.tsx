@@ -433,7 +433,7 @@ export default function LevelGroupPage() {
                of the middle of the action rather than off one corner.
                Centring by margin, not translate, so the sway keyframes own the
                transform outright. */
-            top: -20px;
+            top: -26px;
             left: 50%;
             margin-left: -14px;
             width: 28px;
@@ -607,7 +607,9 @@ export default function LevelGroupPage() {
                           {/* The leaves are outlined: their top halves sit on the
                               row's pale green, where an unlined light green leaf
                               disappears. */}
-                          <path d="M12 22V12.5" stroke="#2A5F3C" strokeWidth="2.6" strokeLinecap="round" />
+                          {/* Stem runs past the bottom of the box: it has to
+                              plant into the pill from higher up. */}
+                          <path d="M12 24V12.5" stroke="#2A5F3C" strokeWidth="2.6" strokeLinecap="round" />
                           <path d="M12 14c-4.4 0-6.6-2.2-6.6-6.6C9.8 7.4 12 9.6 12 14Z" fill="#8FD08C" stroke="#2A5F3C" strokeWidth="1.1" strokeLinejoin="round" />
                           <path d="M12 14c4.4 0 6.6-2.2 6.6-6.6C14.2 7.4 12 9.6 12 14Z" fill="#C2EBAA" stroke="#2A5F3C" strokeWidth="1.1" strokeLinejoin="round" />
                         </svg>

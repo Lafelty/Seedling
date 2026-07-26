@@ -8,6 +8,7 @@ import { createClient } from '@/lib/supabase/client'
 import { buildLevelMap, type CompletedSession, type GroupNode, type LevelExercise, type LevelGroup } from '@/lib/levels'
 import { tintOf } from '@/lib/levels-theme'
 import BoxMark from '@/components/BoxMark'
+import GrowthStages, { GROWTH_MARK_CELL, growthStageName } from '@/components/GrowthStage'
 
 export const dynamic = 'force-dynamic'
 
@@ -168,12 +169,39 @@ export default function LevelsPage() {
           transition: box-shadow var(--dur-fast) var(--ease-out), border-color var(--dur-fast) var(--ease-out);
           outline: none;
         }
+        /* The lift rides the \`li\`, not the card: the card is the shared-layout
+           element, and framer-motion owns its transform while a panel opens.
+           \`:has\` drops the lift for whichever box is open, so the morph does
+           not start from a raised rect and land from a flat one. */
+        .lvl-grid > li { transition: transform var(--dur-fast) var(--ease-out); }
+        .lvl-grid > li:active { transform: translateY(-1px) scale(0.994); }
+        .lvl-grid > li:has(.lvl-card[aria-expanded='true']) { transform: none; }
+
         @media (hover: hover) and (pointer: fine) {
-          .lvl-card:hover { box-shadow: 0 12px 28px var(--box-edge, rgba(74, 107, 90, 0.16)); }
-          .lvl-card:hover .lvl-cta svg { transform: translateX(3px); }
+          .lvl-grid > li:hover { transform: translateY(-4px); }
+          .lvl-card:hover {
+            box-shadow: 0 18px 34px var(--box-edge, rgba(74, 107, 90, 0.16));
+            border-color: var(--box-bar, var(--primary));
+          }
+          .lvl-card:hover .lvl-cta svg { transform: translateX(4px); }
+          /* Hovering shows the patient what the next pose buys them: the stage
+             they have not reached warms up and leans forward. */
+          .lvl-card:hover .lvl-mark-next { filter: none; opacity: 0.9; transform: scale(1.1); }
+          /* And a sheen runs the length of what they have already done. */
+          .lvl-card:hover .lvl-bar-fill::after { animation: lvl-sheen 900ms var(--ease-out); }
         }
         .lvl-card:focus-visible { box-shadow: 0 0 0 3px var(--box-edge, rgba(74, 107, 90, 0.45)); }
         .lvl-cta svg { transition: transform var(--dur-fast) var(--ease-out); }
+
+        .lvl-mark-ahead {
+          filter: grayscale(1);
+          opacity: 0.38;
+          transition: filter var(--dur-fast) var(--ease-out), opacity var(--dur-fast) var(--ease-out), transform var(--dur-fast) var(--ease-out);
+        }
+        @keyframes lvl-sheen {
+          from { transform: translateX(-100%); }
+          to   { transform: translateX(100%); }
+        }
         .lvl-pose + .lvl-pose { border-top: 1px solid var(--border); }
 
         /* Overall progress, carried by a rail instead of its own card. */
@@ -252,10 +280,55 @@ export default function LevelsPage() {
           border-radius: var(--radius-full);
           background: var(--box-bar, var(--primary));
           transition: width var(--dur-grow) var(--ease-out);
+          /* Holds the sheen inside the run of work already done. */
+          position: relative;
+          overflow: hidden;
+        }
+        .lvl-bar-fill::after {
+          content: '';
+          position: absolute;
+          inset: 0;
+          transform: translateX(-100%);
+          background: linear-gradient(100deg, transparent 20%, rgba(255, 255, 255, 0.55) 50%, transparent 80%);
+        }
+
+        /* The growth marks sit on the bar, not inside it — \`.lvl-bar\` clips
+           its own fill, which would cut them in half. The side padding is half
+           a mark, so the seed and the plant land inside the card instead of
+           hanging off the ends; the vertical margin is the half of a mark that
+           overhangs the 8px bar, so none of them reach the text below. */
+        .lvl-bar-wrap { position: relative; display: block; margin-block: 13px; }
+
+        /* The leaves on the stage a patient is currently on breathe, so the
+           mark that matters moves and the others sit still. */
+        @keyframes lvl-sway {
+          0%, 100% { transform: rotate(-3.5deg); }
+          50%      { transform: rotate(3.5deg); }
+        }
+        .lvl-sway { animation: lvl-sway 4.5s var(--ease-out, ease-in-out) infinite; }
+
+        /* And its halo breathes with them, so the eye finds where you are
+           before it reads a word. Slow on purpose — this is a nudge, not an
+           alarm. A finished box holds a steady glow in its own colour
+           instead: it has nothing left to point at. */
+        @keyframes lvl-mark-pulse {
+          0%, 100% { box-shadow: 0 0 0 3px var(--box-wash), 0 1px 3px rgba(38, 48, 42, 0.16); }
+          50%      { box-shadow: 0 0 0 8px var(--box-wash), 0 1px 3px rgba(38, 48, 42, 0.16); }
+        }
+        .lvl-mark-now { animation: lvl-mark-pulse 2.8s ease-in-out infinite; }
+        .lvl-mark-done {
+          box-shadow: 0 0 0 4px var(--box-wash), 0 2px 10px var(--box-edge);
         }
 
         @media (prefers-reduced-motion: reduce) {
-          .lvl-card, .lvl-cta svg, .lvl-rail-fill, .lvl-bar > span { transition: none; }
+          .lvl-card, .lvl-cta svg, .lvl-rail-fill, .lvl-bar > span,
+          .lvl-grid > li, .lvl-mark-ahead { transition: none; }
+          .lvl-sway, .lvl-mark-now, .lvl-bar-fill::after { animation: none; }
+          /* Without the pulse the live mark still needs its halo. */
+          .lvl-mark-now { box-shadow: 0 0 0 4px var(--box-wash), 0 1px 3px rgba(38, 48, 42, 0.16); }
+          /* Colour is still a fine way to answer "what's next" — travel isn't. */
+          .lvl-grid > li:hover, .lvl-grid > li:active { transform: none; }
+          .lvl-card:hover .lvl-mark-next { transform: none; }
         }
       `}</style>
 
@@ -371,12 +444,30 @@ export default function LevelsPage() {
                     </motion.div>
 
                     <div style={{ display: 'grid', gap: 'var(--space-2)' }}>
-                      <span className="lvl-bar" role="img" aria-label={`${pct}% of this box done`}>
-                        <span style={{ width: `${pct}%` }} />
-                      </span>
+                      {/* The bar says how far; the marks on it say what that
+                          looks like — seed, sprout, seedling, plant, all four
+                          in view so the road ahead is as plain as the road
+                          behind. */}
+                      <div className="lvl-bar-wrap" style={{ paddingInline: GROWTH_MARK_CELL / 2 }}>
+                        <span
+                          className="lvl-bar"
+                          role="img"
+                          aria-label={`${pct}% of this box done — ${growthStageName(node.clearedCount, node.total).toLowerCase()} stage`}
+                        >
+                          <span className="lvl-bar-fill" style={{ width: `${pct}%` }} />
+                        </span>
+                        <GrowthStages clearedCount={node.clearedCount} total={node.total} />
+                      </div>
                       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 'var(--space-2)' }}>
-                        <span style={{ fontSize: 'var(--text-sm)', color: 'var(--muted)', fontWeight: 600 }}>
-                          {node.clearedCount} of {node.total} poses
+                        {/* The stage leads, in the box's own colour, so the
+                            marks on the bar have a name attached; the count
+                            follows it quietly. */}
+                        <span style={{ fontSize: 'var(--text-sm)', color: 'var(--muted)', fontWeight: 600, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                          <span style={{ color: tint.ink, fontWeight: 700 }}>
+                            {growthStageName(node.clearedCount, node.total)}
+                          </span>
+                          {' · '}
+                          {node.clearedCount} of {node.total}
                         </span>
                         <span
                           className="lvl-cta"
@@ -602,6 +693,10 @@ function ExpandedBox({
 
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 'var(--space-3)', borderTop: '1px solid var(--border)', paddingTop: 'var(--space-3)' }}>
             <span style={{ fontSize: 'var(--text-sm)', color: 'var(--muted)', fontWeight: 600 }}>
+              <span style={{ color: tint.ink, fontWeight: 700 }}>
+                {growthStageName(node.clearedCount, node.total)}
+              </span>
+              {' · '}
               {node.clearedCount} of {node.total} poses · {pct}%
             </span>
             <Link href={`/levels/${node.group.id}`} className="pill-btn pill-btn-primary" style={{ textDecoration: 'none' }}>

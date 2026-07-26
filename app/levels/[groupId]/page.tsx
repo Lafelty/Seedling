@@ -14,7 +14,7 @@ export const dynamic = 'force-dynamic'
  * The box's own mark, ringed by how much of the box is done. Identity in the
  * middle, progress around it — one object instead of a badge plus a number.
  */
-function MarkRing({ id, pct, cleared, tint, size = 76 }: { id: string; pct: number; cleared: boolean; tint: BoxTint; size?: number }) {
+function MarkRing({ id, pct, cleared, tint, size = 72 }: { id: string; pct: number; cleared: boolean; tint: BoxTint; size?: number }) {
   const stroke = 5
   const r = (size - stroke) / 2
   const c = 2 * Math.PI * r
@@ -50,23 +50,23 @@ function MarkRing({ id, pct, cleared, tint, size = 76 }: { id: string; pct: numb
 function Effort({ difficulty, tint, dim }: { difficulty: string; tint: BoxTint; dim: boolean }) {
   const steps = difficultySteps(difficulty)
   return (
-    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 'var(--space-2)', flexShrink: 0 }}>
+    <span className="pose-effort">
       <span aria-hidden style={{ display: 'inline-flex', gap: '3px' }}>
         {[1, 2, 3].map((step) => (
           <span
             key={step}
             style={{
-              width: 5,
-              height: 5,
+              width: 6,
+              height: 6,
               borderRadius: 'var(--radius-full)',
-              background: step <= steps ? (dim ? 'var(--muted)' : tint.ink) : 'var(--border)',
+              // The empty dots sit on white and on the tinted current row, so
+              // they carry their own alpha rather than the flat --border grey.
+              background: step <= steps ? (dim ? '#8A8A8A' : tint.ink) : 'rgba(45, 45, 45, 0.18)',
             }}
           />
         ))}
       </span>
-      <span style={{ fontSize: 'var(--text-xs)', fontWeight: 600, color: 'var(--muted)', textTransform: 'capitalize' }}>
-        {difficulty}
-      </span>
+      <span style={{ textTransform: 'capitalize' }}>{difficulty}</span>
     </span>
   )
 }
@@ -75,12 +75,9 @@ function PosePathSkeleton() {
   return (
     <main className="min-h-screen max-w-2xl mx-auto px-4 py-8 pb-24">
       <div className="skeleton" style={{ width: '90px', height: '16px', marginBottom: 'var(--space-4)' }} />
-      <div className="skeleton" style={{ height: '148px', borderRadius: 'var(--radius-lg)', marginBottom: 'var(--space-6)' }} />
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-3)' }}>
-        {[0, 1, 2].map((i) => (
-          <div key={i} className="skeleton" style={{ height: '116px', borderRadius: 'var(--radius-lg)' }} />
-        ))}
-      </div>
+      <div className="skeleton" style={{ height: '140px', borderRadius: 'var(--radius-lg)', marginBottom: 'var(--space-6)' }} />
+      {/* One block, because the poses now arrive as one list, not as cards. */}
+      <div className="skeleton" style={{ height: '340px', borderRadius: 'var(--radius-lg)' }} />
     </main>
   )
 }
@@ -212,46 +209,196 @@ export default function LevelGroupPage() {
           }
           .pose-back svg { transition: transform var(--dur-fast) var(--ease-out); }
 
-          /* Dark enough for white label text (>=4.5:1) at every tint. */
-          .pose-start {
-            min-height: 48px;
+          /* ─── The poses, as one list rather than a stack of cards ───
+             Cards inside a card gave every pose its own border, gradient and
+             shadow; nine of those on one screen is what read as noise. One
+             surface, hairline-divided rows, and the order carried by a trail
+             that runs through the markers instead of hanging in a gutter. */
+          .pose-list {
+            list-style: none;
+            margin: 0;
+            padding: 0;
+            overflow: hidden;
+            border: 1px solid var(--box-edge);
+            /* Header and list are the only two surfaces on the page now, so
+               the list can sit flat rather than competing for depth. */
+            box-shadow: 0 1px 2px rgba(38, 48, 42, 0.05);
+          }
+
+          .pose-item {
+            position: relative;
+            /* Metadata reads at 5.6:1 on the tinted row and 6.7:1 on white —
+               --muted (#6B6B6B) drops to 4.4:1 over the wash and fails AA. */
+            --pose-meta: #5C5C5C;
+          }
+          .pose-item[data-state='current'] {
+            background: linear-gradient(160deg, var(--box-wash), var(--surface) 78%);
+          }
+
+          /* The trail: one line through the markers, because inside a box the
+             poses do come in order — earlier ones open the next. It runs the
+             row's full height and stops half-way at the two ends. */
+          .pose-item::before {
+            content: '';
+            position: absolute;
+            left: 33px;
+            top: 0;
+            bottom: 0;
+            width: 2px;
+            background: var(--pose-rail, var(--border));
+          }
+          .pose-item:first-child::before { top: 50%; }
+          .pose-item:last-child::before { bottom: 50%; }
+
+          /* Divider inset past the trail, so the two line systems never cross. */
+          .pose-item + .pose-item::after {
+            content: '';
+            position: absolute;
+            left: 64px;
+            right: 0;
+            top: 0;
+            height: 1px;
+            background: var(--border);
+          }
+
+          .pose-row {
+            position: relative;
+            width: 100%;
+            display: grid;
+            grid-template-columns: 36px minmax(0, 1fr) auto;
+            align-items: center;
+            gap: var(--space-3);
+            padding: var(--space-4);
+            background: transparent;
+            border: 0;
+            text-align: left;
+            font: inherit;
+            color: inherit;
+            text-decoration: none;
+          }
+          a.pose-row { cursor: pointer; }
+          /* Inset, or the ring is clipped by the list's own overflow. */
+          a.pose-row:focus-visible { outline-offset: -3px; border-radius: var(--radius-md); }
+
+          /* The trail marker. Sits above the line it hangs on. */
+          .pose-disc {
+            position: relative;
+            z-index: 1;
+            width: 36px;
+            height: 36px;
+            border-radius: var(--radius-full);
+            display: grid;
+            place-items: center;
+            font-size: var(--text-sm);
+            font-weight: 700;
+            font-variant-numeric: tabular-nums;
+          }
+
+          .pose-body { min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+
+          /* Pose names are UI labels, so they take the body face. Left alone
+             they inherit DM Serif Display from the global h1–h6 rule. */
+          .pose-name {
+            font-family: var(--font-body);
+            font-size: var(--text-base);
+            font-weight: 600;
+            line-height: 1.35;
+            letter-spacing: 0;
+            color: var(--ink);
+            overflow-wrap: anywhere;
+          }
+
+          .pose-desc {
+            font-size: var(--text-sm);
+            line-height: 1.5;
+            color: var(--pose-meta);
+            max-width: none;
+            display: -webkit-box;
+            -webkit-line-clamp: 2;
+            -webkit-box-orient: vertical;
+            overflow: hidden;
+          }
+          /* The pose being worked on is the one worth reading in full. */
+          .pose-item[data-state='current'] .pose-desc { -webkit-line-clamp: 3; }
+
+          .pose-meta {
+            display: flex;
+            align-items: center;
+            flex-wrap: wrap;
+            gap: var(--space-1) var(--space-3);
+            margin-top: var(--space-1);
+            font-size: var(--text-xs);
+            font-weight: 600;
+            color: var(--pose-meta);
+          }
+          .pose-effort { display: inline-flex; align-items: center; gap: var(--space-2); }
+          .pose-status { font-weight: 700; color: var(--box-ink); }
+          .pose-item[data-state='locked'] .pose-status { color: var(--pose-meta); }
+          /* A shade under the shared gold ink: #7A6A3E reads 4.3:1 against the
+             current row's wash, and 12px bold is normal text to WCAG. */
+          .pose-best { display: inline-flex; align-items: center; gap: var(--space-1); color: #6B5C33; font-weight: 700; }
+
+          /* One chip on one row — the pose the patient is up to. It rides the
+             meta line rather than the title, so a long pose name keeps the
+             full column width instead of wrapping around it. */
+          .pose-next {
+            flex-shrink: 0;
+            font-weight: 700;
+            letter-spacing: 0.03em;
+            padding: 2px var(--space-2);
+            border-radius: var(--radius-full);
             background: var(--box-ink);
             color: #FFFFFF;
-            transition: transform var(--dur-fast) var(--ease-out), box-shadow var(--dur-fast) var(--ease-out), filter var(--dur-fast) var(--ease-out);
           }
-          .pose-start-quiet {
-            min-height: 48px;
-            background: var(--surface);
+
+          /* One filled action on the page: the pose to do next. Every other
+             open pose is a quiet row with a chevron. */
+          .pose-go {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            gap: var(--space-1);
+            flex-shrink: 0;
             color: var(--box-ink);
-            border-color: var(--box-edge);
           }
+          .pose-go[data-fill='true'] {
+            min-height: 40px;
+            padding-inline: var(--space-4);
+            border-radius: var(--radius-full);
+            /* Every tint's ink passes 4.5:1 against white label text. */
+            background: var(--box-ink);
+            color: #FFFFFF;
+            font-size: var(--text-sm);
+            font-weight: 700;
+            box-shadow: 0 2px 8px var(--box-edge);
+          }
+          .pose-go svg { transition: transform var(--dur-fast) var(--ease-out); }
 
           @media (hover: hover) and (pointer: fine) {
             .pose-back:hover { background: var(--box-wash); }
             .pose-back:hover svg { transform: translateX(-2px); }
-            .pose-start:hover { transform: translateY(-1px); filter: brightness(1.12); box-shadow: 0 8px 20px var(--box-edge); }
-            .pose-start-quiet:hover { background: var(--box-wash); }
-            .pose-row[data-locked='false']:hover { border-color: var(--box-bar); }
+            .pose-item[data-open='true']:hover { background: var(--box-wash); }
+            .pose-row:hover .pose-go svg { transform: translateX(3px); }
+            .pose-row:hover .pose-go[data-fill='true'] { filter: brightness(1.1); }
           }
+          a.pose-row:active { background: var(--box-wash); }
 
-          .pose-row { transition: border-color var(--dur-fast) var(--ease-out), box-shadow var(--dur-fast) var(--ease-out); }
-
-          /* The trail: one line down the poses, because inside a box they do
-             come in order — earlier poses open the next one. */
-          .pose-trail { position: relative; padding-left: 46px; }
-          .pose-trail::before {
-            content: '';
-            position: absolute;
-            left: 17px;
-            top: 24px;
-            bottom: 24px;
-            width: 2px;
-            border-radius: var(--radius-full);
-            background: linear-gradient(180deg, var(--box-bar), var(--box-wash));
+          /* Under 400px the filled action drops below the text instead of
+             squeezing the pose name into three characters per line. The bare
+             chevron stays in its column — it costs 18px and reads as a stray
+             glyph on a line of its own. */
+          @media (max-width: 400px) {
+            .pose-item[data-state='current'] .pose-row { grid-template-columns: 36px minmax(0, 1fr); }
+            .pose-item[data-state='current'] .pose-go {
+              grid-column: 2;
+              justify-self: start;
+              margin-top: var(--space-2);
+            }
+            .pose-item[data-state='current'] .pose-desc { -webkit-line-clamp: 2; }
           }
 
           @media (prefers-reduced-motion: reduce) {
-            .pose-start:hover { transform: none; }
+            .pose-go svg, .pose-back svg { transition: none; }
           }
         `}</style>
 
@@ -280,7 +427,7 @@ export default function LevelGroupPage() {
           <div style={{ flex: 1, minWidth: 0 }}>
             <h1 style={{ color: 'var(--ink)', fontSize: 'var(--text-2xl)' }}>{node.group.name}</h1>
             {node.group.description && (
-              <p style={{ color: 'var(--muted)', fontSize: 'var(--text-sm)', marginTop: '2px' }}>
+              <p style={{ color: '#5C5C5C', fontSize: 'var(--text-sm)', marginTop: '2px' }}>
                 {node.group.description}
               </p>
             )}
@@ -304,37 +451,28 @@ export default function LevelGroupPage() {
             </Link>
           </div>
         ) : (
-          <ol className="pose-trail" style={{ listStyle: 'none', margin: 0, display: 'flex', flexDirection: 'column', gap: 'var(--space-3)' }}>
+          <ol className="pose-list card animate-fadeIn" style={{ padding: 0 }}>
             {node.exercises.map((exNode, index) => {
               const { exercise, status, bestScore } = exNode
               const locked = status === 'locked'
               const cleared = status === 'cleared'
               const isCurrent = exercise.id === currentId
+              const state = cleared ? 'cleared' : locked ? 'locked' : isCurrent ? 'current' : 'ready'
               const prev = index > 0 ? node.exercises[index - 1].exercise : null
-              // Status reads three ways — mark, word, colour — so none of it
-              // rests on colour alone.
-              const statusLabel = cleared ? 'Cleared' : locked ? 'Locked' : isCurrent ? 'Up next' : 'Ready'
+              // Status reads three ways — marker shape, word, colour — so none
+              // of it rests on colour alone.
+              const action = cleared ? 'Practice again' : isCurrent ? 'Start pose' : 'Start'
 
-              return (
-                <li key={exercise.id} style={{ position: 'relative' }} className="animate-fadeInUp" >
-                  {/* Trail marker */}
+              const body = (
+                <>
                   <span
+                    className="pose-disc"
                     aria-hidden
                     style={{
-                      position: 'absolute',
-                      left: '-46px',
-                      top: '22px',
-                      width: '36px',
-                      height: '36px',
-                      borderRadius: 'var(--radius-full)',
-                      display: 'grid',
-                      placeItems: 'center',
-                      background: cleared ? tint.ink : locked ? 'var(--bg)' : 'var(--surface)',
-                      border: `2px solid ${cleared ? tint.ink : locked ? 'var(--border)' : tint.edge}`,
+                      background: cleared ? tint.bar : locked ? 'var(--bg)' : 'var(--surface)',
+                      border: `2px solid ${cleared ? tint.bar : locked ? 'var(--border)' : tint.edge}`,
                       boxShadow: isCurrent ? `0 0 0 4px ${tint.wash}` : 'none',
-                      color: cleared ? '#FFFFFF' : locked ? 'var(--muted)' : tint.ink,
-                      fontSize: 'var(--text-sm)',
-                      fontWeight: 800,
+                      color: cleared ? '#FFFFFF' : locked ? '#5C5C5C' : tint.ink,
                     }}
                   >
                     {cleared ? (
@@ -351,86 +489,74 @@ export default function LevelGroupPage() {
                     )}
                   </span>
 
-                  <div
-                    className="pose-row card"
-                    data-locked={locked}
-                    style={{
-                      animationDelay: `${Math.min(index, 6) * 50}ms`,
-                      padding: 'var(--space-4)',
-                      display: 'flex',
-                      flexDirection: 'column',
-                      gap: 'var(--space-3)',
-                      // Locked poses stay legible: quieter surface, full-strength
-                      // text. Dimming the whole card takes the words with it.
-                      background: cleared
-                        ? `linear-gradient(160deg, ${tint.wash}, var(--surface) 72%)`
-                        : locked
-                        ? 'var(--bg)'
-                        : 'var(--surface)',
-                      borderColor: isCurrent ? tint.bar : locked ? 'var(--border)' : tint.edge,
-                      borderWidth: isCurrent ? '2px' : '1px',
-                      boxShadow: isCurrent ? `0 8px 24px ${tint.wash}` : '0 1px 3px rgba(0, 0, 0, 0.05)',
-                    }}
-                  >
-                    <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 'var(--space-3)' }}>
-                      <h2 style={{ fontSize: 'var(--text-lg)', fontWeight: 600, color: 'var(--ink)', minWidth: 0 }}>
-                        {exercise.name}
-                      </h2>
-                      <span
-                        style={{
-                          flexShrink: 0,
-                          fontSize: 'var(--text-xs)',
-                          fontWeight: 700,
-                          letterSpacing: '0.04em',
-                          textTransform: 'uppercase',
-                          color: locked ? 'var(--muted)' : tint.ink,
-                        }}
-                      >
-                        {statusLabel}
-                      </span>
-                    </div>
+                  <div className="pose-body">
+                    <h2 className="pose-name">{exercise.name}</h2>
 
-                    {exercise.description && (
-                      <p style={{ fontSize: 'var(--text-sm)', color: 'var(--muted)', lineHeight: 1.5 }}>
-                        {exercise.description}
-                      </p>
-                    )}
-
-                    {locked && prev && (
-                      <p style={{ fontSize: 'var(--text-sm)', color: 'var(--muted)', lineHeight: 1.5 }}>
+                    {/* Locked poses say what opens them; that replaces the
+                        description, which they can't act on yet. */}
+                    {locked && prev ? (
+                      <p className="pose-desc">
                         Opens when you reach {exercise.unlock_min_score}% form on {prev.name}
                         {exercise.unlock_max_seconds != null && ` within ${exercise.unlock_max_seconds} seconds`}.
                       </p>
+                    ) : (
+                      exercise.description && <p className="pose-desc">{exercise.description}</p>
                     )}
 
-                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 'var(--space-3)', flexWrap: 'wrap' }}>
-                      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 'var(--space-3)', flexWrap: 'wrap' }}>
-                        <Effort difficulty={exercise.difficulty} tint={tint} dim={locked} />
-                        {bestScore != null && (
-                          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 'var(--space-1)', fontSize: 'var(--text-xs)', fontWeight: 700, color: '#7A6A3E' }}>
-                            <svg width="12" height="12" viewBox="0 0 20 20" fill="currentColor" aria-hidden>
-                              <path d="M10 0l2.5 6.5H19l-5.5 4 2 6.5L10 13l-5.5 4 2-6.5-5.5-4h6.5z" />
-                            </svg>
-                            Best form {Math.round(bestScore)}%
-                          </span>
-                        )}
-                      </span>
+                    <span className="pose-meta">
+                      {isCurrent && <span className="pose-next">Up next</span>}
+                      <Effort difficulty={exercise.difficulty} tint={tint} dim={locked} />
+                      {(cleared || locked) && (
+                        <span className="pose-status">{cleared ? 'Cleared' : 'Locked'}</span>
+                      )}
+                      {bestScore != null && (
+                        <span className="pose-best">
+                          <svg width="12" height="12" viewBox="0 0 20 20" fill="currentColor" aria-hidden>
+                            <path d="M10 0l2.5 6.5H19l-5.5 4 2 6.5L10 13l-5.5 4 2-6.5-5.5-4h6.5z" />
+                          </svg>
+                          Best form {Math.round(bestScore)}%
+                        </span>
+                      )}
+                    </span>
+                  </div>
 
-                      {!locked && (
-                        <button
-                          onClick={() => router.push(`/session?exercise=${exercise.id}`)}
-                          className={`pill-btn ${cleared ? 'pose-start-quiet' : 'pose-start'}`}
-                          style={{ flexShrink: 0 }}
-                        >
-                          {cleared ? 'Practice again' : 'Start pose'}
-                          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+                  {!locked && (
+                    <span className="pose-go" data-fill={isCurrent}>
+                      {isCurrent && action}
+                      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+                        {isCurrent ? (
+                          <>
                             <path d="M5 12h14" />
                             <path d="M13 6l6 6-6 6" />
-                          </svg>
-                        </button>
-                      )}
-                    </div>
-                  </div>
+                          </>
+                        ) : (
+                          <path d="M9 6l6 6-6 6" />
+                        )}
+                      </svg>
+                    </span>
+                  )}
+                </>
+              )
+
+              return (
+                <li
+                  key={exercise.id}
+                  className="pose-item"
+                  data-state={state}
+                  data-open={!locked}
+                  style={{ ['--pose-rail' as string]: cleared ? tint.bar : 'var(--border)' }}
+                >
+                  {locked ? (
+                    <div className="pose-row">{body}</div>
+                  ) : (
+                    <Link
+                      href={`/session?exercise=${exercise.id}`}
+                      className="pose-row"
+                      aria-label={`${action}: ${exercise.name}`}
+                    >
+                      {body}
+                    </Link>
+                  )}
                 </li>
               )
             })}

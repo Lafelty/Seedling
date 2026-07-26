@@ -1,32 +1,39 @@
 'use client'
 
 /**
- * How grown a box is, as a seed becoming a plant — the same four steps a real
- * bean takes. It rides the middle of a box's progress bar so a patient reads
- * "how far along am I" from a picture before they read the numbers.
+ * The whole road, not just where you are: all four growth stages sit on a
+ * box's progress bar at once — seed, sprout, seedling, plant — so a patient
+ * sees what they have passed and what is still ahead in one look.
  *
- * The stage is the count of cleared poses, not a share of the box: one pose
- * done is always a sprout, whether the box holds three poses or six.
+ * The stages are spread evenly across the bar whatever the box holds, so the
+ * plant always means "box finished". A three-pose box reaches a stage per
+ * pose; a six-pose box reaches one every two poses.
  */
 
 export const GROWTH_STAGES = ['Seed', 'Sprout', 'Seedling', 'Plant'] as const
 
 export type GrowthStageName = (typeof GROWTH_STAGES)[number]
 
-/** 0 → seed, 1 → sprout, 2 → seedling, 3 or more → plant. */
-export function growthStageIndex(clearedCount: number): number {
-  if (!Number.isFinite(clearedCount)) return 0
-  return Math.max(0, Math.min(GROWTH_STAGES.length - 1, Math.floor(clearedCount)))
+const LAST = GROWTH_STAGES.length - 1
+
+/**
+ * The furthest stage reached. Integer maths on purpose: `cleared / total * 3`
+ * lands just under a whole number for cases like 2 of 6 and would round the
+ * patient back down a stage.
+ */
+export function growthStageIndex(clearedCount: number, total: number): number {
+  if (!(total > 0) || !(clearedCount > 0)) return 0
+  return Math.max(0, Math.min(LAST, Math.floor((Math.floor(clearedCount) * LAST) / total)))
 }
 
-export function growthStageName(clearedCount: number): GrowthStageName {
-  return GROWTH_STAGES[growthStageIndex(clearedCount)]
+export function growthStageName(clearedCount: number, total: number): GrowthStageName {
+  return GROWTH_STAGES[growthStageIndex(clearedCount, total)]
 }
 
 // All four share one ground line at y=20.5, so they read as one thing growing
 // in place rather than four unrelated glyphs swapping around. Height off that
-// line is what separates the stages — at 20px the silhouette is all a patient
-// can really see, so each step has to be visibly taller than the last.
+// line is what separates the stages — at this size the silhouette is all a
+// patient can really see, so each step has to be visibly taller than the last.
 const STAGE_ART = [
   // Seed — a bean lying on the soil, nothing growing yet.
   <g key="seed">
@@ -56,40 +63,41 @@ const STAGE_ART = [
   </g>,
 ]
 
-export default function GrowthStage({
-  clearedCount,
-  size = 30,
-  className,
-}: {
-  clearedCount: number
-  size?: number
-  className?: string
-}) {
-  const stage = growthStageIndex(clearedCount)
+/** The widest a mark gets. Also the cell width, which sets the end insets. */
+export const GROWTH_MARK_CELL = 30
+
+function GrowthMark({ stage, state }: { stage: number; state: 'past' | 'current' | 'ahead' }) {
+  const ahead = state === 'ahead'
+  const current = state === 'current'
+  // The finished box is the one moment a mark fills in solid — every earlier
+  // stage stays an outline so an untouched card never shouts.
+  const crowned = current && stage === LAST
+  const size = current ? GROWTH_MARK_CELL : 26
   const glyph = Math.round(size * 0.67)
-  const full = stage === GROWTH_STAGES.length - 1
 
   return (
-    // Decorative: the bar it sits on already carries the stage in its label.
     <span
-      aria-hidden
-      className={className}
       style={{
         width: size,
         height: size,
-        flexShrink: 0,
         display: 'grid',
         placeItems: 'center',
         borderRadius: 'var(--radius-full)',
         // Opaque, so the bar's fill running underneath never muddies the
-        // drawing — and ringed in the box's own green so it reads as part of
-        // the bar rather than something dropped on top of it.
-        background: 'var(--surface)',
-        border: `2px solid var(--box-edge, rgba(74, 107, 90, 0.45))`,
-        // A fully grown box earns the solid colour; the earlier stages stay
-        // quiet outlines so an untouched card doesn't shout.
-        color: full ? 'var(--box-bar, var(--primary))' : 'var(--box-ink, var(--primary))',
-        boxShadow: '0 1px 3px rgba(38, 48, 42, 0.14)',
+        // drawing.
+        background: crowned ? 'var(--box-bar, var(--primary))' : 'var(--surface)',
+        border: `2px solid ${
+          ahead ? 'var(--border)' : crowned ? 'var(--box-bar, var(--primary))' : 'var(--box-edge, rgba(74, 107, 90, 0.45))'
+        }`,
+        color: crowned ? 'var(--surface)' : ahead ? 'var(--muted)' : 'var(--box-ink, var(--primary))',
+        // What is still ahead stays legible but recedes — it is a preview, not
+        // a thing the patient has to act on.
+        opacity: ahead ? 0.42 : 1,
+        // The stage they are on now carries a halo, so it reads first.
+        boxShadow: current
+          ? '0 0 0 3px var(--box-wash, rgba(74, 107, 90, 0.12)), 0 1px 3px rgba(38, 48, 42, 0.14)'
+          : '0 1px 3px rgba(38, 48, 42, 0.12)',
+        transition: 'width var(--dur-fast) var(--ease-out), height var(--dur-fast) var(--ease-out), opacity var(--dur-fast) var(--ease-out)',
       }}
     >
       <svg
@@ -98,12 +106,54 @@ export default function GrowthStage({
         viewBox="0 0 24 24"
         fill="none"
         stroke="currentColor"
-        strokeWidth={full ? 2.2 : 2}
+        strokeWidth={crowned ? 2.2 : 2}
         strokeLinecap="round"
         strokeLinejoin="round"
       >
         {STAGE_ART[stage]}
       </svg>
+    </span>
+  )
+}
+
+/**
+ * The four marks, laid over a progress bar. The parent must be
+ * `position: relative` and inset by half a cell on each side (see
+ * `GROWTH_MARK_CELL`) so the first and last mark sit fully inside the card.
+ */
+export default function GrowthStages({
+  clearedCount,
+  total,
+  className,
+}: {
+  clearedCount: number
+  total: number
+  className?: string
+}) {
+  const reached = growthStageIndex(clearedCount, total)
+
+  return (
+    // Decorative: the bar underneath already carries the stage in its label.
+    <span
+      aria-hidden
+      className={className}
+      style={{
+        position: 'absolute',
+        inset: 0,
+        display: 'flex',
+        alignItems: 'center',
+        // Equal-width cells plus `space-between` puts the outer two marks half
+        // a cell in from each end and spaces the rest evenly — the same result
+        // as positioning each at 0/33/67/100% of the track, without the maths.
+        justifyContent: 'space-between',
+        pointerEvents: 'none',
+      }}
+    >
+      {GROWTH_STAGES.map((_, stage) => (
+        <span key={stage} style={{ width: GROWTH_MARK_CELL, display: 'grid', placeItems: 'center' }}>
+          <GrowthMark stage={stage} state={stage === reached ? 'current' : stage < reached ? 'past' : 'ahead'} />
+        </span>
+      ))}
     </span>
   )
 }

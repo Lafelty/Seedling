@@ -8,7 +8,7 @@ import { createClient } from '@/lib/supabase/client'
 import { buildLevelMap, type CompletedSession, type GroupNode, type LevelExercise, type LevelGroup } from '@/lib/levels'
 import { tintOf } from '@/lib/levels-theme'
 import BoxMark from '@/components/BoxMark'
-import GrowthStage, { growthStageName } from '@/components/GrowthStage'
+import GrowthStages, { GROWTH_MARK_CELL, growthStageName } from '@/components/GrowthStage'
 
 export const dynamic = 'force-dynamic'
 
@@ -255,18 +255,12 @@ export default function LevelsPage() {
           transition: width var(--dur-grow) var(--ease-out);
         }
 
-        /* The growth mark sits on the bar, not inside it — \`.lvl-bar\` clips its
-           own fill, which would cut the mark in half. The vertical margin is
-           the half of the 30px mark that overhangs the 8px bar, so it never
-           lands on the line of text below. */
+        /* The growth marks sit on the bar, not inside it — \`.lvl-bar\` clips
+           its own fill, which would cut them in half. The side padding is half
+           a mark, so the seed and the plant land inside the card instead of
+           hanging off the ends; the vertical margin is the half of a mark that
+           overhangs the 8px bar, so none of them reach the text below. */
         .lvl-bar-wrap { position: relative; display: block; margin-block: 11px; }
-        .lvl-growth {
-          position: absolute;
-          top: 50%;
-          left: 50%;
-          transform: translate(-50%, -50%);
-          pointer-events: none;
-        }
 
         @media (prefers-reduced-motion: reduce) {
           .lvl-card, .lvl-cta svg, .lvl-rail-fill, .lvl-bar > span { transition: none; }
@@ -385,17 +379,19 @@ export default function LevelsPage() {
                     </motion.div>
 
                     <div style={{ display: 'grid', gap: 'var(--space-2)' }}>
-                      {/* The bar says how far; the mark on it says what that
-                          looks like — seed, sprout, seedling, plant. */}
-                      <div className="lvl-bar-wrap">
+                      {/* The bar says how far; the marks on it say what that
+                          looks like — seed, sprout, seedling, plant, all four
+                          in view so the road ahead is as plain as the road
+                          behind. */}
+                      <div className="lvl-bar-wrap" style={{ paddingInline: GROWTH_MARK_CELL / 2 }}>
                         <span
                           className="lvl-bar"
                           role="img"
-                          aria-label={`${pct}% of this box done — ${growthStageName(node.clearedCount).toLowerCase()} stage`}
+                          aria-label={`${pct}% of this box done — ${growthStageName(node.clearedCount, node.total).toLowerCase()} stage`}
                         >
                           <span style={{ width: `${pct}%` }} />
                         </span>
-                        <GrowthStage clearedCount={node.clearedCount} className="lvl-growth" />
+                        <GrowthStages clearedCount={node.clearedCount} total={node.total} />
                       </div>
                       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 'var(--space-2)' }}>
                         <span style={{ fontSize: 'var(--text-sm)', color: 'var(--muted)', fontWeight: 600 }}>

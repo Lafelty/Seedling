@@ -8,6 +8,7 @@ import { createClient } from '@/lib/supabase/client'
 import { buildLevelMap, type CompletedSession, type GroupNode, type LevelExercise, type LevelGroup } from '@/lib/levels'
 import { tintOf } from '@/lib/levels-theme'
 import BoxMark from '@/components/BoxMark'
+import GrowthStage, { growthStageName } from '@/components/GrowthStage'
 
 export const dynamic = 'force-dynamic'
 
@@ -254,6 +255,19 @@ export default function LevelsPage() {
           transition: width var(--dur-grow) var(--ease-out);
         }
 
+        /* The growth mark sits on the bar, not inside it — \`.lvl-bar\` clips its
+           own fill, which would cut the mark in half. The vertical margin is
+           the half of the 30px mark that overhangs the 8px bar, so it never
+           lands on the line of text below. */
+        .lvl-bar-wrap { position: relative; display: block; margin-block: 11px; }
+        .lvl-growth {
+          position: absolute;
+          top: 50%;
+          left: 50%;
+          transform: translate(-50%, -50%);
+          pointer-events: none;
+        }
+
         @media (prefers-reduced-motion: reduce) {
           .lvl-card, .lvl-cta svg, .lvl-rail-fill, .lvl-bar > span { transition: none; }
         }
@@ -371,9 +385,18 @@ export default function LevelsPage() {
                     </motion.div>
 
                     <div style={{ display: 'grid', gap: 'var(--space-2)' }}>
-                      <span className="lvl-bar" role="img" aria-label={`${pct}% of this box done`}>
-                        <span style={{ width: `${pct}%` }} />
-                      </span>
+                      {/* The bar says how far; the mark on it says what that
+                          looks like — seed, sprout, seedling, plant. */}
+                      <div className="lvl-bar-wrap">
+                        <span
+                          className="lvl-bar"
+                          role="img"
+                          aria-label={`${pct}% of this box done — ${growthStageName(node.clearedCount).toLowerCase()} stage`}
+                        >
+                          <span style={{ width: `${pct}%` }} />
+                        </span>
+                        <GrowthStage clearedCount={node.clearedCount} className="lvl-growth" />
+                      </div>
                       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 'var(--space-2)' }}>
                         <span style={{ fontSize: 'var(--text-sm)', color: 'var(--muted)', fontWeight: 600 }}>
                           {node.clearedCount} of {node.total} poses

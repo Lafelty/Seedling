@@ -263,16 +263,31 @@ export default function LevelsPage() {
         .lvl-bar-wrap { position: relative; display: block; margin-block: 13px; }
 
         /* The leaves on the stage a patient is currently on breathe, so the
-           mark that matters moves and the other three sit still. */
+           mark that matters moves and the others sit still. */
         @keyframes lvl-sway {
           0%, 100% { transform: rotate(-3.5deg); }
           50%      { transform: rotate(3.5deg); }
         }
         .lvl-sway { animation: lvl-sway 4.5s var(--ease-out, ease-in-out) infinite; }
 
+        /* And its halo breathes with them, so the eye finds where you are
+           before it reads a word. Slow on purpose — this is a nudge, not an
+           alarm. A finished box holds a steady glow in its own colour
+           instead: it has nothing left to point at. */
+        @keyframes lvl-mark-pulse {
+          0%, 100% { box-shadow: 0 0 0 3px var(--box-wash), 0 1px 3px rgba(38, 48, 42, 0.16); }
+          50%      { box-shadow: 0 0 0 8px var(--box-wash), 0 1px 3px rgba(38, 48, 42, 0.16); }
+        }
+        .lvl-mark-now { animation: lvl-mark-pulse 2.8s ease-in-out infinite; }
+        .lvl-mark-done {
+          box-shadow: 0 0 0 4px var(--box-wash), 0 2px 10px var(--box-edge);
+        }
+
         @media (prefers-reduced-motion: reduce) {
           .lvl-card, .lvl-cta svg, .lvl-rail-fill, .lvl-bar > span { transition: none; }
-          .lvl-sway { animation: none; }
+          .lvl-sway, .lvl-mark-now { animation: none; }
+          /* Without the pulse the live mark still needs its halo. */
+          .lvl-mark-now { box-shadow: 0 0 0 4px var(--box-wash), 0 1px 3px rgba(38, 48, 42, 0.16); }
         }
       `}</style>
 
@@ -403,8 +418,15 @@ export default function LevelsPage() {
                         <GrowthStages clearedCount={node.clearedCount} total={node.total} />
                       </div>
                       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 'var(--space-2)' }}>
-                        <span style={{ fontSize: 'var(--text-sm)', color: 'var(--muted)', fontWeight: 600 }}>
-                          {node.clearedCount} of {node.total} poses
+                        {/* The stage leads, in the box's own colour, so the
+                            marks on the bar have a name attached; the count
+                            follows it quietly. */}
+                        <span style={{ fontSize: 'var(--text-sm)', color: 'var(--muted)', fontWeight: 600, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                          <span style={{ color: tint.ink, fontWeight: 700 }}>
+                            {growthStageName(node.clearedCount, node.total)}
+                          </span>
+                          {' · '}
+                          {node.clearedCount} of {node.total}
                         </span>
                         <span
                           className="lvl-cta"
@@ -630,6 +652,10 @@ function ExpandedBox({
 
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 'var(--space-3)', borderTop: '1px solid var(--border)', paddingTop: 'var(--space-3)' }}>
             <span style={{ fontSize: 'var(--text-sm)', color: 'var(--muted)', fontWeight: 600 }}>
+              <span style={{ color: tint.ink, fontWeight: 700 }}>
+                {growthStageName(node.clearedCount, node.total)}
+              </span>
+              {' · '}
               {node.clearedCount} of {node.total} poses · {pct}%
             </span>
             <Link href={`/levels/${node.group.id}`} className="pill-btn pill-btn-primary" style={{ textDecoration: 'none' }}>

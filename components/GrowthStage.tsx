@@ -7,9 +7,11 @@ import { useId } from 'react'
  * box's progress bar at once — seed, sprout, seedling, plant — so a patient
  * sees what they have passed and what is still ahead in one look.
  *
- * The stages are spread evenly across the bar whatever the box holds, so the
- * plant always means "box finished". A three-pose box reaches a stage per
- * pose; a six-pose box reaches one every two poses.
+ * A box shows only as many stages as it has poses to reach them: one pose is
+ * seed then sprout, two poses adds the seedling, three or more runs the whole
+ * way to the plant. Whatever it shows is spread evenly across the bar, so the
+ * mark at the right end always means "box finished" — a six-pose box just
+ * reaches each stage every two poses instead of every one.
  *
  * Each mark is a little scene rather than a glyph — sky, a mound of soil, and
  * the plant growing out of it — because at this size a filled, coloured shape
@@ -23,13 +25,23 @@ export type GrowthStageName = (typeof GROWTH_STAGES)[number]
 const LAST = GROWTH_STAGES.length - 1
 
 /**
- * The furthest stage reached. Integer maths on purpose: `cleared / total * 3`
- * lands just under a whole number for cases like 2 of 6 and would round the
- * patient back down a stage.
+ * How many steps a box has room for: a one-pose box can only get as far as the
+ * sprout, so it draws two marks rather than four with three of them
+ * unreachable. Capped at the four stages that exist.
+ */
+export function growthStepCount(total: number): number {
+  return Math.max(1, Math.min(LAST, Math.floor(total)))
+}
+
+/**
+ * The furthest stage reached. Integer maths on purpose: `cleared / total *
+ * steps` lands just under a whole number for cases like 2 of 6 and would round
+ * the patient back down a stage.
  */
 export function growthStageIndex(clearedCount: number, total: number): number {
   if (!(total > 0) || !(clearedCount > 0)) return 0
-  return Math.max(0, Math.min(LAST, Math.floor((Math.floor(clearedCount) * LAST) / total)))
+  const steps = growthStepCount(total)
+  return Math.max(0, Math.min(steps, Math.floor((Math.floor(clearedCount) * steps) / total)))
 }
 
 export function growthStageName(clearedCount: number, total: number): GrowthStageName {
@@ -57,6 +69,9 @@ export default function GrowthStages({
   total: number
   className?: string
 }) {
+  if (!(total > 0)) return null
+
+  const last = growthStepCount(total)
   const reached = growthStageIndex(clearedCount, total)
 
   return (
@@ -71,32 +86,42 @@ export default function GrowthStages({
         alignItems: 'center',
         // Equal-width cells plus `space-between` puts the outer two marks half
         // a cell in from each end and spaces the rest evenly — the same result
-        // as positioning each at 0/33/67/100% of the track, without the maths.
+        // as positioning each at its share of the track, without the maths.
         justifyContent: 'space-between',
         pointerEvents: 'none',
       }}
     >
-      {GROWTH_STAGES.map((_, stage) => (
+      {GROWTH_STAGES.slice(0, last + 1).map((_, stage) => (
         <span key={stage} style={{ width: GROWTH_MARK_CELL, display: 'grid', placeItems: 'center' }}>
-          <GrowthMark stage={stage} state={stage === reached ? 'current' : stage < reached ? 'past' : 'ahead'} />
+          <GrowthMark
+            stage={stage}
+            last={last}
+            state={stage === reached ? 'current' : stage < reached ? 'past' : 'ahead'}
+          />
         </span>
       ))}
     </span>
   )
 }
 
-function GrowthMark({ stage, state }: { stage: number; state: 'past' | 'current' | 'ahead' }) {
+function GrowthMark({ stage, last, state }: { stage: number; last: number; state: 'past' | 'current' | 'ahead' }) {
   // Gradients live in the document, so two marks sharing an id would share a
   // fill. `useId` keeps each scene's own — stripped to letters and digits,
   // since React wraps the id in punctuation (`«r0»`) that `url(#…)` chokes on.
   const uid = `gs${useId().replace(/[^a-zA-Z0-9]/g, '')}`
   const ahead = state === 'ahead'
   const current = state === 'current'
-  const grown = current && stage === LAST
+  // "Grown" is the end of this box's own road, not stage three: a one-pose box
+  // finishes at the sprout.
+  const grown = current && stage === last
   const size = current ? GROWTH_MARK_CELL : 28
 
   return (
     <span
+      // The halo on the live mark breathes, so the eye lands on where the
+      // patient actually is before it reads anything. Both classes carry their
+      // own box-shadow; only the resting marks set one inline.
+      className={grown ? 'lvl-mark-done' : current ? 'lvl-mark-now' : undefined}
       style={{
         width: size,
         height: size,
@@ -111,13 +136,7 @@ function GrowthMark({ stage, state }: { stage: number; state: 'past' | 'current'
         // not something the patient has to act on.
         filter: ahead ? 'grayscale(1)' : undefined,
         opacity: ahead ? 0.38 : 1,
-        // The stage they are on carries a halo, so it reads first; the finished
-        // one glows in the box's own colour.
-        boxShadow: grown
-          ? '0 0 0 3px var(--box-wash, rgba(74, 107, 90, 0.12)), 0 2px 8px var(--box-edge, rgba(74, 107, 90, 0.45))'
-          : current
-          ? '0 0 0 3px var(--box-wash, rgba(74, 107, 90, 0.12)), 0 1px 3px rgba(38, 48, 42, 0.16)'
-          : '0 1px 3px rgba(38, 48, 42, 0.12)',
+        boxShadow: current ? undefined : '0 1px 3px rgba(38, 48, 42, 0.12)',
         transition: 'width var(--dur-fast) var(--ease-out), height var(--dur-fast) var(--ease-out), opacity var(--dur-fast) var(--ease-out)',
       }}
     >

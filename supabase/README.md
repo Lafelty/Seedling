@@ -67,6 +67,7 @@ that point on.
 | `20260718000000_exercise_delete_set_null.sql` | `therapy_sessions.exercise_id` FK → `on delete set null` |
 | `20260718120000_star_integrity.sql` | server-owned stars: session-bound `award_stars`, `admin_set_stars`, revoke client `total_stars` writes |
 | `20260725000000_session_write_lockdown.sql` | revoke client INSERT/UPDATE on `therapy_sessions`, `complete_session()` RPC, redo the profiles column revokes as revoke-then-grant |
+| `20260802000000_profile_phone_avatar.sql` | `profiles.phone` + `profiles.avatar_path`, private `avatars` bucket read through signed URLs |
 
 When a migration changes the schema, update `lib/supabase/types.ts` to match —
 the typed client is what keeps queries honest end to end.

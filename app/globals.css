@@ -187,6 +187,169 @@
     transition-duration: 100ms;
   }
 
+  /* "Back to Garden" on /profile — that page sits outside the (dashboard) route
+     group, so it has no bottom nav and this is the only way out. Lit like a
+     physical surface rather than a link: a white rim along the top edge and a
+     shadow under the bottom one, the same struck-coin logic as .star-badge.
+     Outlined rather than filled, so it never competes with Save Profile. */
+  .btn-back {
+    gap: var(--space-2);
+    font-size: var(--text-lg);
+    color: var(--primary);
+    text-decoration: none;
+    border-radius: var(--radius-full);
+    border: 2px solid rgba(74, 107, 90, 0.32);
+    background:
+      linear-gradient(180deg, rgba(255, 255, 255, 0.5), rgba(255, 255, 255, 0) 52%),
+      linear-gradient(180deg, rgba(107, 143, 122, 0.2), rgba(107, 143, 122, 0.09));
+    box-shadow:
+      inset 0 1px 0 rgba(255, 255, 255, 0.7),
+      inset 0 -1px 0 rgba(74, 107, 90, 0.1),
+      0 1px 2px rgba(38, 48, 42, 0.08);
+    transition:
+      transform var(--dur-fast) var(--ease-out),
+      box-shadow var(--dur-fast) var(--ease-out),
+      border-color var(--dur-fast) var(--ease-out);
+  }
+
+  .btn-back-chevron {
+    transition: transform var(--dur-fast) var(--ease-out);
+  }
+
+  /* The destination mark, in the garden's own green rather than the label's. */
+  .btn-back-garden {
+    color: #6B8F7A;
+  }
+
+  @media (hover: hover) and (pointer: fine) {
+    .btn-back:hover {
+      transform: translateY(-1px);
+      border-color: rgba(74, 107, 90, 0.5);
+      box-shadow:
+        inset 0 1px 0 rgba(255, 255, 255, 0.7),
+        0 4px 12px rgba(74, 107, 90, 0.18);
+    }
+
+    /* The arrow leans the way the button goes. */
+    .btn-back:hover .btn-back-chevron {
+      transform: translateX(-3px);
+    }
+  }
+
+  /* Presses in rather than lifting: the shadow flips inside, so the surface
+     reads as pushed down instead of merely smaller. */
+  .btn-back:active {
+    transform: scale(0.98);
+    box-shadow: inset 0 1px 3px rgba(38, 48, 42, 0.16);
+    transition-duration: var(--dur-instant);
+  }
+
+  .btn-back:focus-visible {
+    outline: 2px solid var(--primary);
+    outline-offset: 3px;
+  }
+
+  /* --- /starconfig: the expandable patient record --- */
+
+  .sc-row {
+    cursor: pointer;
+    border-bottom: 1px solid var(--border);
+    transition: background var(--dur-fast) ease;
+  }
+
+  .sc-row[aria-expanded='true'] {
+    background: rgba(74, 107, 90, 0.06);
+  }
+
+  @media (hover: hover) and (pointer: fine) {
+    .sc-row:hover {
+      background: rgba(74, 107, 90, 0.05);
+    }
+  }
+
+  .sc-row:focus-visible {
+    outline: 2px solid var(--primary);
+    /* Inset: an outline outside a table row is clipped by the scroll container. */
+    outline-offset: -2px;
+  }
+
+  .sc-caret {
+    color: var(--muted);
+    transition: transform var(--dur-fast) var(--ease-out), color var(--dur-fast) ease;
+  }
+
+  .sc-row[aria-expanded='true'] .sc-caret {
+    transform: rotate(180deg);
+    color: var(--primary);
+  }
+
+  /* A table row cannot animate its own height, and `height: auto` cannot be
+     transitioned at all. A grid whose single track runs 0fr → 1fr can — it is
+     the one way to reach content height without measuring it in JS. The panel
+     stays mounted so closing animates too, and so a rapid click between two
+     patients retargets mid-transition instead of restarting. */
+  .sc-panel {
+    display: grid;
+    grid-template-rows: 0fr;
+    opacity: 0;
+    transition:
+      grid-template-rows var(--dur-fast) var(--ease-out),
+      opacity var(--dur-fast) var(--ease-out);
+  }
+
+  .sc-panel > * {
+    overflow: hidden;
+    /* Grid children floor at min-content without this, and the row never closes. */
+    min-height: 0;
+  }
+
+  .sc-panel[data-open='true'] {
+    grid-template-rows: 1fr;
+    opacity: 1;
+  }
+
+  /* The one action inside an opened record, so it is filled — lit and pressable
+     like .btn-back, at the size of a table control. */
+  .btn-stars {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-2);
+    padding: var(--space-3) var(--space-5);
+    font-size: var(--text-sm);
+    font-weight: 600;
+    color: white;
+    text-decoration: none;
+    border: none;
+    border-radius: var(--radius-full);
+    background: linear-gradient(180deg, #587F6A, var(--primary));
+    box-shadow:
+      inset 0 1px 0 rgba(255, 255, 255, 0.28),
+      0 1px 2px rgba(38, 48, 42, 0.18);
+    transition:
+      transform var(--dur-fast) var(--ease-out),
+      box-shadow var(--dur-fast) var(--ease-out);
+  }
+
+  @media (hover: hover) and (pointer: fine) {
+    .btn-stars:hover {
+      transform: translateY(-1px);
+      box-shadow:
+        inset 0 1px 0 rgba(255, 255, 255, 0.28),
+        0 5px 14px rgba(74, 107, 90, 0.3);
+    }
+  }
+
+  .btn-stars:active {
+    transform: scale(0.97);
+    box-shadow: inset 0 1px 3px rgba(20, 30, 24, 0.3);
+    transition-duration: var(--dur-instant);
+  }
+
+  .btn-stars:focus-visible {
+    outline: 2px solid var(--primary);
+    outline-offset: 3px;
+  }
+
   /* Star badge */
   .star-badge {
     display: inline-flex;

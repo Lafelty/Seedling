@@ -379,44 +379,24 @@ export default function ProfilePage() {
           says it is not ready yet. Stored values are left untouched, so nothing
           is lost when the key is set. */}
       <div className="card mb-6 animate-fadeInUp" style={{
+        position: 'relative',
         background: 'linear-gradient(180deg, rgba(201, 184, 138, 0.12), var(--surface) 55%)',
         borderColor: 'rgba(74, 107, 90, 0.20)',
       }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-2)', marginBottom: 'var(--space-2)', flexWrap: 'wrap' }}>
-          <h2 style={{ fontSize: 'var(--text-lg)', fontWeight: 600, color: 'var(--primary)' }}>
-            Guardian updates
-          </h2>
-          <span
-            style={{
-              display: 'inline-flex',
-              alignItems: 'center',
-              gap: 'var(--space-1)',
-              padding: '2px var(--space-2)',
-              fontSize: 'var(--text-xs)',
-              fontWeight: 700,
-              color: '#6B5B2E',
-              background: 'rgba(201, 184, 138, 0.35)',
-              border: '1px solid rgba(160, 141, 92, 0.5)',
-              borderRadius: 'var(--radius-full)',
-            }}
-          >
-            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
-              <rect x="4" y="11" width="16" height="10" rx="2" />
-              <path d="M8 11V7a4 4 0 0 1 8 0v4" />
-            </svg>
-            Locked
-          </span>
-        </div>
+        <h2 style={{ fontSize: 'var(--text-lg)', fontWeight: 600, color: 'var(--primary)', marginBottom: 'var(--space-2)' }}>
+          Guardian updates
+        </h2>
         <p style={{ fontSize: 'var(--text-sm)', color: 'var(--muted)', marginBottom: 'var(--space-4)' }}>
-          Guardian emails aren&apos;t switched on yet. When they are, a family member or
-          caregiver will get a short email each time you complete a session.
+          A family member or caregiver gets a short email each time you complete a session.
         </p>
 
         {/* A disabled fieldset turns off every control inside it natively, and
-            keeps them announced as disabled rather than hidden. */}
+            keeps them announced as disabled rather than hidden. The grey sheet
+            below is what says so on screen; this is what says so to a keyboard
+            and a screen reader. */}
         <fieldset
           disabled
-          style={{ border: 'none', padding: 0, margin: 0, minInlineSize: 0, opacity: 0.55 }}
+          style={{ border: 'none', padding: 0, margin: 0, minInlineSize: 0 }}
         >
           <div style={{ marginBottom: 'var(--space-4)' }}>
             <label style={labelStyle} htmlFor="guardian-email">Guardian email</label>
@@ -479,6 +459,52 @@ export default function ProfilePage() {
             </span>
           </div>
         </fieldset>
+
+        {/* The grey sheet over the whole card. Decorative — the disabled
+            fieldset underneath is what actually stops anyone reaching the
+            fields; this is only how it looks. `inset: -1px` covers the card's
+            own border, so the sheet ends where the card does rather than
+            leaving a bright rim around it. */}
+        <div
+          aria-hidden
+          style={{
+            position: 'absolute',
+            inset: '-1px',
+            display: 'grid',
+            placeItems: 'center',
+            gap: 'var(--space-2)',
+            alignContent: 'center',
+            borderRadius: 'var(--radius-lg)',
+            background: 'rgba(96, 100, 96, 0.55)',
+            backdropFilter: 'grayscale(1)',
+            WebkitBackdropFilter: 'grayscale(1)',
+          }}
+        >
+          <svg
+            width="46"
+            height="46"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="white"
+            strokeWidth="1.8"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            style={{ filter: 'drop-shadow(0 2px 6px rgba(0, 0, 0, 0.35))' }}
+          >
+            <rect x="4" y="10.5" width="16" height="10.5" rx="2.5" />
+            <path d="M8 10.5V7a4 4 0 0 1 8 0v3.5" />
+          </svg>
+          <span
+            style={{
+              fontSize: 'var(--text-sm)',
+              fontWeight: 700,
+              color: 'white',
+              textShadow: '0 1px 4px rgba(0, 0, 0, 0.4)',
+            }}
+          >
+            Not available yet
+          </span>
+        </div>
       </div>
 
       {message && (

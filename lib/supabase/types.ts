@@ -41,6 +41,10 @@ export interface Database {
           total_stars: number;
           height_cm: number | null;
           weight_kg: number | null;
+          phone: string | null;
+          /** Object path inside the private `avatars` bucket, not a URL — the
+           * bucket is private, so URLs are signed and expire. See lib/avatar.ts. */
+          avatar_path: string | null;
           guardian_email: string | null;
           guardian_notify: boolean;
           created_at: string;
@@ -54,6 +58,8 @@ export interface Database {
           total_stars?: number;
           height_cm?: number | null;
           weight_kg?: number | null;
+          phone?: string | null;
+          avatar_path?: string | null;
           guardian_email?: string | null;
           guardian_notify?: boolean;
           created_at?: string;
@@ -65,6 +71,8 @@ export interface Database {
           total_stars?: number;
           height_cm?: number | null;
           weight_kg?: number | null;
+          phone?: string | null;
+          avatar_path?: string | null;
           guardian_email?: string | null;
           guardian_notify?: boolean;
           updated_at?: string;
@@ -247,6 +255,23 @@ export type ProfileSummary = Pick<
   ProfileRow,
   'id' | 'email' | 'name' | 'total_stars' | 'is_admin' | 'created_at'
 >;
+
+/**
+ * The whole patient record a therapist reads on /starconfig — the summary plus
+ * everything the patient fills in on /profile. Write columns are deliberately
+ * absent from that page's queries; this is a read-only view of a patient.
+ */
+export type ProfileDetail = ProfileSummary &
+  Pick<
+    ProfileRow,
+    | 'phone'
+    | 'avatar_path'
+    | 'height_cm'
+    | 'weight_kg'
+    | 'guardian_email'
+    | 'guardian_notify'
+    | 'updated_at'
+  >;
 export type TherapySessionRow = Database['public']['Tables']['therapy_sessions']['Row'];
 export type RepDataRow = Database['public']['Tables']['rep_data']['Row'];
 export type ExerciseRow = Database['public']['Tables']['exercises']['Row'];

@@ -114,6 +114,57 @@ export default function GrowthStages({
   )
 }
 
+/**
+ * One stage's scene, drawn to fill a 32×32 viewBox: sky, a mound of soil, and
+ * whatever is growing out of it. Exported without its disc so other screens can
+ * borrow the drawing — `SavedOverlay` shows the sprout at the size of a badge
+ * rather than a progress mark.
+ */
+export function GrowthScene({ stage, sway = false }: { stage: number; sway?: boolean }) {
+  // Gradients live in the document, so two scenes sharing an id would share a
+  // fill. `useId` keeps each scene's own — stripped to letters and digits,
+  // since React wraps the id in punctuation (`«r0»`) that `url(#…)` chokes on.
+  const uid = `gs${useId().replace(/[^a-zA-Z0-9]/g, '')}`
+
+  return (
+    <>
+      <defs>
+        {/* Leaves take the box's own green at the base and lift to a young,
+            sunlit green at the tip. */}
+        <linearGradient id={`${uid}-leaf`} x1="0" y1="1" x2="0.4" y2="0">
+          <stop offset="0" stopColor="var(--box-bar, #4A6B5A)" />
+          <stop offset="1" stopColor="#A9DC85" />
+        </linearGradient>
+        <linearGradient id={`${uid}-soil`} x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0" stopColor="#8A6A4E" />
+          <stop offset="1" stopColor="#5E442F" />
+        </linearGradient>
+        <linearGradient id={`${uid}-seed`} x1="0.2" y1="0" x2="0.8" y2="1">
+          <stop offset="0" stopColor="#F0D8AE" />
+          <stop offset="1" stopColor="#C39A62" />
+        </linearGradient>
+        <linearGradient id={`${uid}-sky`} x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0" stopColor="#BFE9C6" stopOpacity="0.55" />
+          <stop offset="1" stopColor="#BFE9C6" stopOpacity="0" />
+        </linearGradient>
+      </defs>
+
+      <rect width="32" height="32" fill={`url(#${uid}-sky)`} />
+
+      {/* Drawn before the soil, so the buried half of each seed really is
+          buried rather than sitting on top of the ground. */}
+      {stage === 0 && <Seed uid={uid} x={16} y={22.6} rx={6} ry={4.6} rotate={-16} />}
+
+      <path d={SOIL} fill={`url(#${uid}-soil)`} />
+      <path d={SOIL_TOP} stroke="#A5825F" strokeWidth="1.5" strokeLinecap="round" fill="none" />
+
+      {stage === 1 && <Sprout uid={uid} />}
+      {stage === 2 && <Seedling uid={uid} sway={sway} />}
+      {stage === 3 && <Plant uid={uid} sway={sway} />}
+    </>
+  )
+}
+
 function GrowthMark({
   stage,
   last,
@@ -123,10 +174,6 @@ function GrowthMark({
   last: number
   state: 'past' | 'current' | 'next' | 'ahead'
 }) {
-  // Gradients live in the document, so two marks sharing an id would share a
-  // fill. `useId` keeps each scene's own — stripped to letters and digits,
-  // since React wraps the id in punctuation (`«r0»`) that `url(#…)` chokes on.
-  const uid = `gs${useId().replace(/[^a-zA-Z0-9]/g, '')}`
   const ahead = state === 'ahead' || state === 'next'
   const current = state === 'current'
   // "Grown" is the end of this box's own road, not stage three: a one-pose box
@@ -169,39 +216,7 @@ function GrowthMark({
       }}
     >
       <svg width="100%" height="100%" viewBox="0 0 32 32" fill="none">
-        <defs>
-          {/* Leaves take the box's own green at the base and lift to a young,
-              sunlit green at the tip. */}
-          <linearGradient id={`${uid}-leaf`} x1="0" y1="1" x2="0.4" y2="0">
-            <stop offset="0" stopColor="var(--box-bar, #4A6B5A)" />
-            <stop offset="1" stopColor="#A9DC85" />
-          </linearGradient>
-          <linearGradient id={`${uid}-soil`} x1="0" y1="0" x2="0" y2="1">
-            <stop offset="0" stopColor="#8A6A4E" />
-            <stop offset="1" stopColor="#5E442F" />
-          </linearGradient>
-          <linearGradient id={`${uid}-seed`} x1="0.2" y1="0" x2="0.8" y2="1">
-            <stop offset="0" stopColor="#F0D8AE" />
-            <stop offset="1" stopColor="#C39A62" />
-          </linearGradient>
-          <linearGradient id={`${uid}-sky`} x1="0" y1="0" x2="0" y2="1">
-            <stop offset="0" stopColor="#BFE9C6" stopOpacity="0.55" />
-            <stop offset="1" stopColor="#BFE9C6" stopOpacity="0" />
-          </linearGradient>
-        </defs>
-
-        <rect width="32" height="32" fill={`url(#${uid}-sky)`} />
-
-        {/* Drawn before the soil, so the buried half of each seed really is
-            buried rather than sitting on top of the ground. */}
-        {stage === 0 && <Seed uid={uid} x={16} y={22.6} rx={6} ry={4.6} rotate={-16} />}
-
-        <path d={SOIL} fill={`url(#${uid}-soil)`} />
-        <path d={SOIL_TOP} stroke="#A5825F" strokeWidth="1.5" strokeLinecap="round" fill="none" />
-
-        {stage === 1 && <Sprout uid={uid} />}
-        {stage === 2 && <Seedling uid={uid} sway={current} />}
-        {stage === 3 && <Plant uid={uid} sway={current} />}
+        <GrowthScene stage={stage} sway={current} />
       </svg>
     </span>
   )

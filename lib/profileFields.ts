@@ -39,6 +39,23 @@ export function optionsWithStored(
 }
 
 /**
+ * The most digits a phone number can hold. E.164 caps at 15, and nothing longer
+ * is dialable anywhere on earth.
+ */
+export const PHONE_MAX_DIGITS = 15;
+
+/** The fewest digits worth storing. Below this it cannot be called back. */
+export const PHONE_MIN_DIGITS = 8;
+
+/**
+ * The most characters the field will hold at all — the 15 digits, a leading `+`,
+ * and room for the separators people space a number out with. A second cap on
+ * top of the digit one, so a paste of a thousand dashes cannot sit in the field
+ * looking like a valid entry.
+ */
+export const PHONE_MAX_CHARS = 24;
+
+/**
  * Digits and an optional leading `+`, nothing else. Separators are how people
  * write a number, not part of it — `081-234-5678`, `081 234 5678` and
  * `(081) 234-5678` are all the same number and all store the same way.
@@ -69,7 +86,42 @@ export function isValidPhone(raw: string): boolean {
   if (!PHONE_SHAPE.test(trimmed)) return false;
 
   const digits = trimmed.replace(/\D/g, '');
-  return digits.length >= 8 && digits.length <= 15;
+  return digits.length >= PHONE_MIN_DIGITS && digits.length <= PHONE_MAX_DIGITS;
+}
+
+/** How many digits the field holds, ignoring how they have been spaced out. */
+export function phoneDigitCount(raw: string): number {
+  return raw.replace(/\D/g, '').length;
+}
+
+/**
+ * What the phone field is allowed to contain, applied on every keystroke.
+ *
+ * Validation on save says "that is wrong" after the fact; this stops the wrong
+ * thing being typed at all — letters never appear, and the 16th digit simply
+ * does not land. The separators the patient has already typed are left exactly
+ * where they are, so the caret does not jump around mid-number.
+ *
+ * A `+` only counts as one when it leads: `+66 81 234 5678` is a country code,
+ * `081+2345678` is a typo, and `normalizePhone` already treats them that way.
+ */
+export function capPhoneInput(raw: string): string {
+  const plus = raw.trimStart().startsWith('+') ? '+' : '';
+  const rest = raw.replace(/[^\d\s().-]/g, '');
+
+  let digits = 0;
+  let kept = '';
+  for (const character of rest) {
+    const isDigit = character >= '0' && character <= '9';
+    if (isDigit) {
+      if (digits >= PHONE_MAX_DIGITS) continue;
+      digits += 1;
+    }
+    kept += character;
+    if (plus.length + kept.length >= PHONE_MAX_CHARS) break;
+  }
+
+  return plus + kept;
 }
 
 /** Display form for a stored number. `—` stands in for "not given". */

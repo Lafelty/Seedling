@@ -1,11 +1,15 @@
 import { describe, expect, it } from 'vitest';
 import {
   bmi,
+  capPhoneInput,
   formatPhone,
   HEIGHT_CM,
   isValidPhone,
   normalizePhone,
   optionsWithStored,
+  PHONE_MAX_CHARS,
+  PHONE_MAX_DIGITS,
+  phoneDigitCount,
   rangeOptions,
   WEIGHT_KG,
 } from '../profileFields';
@@ -102,6 +106,58 @@ describe('isValidPhone', () => {
 
   it('accepts the separators people actually type', () => {
     expect(isValidPhone('(081) 234.5678')).toBe(true);
+  });
+});
+
+describe('phoneDigitCount', () => {
+  it('counts digits, not the way they are spaced', () => {
+    expect(phoneDigitCount('081-234-5678')).toBe(10);
+    expect(phoneDigitCount('+66 81 234 5678')).toBe(11);
+    expect(phoneDigitCount('')).toBe(0);
+  });
+});
+
+describe('capPhoneInput', () => {
+  it('leaves a normal number exactly as typed', () => {
+    expect(capPhoneInput('081-234-5678')).toBe('081-234-5678');
+    expect(capPhoneInput('(081) 234 5678')).toBe('(081) 234 5678');
+  });
+
+  it('keeps a leading country plus', () => {
+    expect(capPhoneInput('+66 81 234 5678')).toBe('+66 81 234 5678');
+  });
+
+  it('drops letters as they are typed', () => {
+    expect(capPhoneInput('081call5678')).toBe('0815678');
+  });
+
+  it('drops a plus that is not leading, the way normalizePhone does', () => {
+    expect(capPhoneInput('081+2345678')).toBe('0812345678');
+  });
+
+  it('refuses the sixteenth digit', () => {
+    expect(capPhoneInput('12345678901234567890')).toBe('123456789012345');
+    expect(phoneDigitCount(capPhoneInput('12345678901234567890'))).toBe(PHONE_MAX_DIGITS);
+  });
+
+  it('counts the plus against the length but not against the digits', () => {
+    const capped = capPhoneInput('+123456789012345678');
+    expect(phoneDigitCount(capped)).toBe(PHONE_MAX_DIGITS);
+    expect(capped.startsWith('+')).toBe(true);
+  });
+
+  it('stops a wall of separators from filling the field', () => {
+    expect(capPhoneInput('-'.repeat(200)).length).toBeLessThanOrEqual(PHONE_MAX_CHARS);
+  });
+
+  it('leaves anything it returns short enough for the field', () => {
+    expect(capPhoneInput('+66 (081) 234-5678 9012 3456').length).toBeLessThanOrEqual(
+      PHONE_MAX_CHARS
+    );
+  });
+
+  it('accepts an emptied field', () => {
+    expect(capPhoneInput('')).toBe('');
   });
 });
 

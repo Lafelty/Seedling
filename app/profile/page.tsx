@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { createClient } from '@/lib/supabase/client'
 import { SmoothInput } from '@/components/SmoothInput'
+import { AvatarCropper } from '@/components/AvatarCropper'
 import { ProfileAvatar } from '@/components/ProfileAvatar'
 import { SavedOverlay } from '@/components/SavedOverlay'
 import {
@@ -15,10 +16,14 @@ import {
   signAvatar,
 } from '@/lib/avatar'
 import {
+  capPhoneInput,
   HEIGHT_CM,
   isValidPhone,
   normalizePhone,
   optionsWithStored,
+  PHONE_MAX_CHARS,
+  PHONE_MAX_DIGITS,
+  phoneDigitCount,
   rangeOptions,
   WEIGHT_KG,
 } from '@/lib/profileFields'
@@ -101,6 +106,8 @@ export default function ProfilePage() {
   const [avatarPath, setAvatarPath] = useState<string | null>(null)
   const [avatarUrl, setAvatarUrl] = useState<string | null>(null)
   const [uploading, setUploading] = useState(false)
+  /** The picked file, held while the patient frames it. Null when no cropper is up. */
+  const [photoToFrame, setPhotoToFrame] = useState<File | null>(null)
 
   // Read-only: the guardian card is locked (see below), but showing what is
   // already stored is still worth doing.
@@ -162,16 +169,25 @@ export default function ProfilePage() {
   }
 
   /**
-   * Uploads straight away and holds the new path in state; Save Profile is what
-   * points the row at it. Same shape as the exercise editor's demo pictures.
+   * A picked file is checked here and framed before it goes anywhere — the
+   * upload happens on the way *out* of the cropper, not on the way in, so a
+   * patient who changes their mind has cost the bucket nothing.
    */
-  async function pickAvatar(file: File) {
+  function frameAvatar(file: File) {
     const problem = rejectAvatar(file)
     if (problem) {
       setMessage(problem)
       return
     }
+    setMessage(null)
+    setPhotoToFrame(file)
+  }
 
+  /**
+   * Uploads straight away and holds the new path in state; Save Profile is what
+   * points the row at it. Same shape as the exercise editor's demo pictures.
+   */
+  async function uploadAvatar(file: File) {
     setUploading(true)
     setMessage(null)
 
@@ -292,7 +308,7 @@ export default function ProfilePage() {
           size={76}
           editable
           uploading={uploading}
-          onPick={pickAvatar}
+          onPick={frameAvatar}
           alt={name ? `${name}'s profile picture` : 'Your profile picture'}
         />
         <div style={{ minWidth: 0 }}>
@@ -327,12 +343,37 @@ export default function ProfilePage() {
           <SmoothInput
             id="profile-phone"
             type="tel"
+            inputMode="tel"
             autoComplete="tel"
             value={phone}
-            onChange={(e) => setPhone(e.target.value)}
+            // Capped as it is typed rather than only judged on save: letters
+            // never appear, and the 16th digit never lands.
+            onChange={(e) => setPhone(capPhoneInput(e.target.value))}
+            maxLength={PHONE_MAX_CHARS}
+            aria-describedby="profile-phone-hint"
             placeholder="081-234-5678"
             style={inputStyle}
           />
+          <p
+            id="profile-phone-hint"
+            style={{
+              display: 'flex',
+              justifyContent: 'space-between',
+              gap: 'var(--space-2)',
+              fontSize: 'var(--text-xs)',
+              color: 'var(--muted)',
+              marginTop: 'var(--space-1)',
+            }}
+          >
+            <span>8 to {PHONE_MAX_DIGITS} digits.</span>
+            {/* Only once they are close to the ceiling — a counter on an empty
+                field is noise. */}
+            {phoneDigitCount(phone) >= PHONE_MAX_DIGITS - 2 && (
+              <span style={{ fontWeight: 600 }}>
+                {phoneDigitCount(phone)}/{PHONE_MAX_DIGITS}
+              </span>
+            )}
+          </p>
         </div>
 
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 'var(--space-3)' }}>
@@ -526,6 +567,17 @@ export default function ProfilePage() {
       >
         {saving ? 'Saving...' : uploading ? 'Uploading picture...' : 'Save Profile'}
       </button>
+
+      {photoToFrame && (
+        <AvatarCropper
+          file={photoToFrame}
+          onCancel={() => setPhotoToFrame(null)}
+          onConfirm={(cropped) => {
+            setPhotoToFrame(null)
+            void uploadAvatar(cropped)
+          }}
+        />
+      )}
 
       {saved && <SavedOverlay onDone={() => setSaved(false)} />}
     </main>

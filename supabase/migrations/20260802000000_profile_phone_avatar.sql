@@ -93,7 +93,7 @@ create policy "Users delete own avatar" on storage.objects
     and (storage.foldername(name))[1] = (select auth.uid())::text
   );
 
--- SELECT only: the therapist views patient photos on /starconfig but never
+-- SELECT only: the therapist views patient photos on /admin/patients but never
 -- uploads one on a patient's behalf.
 drop policy if exists "Admins read avatars" on storage.objects;
 create policy "Admins read avatars" on storage.objects

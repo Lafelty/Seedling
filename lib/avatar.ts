@@ -70,7 +70,7 @@ export async function signAvatar(
 
 /**
  * The same for a whole list, in one round trip — the patient table on
- * /starconfig would otherwise make one request per row.
+ * /admin/patients would otherwise make one request per row.
  */
 export async function signAvatars(
   supabase: SupabaseClient,

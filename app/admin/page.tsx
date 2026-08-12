@@ -518,17 +518,20 @@ export default function AdminDashboard() {
             )}
           </div>
 
-          {/* Star Config */}
+          {/* Patient records */}
           <div style={{
             marginTop: 'var(--space-8)',
             display: 'flex',
             justifyContent: 'center',
           }}>
-            <Link href="/starconfig" className="pill-btn pill-btn-primary" style={{ padding: 'var(--space-3) var(--space-6)' }}>
-              <svg width="16" height="16" viewBox="0 0 20 20" fill="currentColor">
-                <path d="M10 0l2.5 6.5H19l-5.5 4 2 6.5L10 13l-5.5 4 2-6.5-5.5-4h6.5z" />
+            <Link href="/admin/patients" className="pill-btn pill-btn-primary" style={{ padding: 'var(--space-3) var(--space-6)' }}>
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+                <path d="M17 21v-2a4 4 0 0 0-4-4H7a4 4 0 0 0-4 4v2" />
+                <circle cx="10" cy="7" r="4" />
+                <path d="M23 21v-2a4 4 0 0 0-3-3.87" />
+                <path d="M16 3.13a4 4 0 0 1 0 7.75" />
               </svg>
-              Star Config
+              Patients
             </Link>
           </div>
         </div>

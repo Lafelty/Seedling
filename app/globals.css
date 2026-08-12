@@ -249,7 +249,7 @@
     outline-offset: 3px;
   }
 
-  /* --- /starconfig: the expandable patient record --- */
+  /* --- /admin/patients: the expandable patient record --- */
 
   .sc-row {
     cursor: pointer;

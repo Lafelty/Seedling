@@ -250,14 +250,14 @@ export interface Database {
 // ---- Row aliases for convenient imports across the app ----
 export type ProfileRow = Database['public']['Tables']['profiles']['Row'];
 
-/** Columns the admin/starconfig pages select when listing patients. */
+/** Columns the admin patient pages select when listing patients. */
 export type ProfileSummary = Pick<
   ProfileRow,
   'id' | 'email' | 'name' | 'total_stars' | 'is_admin' | 'created_at'
 >;
 
 /**
- * The whole patient record a therapist reads on /starconfig — the summary plus
+ * The whole patient record a therapist reads on /admin/patients — the summary plus
  * everything the patient fills in on /profile. Write columns are deliberately
  * absent from that page's queries; this is a read-only view of a patient.
  */

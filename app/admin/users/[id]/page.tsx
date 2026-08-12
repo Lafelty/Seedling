@@ -117,7 +117,9 @@ export default function AdminUserPage() {
         <div style={{
           display: 'flex',
           justifyContent: 'space-between',
-          alignItems: 'center',
+          alignItems: 'flex-end',
+          gap: 'var(--space-4)',
+          flexWrap: 'wrap',
           marginBottom: 'var(--space-8)',
         }}>
           <div>
@@ -134,22 +136,14 @@ export default function AdminUserPage() {
               {profile.email}
             </p>
           </div>
-          <Link
-            href="/starconfig"
-            style={{
-              padding: 'var(--space-3) var(--space-5)',
-              fontSize: 'var(--text-sm)',
-              fontWeight: 600,
-              color: 'var(--ink)',
-              background: 'var(--surface)',
-              border: '1px solid var(--border)',
-              borderRadius: 'var(--radius-full)',
-              textDecoration: 'none',
-              display: 'inline-block',
-            }}
-          >
-            Back to Star Config
-          </Link>
+          <div style={{ display: 'flex', gap: 'var(--space-2)', flexWrap: 'wrap' }}>
+            <Link href="/admin/patients" className="pill-btn pill-btn-outline">
+              Back to patients
+            </Link>
+            <Link href={`/admin/users/${profile.id}/dashboard`} className="pill-btn pill-btn-primary">
+              View dashboard
+            </Link>
+          </div>
         </div>
 
         {/* Star Editor */}

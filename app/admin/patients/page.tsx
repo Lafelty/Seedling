@@ -51,10 +51,6 @@ function PatientDetails({ profile, photo, detailsId }: { profile: Profile; photo
       </dl>
 
       <div className="patient-details-actions">
-        <Link href={`/admin/users/${profile.id}/dashboard`} className="pill-btn pill-btn-primary">
-          <ChartIcon />
-          View progress
-        </Link>
         <Link href={`/admin/users/${profile.id}`} className="pill-btn pill-btn-outline">
           <StarGlyph size={15} />
           Edit stars
@@ -526,15 +522,13 @@ const PATIENTS_CSS = `
     .patient-mobile-card > .patient-details { grid-template-columns: 1fr; gap: var(--space-5); margin: var(--space-4) calc(-1 * var(--space-4)) calc(-1 * var(--space-4)); padding: var(--space-5) var(--space-4); background: rgba(74, 107, 90, 0.045); border-top: 1px solid var(--border); }
     .patient-mobile-card .patient-details-avatar { display: none; }
     .patient-mobile-card .patient-facts { grid-template-columns: 1fr 1fr; gap: var(--space-4); }
-    .patient-mobile-card .patient-details-actions { flex-direction: row; }
-    .patient-mobile-card .patient-details-actions .pill-btn { flex: 1 1 0; }
   }
   @media (max-width: 460px) {
     .patients-heading p { max-width: 28ch; }
     .patients-count { display: none; }
     .patient-mobile-head { align-items: center; }
-    .patient-mobile-actions, .patient-mobile-card .patient-details-actions { flex-direction: column; }
-    .patient-mobile-actions .pill-btn, .patient-mobile-card .patient-details-actions .pill-btn { width: 100%; }
+    .patient-mobile-actions { flex-direction: column; }
+    .patient-mobile-actions .pill-btn { width: 100%; }
   }
   @media (prefers-reduced-motion: reduce) {
     .patient-details { animation: none; }

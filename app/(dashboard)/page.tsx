@@ -204,58 +204,16 @@ export default function DashboardPage() {
                 <p style={{ color: 'var(--muted)', fontSize: 'var(--text-sm)', marginBottom: 'var(--space-1)' }}>
                   {getGreeting()}
                 </p>
-                <h1 style={{ fontSize: 'var(--text-3xl)', fontWeight: 700 }}>{displayName}</h1>
+                <h1 style={{ overflowWrap: 'anywhere', fontSize: 'var(--text-3xl)', fontWeight: 700 }}>{displayName}</h1>
               </div>
               <StarBadge className="animate-scaleIn" style={{ animationDelay: '100ms' }} value={progress.totalStars} />
             </div>
 
-            {/* Action row: wraps cleanly on small screens */}
-            <div className="flex items-center gap-2 flex-wrap mt-4">
-              {user ? (
-                <>
-                  {isAdmin && (
-                    <Link href="/admin" className="pill-btn pill-btn-primary">
-                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                        <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
-                      </svg>
-                      Admin
-                    </Link>
-                  )}
-                  <Link href="/dashboard" className="pill-btn pill-btn-outline">
-                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                      <path d="M3 3v18h18" />
-                      <path d="M7 16l4-8 4 4 4-12" />
-                    </svg>
-                    Dashboard
-                  </Link>
-                  <button
-                    onClick={async () => {
-                      const supabase = createClient();
-                      await supabase.auth.signOut();
-                      router.push('/login');
-                      router.refresh();
-                    }}
-                    className="pill-btn pill-btn-ghost"
-                    style={{ marginLeft: 'auto' }}
-                  >
-                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                      <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
-                      <path d="M16 17l5-5-5-5" />
-                      <path d="M21 12H9" />
-                    </svg>
-                    Sign Out
-                  </button>
-                </>
-              ) : (
-                <>
-                  <Link href="/login" className="pill-btn pill-btn-outline">
-                    Sign In
-                  </Link>
-                  <Link href="/signup" className="pill-btn pill-btn-primary">
-                    Sign Up
-                  </Link>
-                </>
-              )}
+            <div className="garden-actions">
+              <Link href="/levels" className="btn btn-primary">
+                Choose an exercise <span aria-hidden="true">→</span>
+              </Link>
+              {isAdmin && <Link href="/admin" className="pill-btn pill-btn-outline">Admin</Link>}
             </div>
           </div>
         </header>
@@ -404,43 +362,9 @@ export default function DashboardPage() {
           </div>
         </section>
 
-        {/* Begin Session Button */}
-        <section className="px-6 py-8 animate-fadeInUp" style={{ animationDelay: '400ms' }}>
-          <div className="max-w-2xl mx-auto">
-            <Link href="/levels" className="btn btn-primary w-full text-center flex items-center justify-center gap-2">
-              Begin today&apos;s session
-              <svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="2">
-                <path d="M5 10h10M10 5l5 5-5 5" />
-              </svg>
-            </Link>
-          </div>
-        </section>
       </main>
 
-      {/* Bottom Navigation */}
-      <nav className="bottom-nav">
-        <Link href="/" className="nav-item active">
-          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-            <path d="M8 19a4 4 0 0 1-2.24-7.32A3.5 3.5 0 0 1 9 6.03V6a3 3 0 1 1 6 0v.04a3.5 3.5 0 0 1 3.24 5.65A4 4 0 0 1 16 19Z" />
-            <path d="M12 19v3" />
-          </svg>
-          <span>Garden</span>
-        </Link>
-        <Link href="/progress" className="nav-item">
-          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-            <path d="M3 3v18h18" />
-            <path d="M7 16l4-8 4 4 4-12" />
-          </svg>
-          <span>Progress</span>
-        </Link>
-        <Link href="/profile" className="nav-item">
-          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-            <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" />
-            <circle cx="12" cy="7" r="4" />
-          </svg>
-          <span>Profile</span>
-        </Link>
-      </nav>
+
     </>
   );
 }
@@ -448,7 +372,7 @@ export default function DashboardPage() {
 function ViewToggle({ view, onChange }: { view: HomeView; onChange: (view: HomeView) => void }) {
   return (
     <div
-      role="tablist"
+      role="group"
       aria-label="Growth view"
       style={{
         position: 'relative',
@@ -473,14 +397,13 @@ function ViewToggle({ view, onChange }: { view: HomeView; onChange: (view: HomeV
           background: 'linear-gradient(135deg, var(--primary), #6B8F7A)',
           boxShadow: '0 2px 8px rgba(74, 107, 90, 0.35)',
           transform: view === 'garden' ? 'translateX(100%)' : 'translateX(0)',
-          transition: 'transform var(--dur-base) var(--ease-grow)',
+          transition: 'transform var(--dur-base) var(--ease-out)',
         }}
       />
       {(['tree', 'garden'] as const).map((tab) => (
         <button
           key={tab}
-          role="tab"
-          aria-selected={view === tab}
+          aria-pressed={view === tab}
           onClick={() => onChange(tab)}
           style={{
             position: 'relative',
@@ -490,6 +413,7 @@ function ViewToggle({ view, onChange }: { view: HomeView; onChange: (view: HomeV
             justifyContent: 'center',
             gap: '6px',
             minWidth: '112px',
+            minHeight: '48px',
             padding: 'var(--space-2) var(--space-4)',
             borderRadius: 'var(--radius-full)',
             fontSize: 'var(--text-sm)',

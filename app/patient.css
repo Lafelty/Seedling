@@ -1,0 +1,96 @@
+/* Patient surfaces use the existing garden tokens and a shared touch-target scale. */
+:root { --patient-wash: #edf2ee; }
+.patient-nav { position: fixed; inset: auto 0 0; z-index: var(--z-sticky); background: var(--surface); border-top: 1px solid var(--border); padding: 8px 8px calc(8px + env(safe-area-inset-bottom)); }
+.patient-nav-inner { display: flex; max-width: 640px; margin: auto; }
+.patient-nav-link { flex: 1; min-width: 48px; min-height: 56px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; border-radius: 8px; color: var(--muted); font-size: var(--text-xs); font-weight: 600; text-decoration: none; transition: background 180ms ease-out, color 180ms ease-out; }
+.patient-nav-link[aria-current="page"] { color: var(--primary); background: var(--patient-wash); }
+body:has(> .patient-nav) main { padding-bottom: calc(112px + env(safe-area-inset-bottom)); }
+body:has(> .patient-nav) .pill-btn { min-height: 48px; }
+.patient-heading { margin-bottom: 24px; }
+.patient-heading h1, .patient-title { font-size: clamp(2rem, 4vw, 2.5rem); color: var(--primary); overflow-wrap: anywhere; }
+.patient-heading p { margin-top: 8px; color: var(--muted); }
+.garden-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; margin-top: 24px; }
+.garden-actions > .btn { flex: 1; justify-content: space-between; }
+.progress-tabs { display: flex; gap: 24px; border-bottom: 1px solid var(--border); margin: 0 0 32px; }
+.progress-tabs a { min-width: 80px; min-height: 48px; display: grid; place-items: center; color: var(--muted); border-bottom: 3px solid transparent; font-weight: 600; text-decoration: none; }
+.progress-tabs a[aria-current="page"] { color: var(--primary); border-bottom-color: var(--primary); }
+.patient-dialog { --bg: #faf9f7; --surface: #fff; --ink: #2d2d2d; --muted: #606a63; --primary: #4a6b5a; --border: #e8e8e8; color: var(--ink); background: var(--surface); border: 0; border-radius: 16px; width: min(480px, calc(100% - 32px)); max-height: calc(100dvh - 32px); margin: auto; padding: 24px; overflow-y: auto; overscroll-behavior: contain; }
+.patient-dialog::backdrop { background: rgb(15 27 21 / 72%); }
+.patient-dialog :focus-visible { outline: 2px solid var(--primary); outline-offset: 3px; }
+.patient-dialog h2 { font-size: var(--text-2xl); margin: 0 0 16px; }
+.patient-dialog p + p { margin-top: 12px; }
+.dialog-actions { display: flex; flex-direction: column; gap: 12px; margin-top: 24px; }
+.btn-secondary { color: var(--primary); background: var(--patient-wash); }
+.exercise-dialog { width: min(560px, calc(100% - 32px)); padding: 0; }
+.exercise-dialog .card { border: 0; }
+.exercise-dialog .card > div:last-child { flex-wrap: wrap; }
+.calendar-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-bottom: 24px; }
+.calendar-heading h2 { font-size: var(--text-xl); }
+.calendar-compact { display: none; }
+.calendar-compact label { display: block; font-weight: 600; margin-bottom: 8px; }
+.calendar-compact select { width: 100%; min-height: 52px; padding: 12px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); color: var(--ink); font-size: 16px; }
+.calendar-grid button { min-height: 48px; }
+.progress-summary { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; margin-bottom: 32px; padding: 0 0 24px; border-bottom: 1px solid var(--border); }
+.progress-summary dt { font-size: 14px; color: var(--muted); margin-bottom: 8px; }
+.progress-summary dd { font-size: clamp(18px, 3vw, 24px); color: var(--primary); font-weight: 600; font-variant-numeric: tabular-nums; }
+.avatar-dialog { width: min(428px, calc(100% - 32px)); }
+.profile-page p, .profile-email { overflow-wrap: anywhere; }
+.profile-page input::placeholder { color: var(--muted); opacity: 1; }
+.guardian-status { border-top: 1px solid var(--border); padding: 24px 0; }
+.guardian-status h2 { font-size: var(--text-xl); }
+.account-actions { margin-top: 32px; padding-top: 24px; border-top: 1px solid var(--border); }
+.session-prep { max-width: 960px; padding: 24px 24px 48px; margin: auto; }
+.session-prep > .pill-btn { margin: 0 0 24px -12px; min-height: 48px; }
+.session-prep-layout { display: grid; grid-template-columns: 1fr 1fr; gap: 48px; }
+.session-prep-layout h2 { font-size: var(--text-2xl); margin-bottom: 16px; }
+.session-prep-layout p { margin-bottom: 16px; }
+.prep-target { color: var(--primary); font-weight: 600; }
+.prep-note { color: var(--muted); font-size: var(--text-sm); line-height: 1.65; margin-top: 12px; }
+.prep-checklist { list-style: decimal; padding-left: 24px; line-height: 1.65; }
+.prep-checklist li { padding-left: 4px; margin-bottom: 16px; }
+.tracking-help { margin: 16px 0; border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); }
+.tracking-help summary { min-height: 48px; padding: 14px 0; font-weight: 600; cursor: pointer; font-size: var(--text-sm); }
+.tracking-help p { font-size: var(--text-sm); line-height: 1.65; margin: 0 0 16px; }
+.exercise-demo { margin-top: 24px; }
+.exercise-demo img { display: block; width: 100%; height: auto; aspect-ratio: 4/3; object-fit: contain; border-radius: 12px; background: var(--patient-wash); }
+.exercise-demo figcaption { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin-top: 8px; font-size: var(--text-sm); }
+.exercise-demo button { min-width: 48px; min-height: 48px; }
+.session-message { min-height: 100dvh; display: flex; align-items: center; justify-content: center; padding: 32px 0; background: var(--bg); }
+.session-reward { min-height: 100dvh; display: flex; justify-content: center; align-items: safe center; padding-bottom: calc(112px + env(safe-area-inset-bottom)); }
+.session-reward > div { width: 100%; }
+.session-camera { --session-panel: #172b20; --session-caption: #d2ded6; --session-control-panel: #2c4837; --session-action-bg: #c7e6cd; --session-action-ink: #173723; position: fixed; inset: 0; height: 100dvh; overflow: hidden; background: #14251c; }
+.session-ui { position: relative; z-index: var(--z-raised); display: flex; flex-direction: column; height: 100%; padding: max(16px, env(safe-area-inset-top)) 16px max(16px, env(safe-area-inset-bottom)); pointer-events: none; }
+.session-toolbar { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; }
+.session-reps { display: flex; align-items: center; gap: 8px; background: var(--session-panel); color: #fff; border-radius: 12px; padding: 10px 16px; font-variant-numeric: tabular-nums; line-height: 1.2; }
+.session-reps > span:first-child { font-size: 28px; font-weight: 600; }
+.session-reps small { display: block; font-size: 12px; color: var(--session-caption); margin-top: 4px; }
+.session-actions { display: flex; gap: 8px; }
+.session-control { display: inline-flex; align-items: center; justify-content: center; min-width: 48px; min-height: 48px; padding: 12px; border: 0; border-radius: 12px; color: #fff; background: var(--session-panel); font-weight: 600; pointer-events: auto; cursor: pointer; }
+.session-guidance { pointer-events: auto; margin: auto auto 0; padding: 20px; width: min(100%, 560px); border-radius: 16px; background: var(--session-panel); color: #fff; }
+.session-cue-row { display: flex; align-items: flex-start; gap: 8px; }
+.session-cue { flex: 1; font-size: clamp(20px, 3vw, 28px); font-weight: 600; line-height: 1.4; }
+.session-speaker { flex-shrink: 0; margin: -8px -8px 0 0; background: var(--session-control-panel); }
+.session-caption { color: var(--session-caption); font-size: 14px; margin-top: 8px; }
+.session-hold { display: flex; align-items: center; gap: 12px; margin-top: 16px; font-size: 14px; }
+.session-hold progress { width: 100%; height: 8px; flex: 1; accent-color: #b1d9b8; }
+.session-ready h1 { color: #fff; font-size: 24px; margin-bottom: 8px; }
+.session-primary { width: 100%; margin-top: 16px; background: var(--session-action-bg); color: var(--session-action-ink); }
+.session-center { position: absolute; inset: 100px 16px 120px; display: grid; place-items: center; text-align: center; color: #fff; }
+.session-center p { padding: 20px 24px; border-radius: 16px; background: var(--session-panel); }
+.session-countdown { display: block; font-size: 64px; font-variant-numeric: tabular-nums; }
+@media (max-width: 479px) {
+  .calendar-weekdays, .calendar-grid, .calendar-legend { display: none !important; }
+  .calendar-compact { display: block; }
+}
+@media (max-width: 680px) {
+  .session-prep { padding: 16px 20px 32px; }
+  .session-prep-layout { grid-template-columns: 1fr; gap: 32px; }
+  .session-prep-layout > section + section { padding-top: 24px; border-top: 1px solid var(--border); }
+}
+@media (max-height: 500px) and (orientation: landscape) {
+  .session-guidance { max-width: 420px; padding: 12px 16px; }
+  .session-ready { margin-right: 0; }
+  .session-ready h1 { font-size: 20px; }
+  .session-ready .session-caption { display: none; }
+  .session-cue { font-size: 20px; }
+}

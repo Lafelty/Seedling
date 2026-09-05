@@ -38,8 +38,7 @@ export function ProfileAvatar({
   style,
 }: ProfileAvatarProps) {
   const inputRef = useRef<HTMLInputElement>(null)
-  // The button sits on the rim, so it scales with the circle rather than
-  // swallowing a small one.
+  // The whole avatar is the touch target; the small camera is just a visual cue.
   const buttonSize = Math.max(26, Math.round(size * 0.34))
 
   return (
@@ -109,21 +108,17 @@ export function ProfileAvatar({
             aria-label={url ? 'Change profile picture' : 'Add a profile picture'}
             style={{
               position: 'absolute',
-              right: -2,
-              bottom: -2,
-              width: buttonSize,
-              height: buttonSize,
-              display: 'grid',
-              placeItems: 'center',
+              inset: 0,
+              width: Math.max(48, size),
+              height: Math.max(48, size),
               borderRadius: 'var(--radius-full)',
-              background: 'var(--primary)',
-              color: 'white',
-              border: '2px solid var(--surface)',
-              boxShadow: '0 2px 6px rgba(38, 48, 42, 0.24)',
+              background: 'transparent',
+              border: 0,
               cursor: uploading ? 'wait' : 'pointer',
               padding: 0,
             }}
           >
+            <span aria-hidden="true" style={{ position: 'absolute', right: -2, bottom: -2, width: buttonSize, height: buttonSize, display: 'grid', placeItems: 'center', borderRadius: '50%', background: 'var(--primary)', color: 'white', border: '2px solid var(--surface)' }}>
             <svg
               width={buttonSize * 0.52}
               height={buttonSize * 0.52}
@@ -138,6 +133,7 @@ export function ProfileAvatar({
               <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z" />
               <circle cx="12" cy="13" r="4" />
             </svg>
+            </span>
           </button>
         </>
       )}

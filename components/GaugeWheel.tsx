@@ -193,7 +193,7 @@ export default function GaugeWheel({
       >
         <span
           style={{
-            fontFamily: 'var(--font-display)',
+            fontFamily: 'var(--font-body)',
             fontSize: size * 0.2,
             lineHeight: 1,
             fontWeight: 600,

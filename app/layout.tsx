@@ -1,6 +1,8 @@
 import type { Metadata } from "next";
 import { Inter, DM_Serif_Display } from "next/font/google";
 import "./globals.css";
+import "./patient.css";
+import PatientNavigation from "@/components/PatientNavigation";
 
 const inter = Inter({
   subsets: ["latin"],
@@ -28,7 +30,7 @@ export default function RootLayout({
 }) {
   return (
     <html lang="en" className={`${inter.variable} ${dmSerif.variable}`}>
-      <body>{children}</body>
+      <body>{children}<PatientNavigation /></body>
     </html>
   );
 }

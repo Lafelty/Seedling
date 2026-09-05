@@ -9,6 +9,7 @@
     "start": "next start",
     "lint": "eslint app components lib next.config.js",
     "test": "vitest run",
+    "test:e2e": "node tests/e2e/patient-experience.cjs",
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit"
   },
@@ -37,6 +38,8 @@
     "typescript": "^6.0.3"
   },
   "devDependencies": {
+    "@axe-core/playwright": "^4.13.0",
+    "@playwright/test": "^1.63.0",
     "@types/canvas-confetti": "^1.9.0",
     "vitest": "^3.2.7"
   }

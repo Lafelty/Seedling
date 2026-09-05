@@ -1,6 +1,8 @@
 'use client'
 
 import Link from 'next/link'
+import ModalDialog from '@/components/ModalDialog'
+import { PatientNav } from '@/components/PatientNavigation'
 import { useEffect, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { SessionClock } from '@/lib/sessionClock'
@@ -36,7 +38,7 @@ import {
 } from '@/lib/trajectory'
 import type { ExerciseRow } from '@/lib/supabase/types'
 
-type SessionState = 'loading' | 'ready' | 'starting' | 'countdown' | 'active' | 'paused' | 'completed'
+type SessionState = 'preparing' | 'loading' | 'ready' | 'starting' | 'countdown' | 'active' | 'paused' | 'completed'
 type PostureFeedback = 'good' | 'adjust' | 'analyzing'
 
 interface RepData {
@@ -148,9 +150,6 @@ export default function SessionPage() {
   const [guidePose, setGuidePose] = useState<Pose | null>(null)
   const [shouldersVisible, setShouldersVisible] = useState(true)
   const [hasSpoken, setHasSpoken] = useState(false)
-  const [instructionBoxPos, setInstructionBoxPos] = useState({ x: 0, y: 0 })
-  const [isDraggingBox, setIsDraggingBox] = useState(false)
-  const [boxDragStart, setBoxDragStart] = useState({ x: 0, y: 0 })
   const [isSpeaking, setIsSpeaking] = useState(false)
   const [reward, setReward] = useState<SessionReward | null>(null)
 
@@ -222,7 +221,7 @@ export default function SessionPage() {
             return
           }
           setExercise(data as Exercise)
-          setCameraEnabled(true)
+          setSessionState('preparing')
           // Ghost skeleton: the therapist's recorded target pose, shown behind
           // the patient's live skeleton as a visual goal.
           setGhostPose(pickReferencePose(data.recorded_paths, data.pose_criteria))
@@ -243,7 +242,6 @@ export default function SessionPage() {
           trajectoryRef.current = cyclic
             ? createTrajectoryTracker(data.recorded_paths, data.pose_criteria)
             : null
-          console.log('✅ Loaded exercise:', data.name)
         }
       } catch (err) {
         if (cancelled) return
@@ -303,7 +301,7 @@ export default function SessionPage() {
     if ('speechSynthesis' in window) {
       window.speechSynthesis.cancel() // Cancel any ongoing speech
       window.speechSynthesis.resume() // Chrome can leave the engine paused
-      const utterance = new SpeechSynthesisUtterance(text)
+      const utterance = new SpeechSynthesisUtterance(text.replaceAll('_', ' '))
       utterance.lang = TTS_LANG
       if (ttsVoiceRef.current) utterance.voice = ttsVoiceRef.current
       utterance.rate = 0.9
@@ -314,47 +312,6 @@ export default function SessionPage() {
       window.speechSynthesis.speak(utterance)
     }
   }
-
-  // Handle instruction box dragging
-  useEffect(() => {
-    if (!isDraggingBox) return
-
-    const handleMouseMove = (e: MouseEvent) => {
-      const dx = e.clientX - boxDragStart.x
-      const dy = e.clientY - boxDragStart.y
-      setInstructionBoxPos({ x: instructionBoxPos.x + dx, y: instructionBoxPos.y + dy })
-      setBoxDragStart({ x: e.clientX, y: e.clientY })
-    }
-
-    const handleTouchMove = (e: TouchEvent) => {
-      e.preventDefault()
-      const touch = e.touches[0]
-      const dx = touch.clientX - boxDragStart.x
-      const dy = touch.clientY - boxDragStart.y
-      setInstructionBoxPos({ x: instructionBoxPos.x + dx, y: instructionBoxPos.y + dy })
-      setBoxDragStart({ x: touch.clientX, y: touch.clientY })
-    }
-
-    const handleMouseUp = () => {
-      setIsDraggingBox(false)
-    }
-
-    const handleTouchEnd = () => {
-      setIsDraggingBox(false)
-    }
-
-    document.addEventListener('mousemove', handleMouseMove)
-    document.addEventListener('mouseup', handleMouseUp)
-    document.addEventListener('touchmove', handleTouchMove, { passive: false })
-    document.addEventListener('touchend', handleTouchEnd)
-
-    return () => {
-      document.removeEventListener('mousemove', handleMouseMove)
-      document.removeEventListener('mouseup', handleMouseUp)
-      document.removeEventListener('touchmove', handleTouchMove)
-      document.removeEventListener('touchend', handleTouchEnd)
-    }
-  }, [isDraggingBox, boxDragStart, instructionBoxPos])
 
   // Setup camera and pose detector
   useEffect(() => {
@@ -623,7 +580,6 @@ export default function SessionPage() {
 
       if (rep.justCompleted) {
         const newCount = rep.repCount
-        console.log(`✅ Rep ${newCount} completed!`)
         // DTW path match against the therapist's demo curve is the best form
         // signal when available. Otherwise: a completed cycle is good form by
         // definition; hold-only reps keep scoring by the form at the moment
@@ -883,11 +839,6 @@ export default function SessionPage() {
     }
   }
 
-  function handleExitWithoutSave() {
-    setCameraEnabled(false)
-    router.push('/')
-  }
-
   useEffect(() => {
     const onVisibilityChange = () => {
       if (document.hidden && (sessionState === 'active' || sessionState === 'countdown')) handlePause()
@@ -907,21 +858,26 @@ export default function SessionPage() {
     }
   }, [sessionState, retained])
 
-  const feedbackColor = {
-    good: '#22c55e',    // correct
-    adjust: '#f97316',  // almost correct
-    analyzing: '#CBD5D1', // tracking is not yet confident; this is not a form error
-  }
+  const feedbackColor = { good: '#22c55e', adjust: '#f97316', analyzing: '#CBD5D1' }
+  const currentCue = !shouldersVisible
+    ? mode === 'hand' ? 'Move your hand fully into frame' : 'Step back so your shoulders are visible'
+    : holdMissed ? 'Hold a little longer next time' : feedbackMessage.replaceAll('_', ' ')
+  const holdSeconds = (exercise?.hold_duration_ms ?? 500) / 1000
+  const cyclic = exercise ? isCyclicExercise(exercise.exercise_type, exercise.pose_criteria) : false
+  const repInstruction = cyclic
+    ? `Move to the target and return to the starting position to count one repetition.${holdSeconds > 0 ? ` The ${holdSeconds}-second hold is a guide, not required for counting.` : ''}`
+    : `Hold the target position for ${holdSeconds} seconds to count one repetition.`
 
   if (cameraError) {
     return (
-      <div className="fixed inset-0 flex items-center justify-center" style={{ background: 'var(--bg)' }}>
+      <div className="session-message">
         <div className="text-center max-w-md px-8">
-          <p className="text-xl mb-6" style={{ color: 'var(--ink)' }}>{cameraError}</p>
+          <h1 className="text-2xl mb-4">Let’s reconnect</h1>
+          <p role="alert" className="mb-6">{cameraError}</p>
           <div className="flex flex-col gap-4">
             <button
               onClick={() => {
-                if (!sessionIdRef.current) { window.location.reload(); return }
+                if (!exercise) { window.location.reload(); return }
                 setCameraError(null)
                 setSessionState('loading')
                 setCameraEnabled(true)
@@ -941,11 +897,11 @@ export default function SessionPage() {
                 border: '2px solid var(--border)',
               }}
             >
-              Return to Dashboard
+              Return to Garden
             </button>
           </div>
           <p className="text-sm mt-6" style={{ color: 'var(--muted)' }}>
-            Chrome: Click 🔒 in address bar → Camera → Allow
+            If camera access is blocked, allow it in your browser’s site permissions, then retry.
           </p>
         </div>
       </div>
@@ -1010,7 +966,7 @@ export default function SessionPage() {
   if (sessionState === 'completed') {
     return (
       <>
-        <div className="fixed inset-0 flex items-center justify-center pb-24 overflow-y-auto" style={{ background: 'var(--bg)' }}>
+        <main className="session-reward" style={{ background: 'var(--bg)' }}>
           <div className="text-center max-w-md px-8 py-8">
             {/* Gold star medal */}
             <div className="animate-scaleIn mb-6" style={{ display: 'inline-block' }}>
@@ -1043,7 +999,7 @@ export default function SessionPage() {
             <div className="flex justify-center gap-3 mb-6 animate-fadeInUp" style={{ animationDelay: '200ms' }}>
               <StatChip value={String(reward?.reps ?? TARGET_REPS)} label="reps" />
               <StatChip value={formatDuration(reward?.durationSeconds ?? 0)} label="time" />
-              <StatChip value={`${reward?.streak ?? 1}🔥`} label="day streak" />
+              <StatChip value={String(reward?.streak ?? 1)} label="day streak" />
             </div>
 
             {/* Streak milestone */}
@@ -1119,25 +1075,49 @@ export default function SessionPage() {
               </button>
             </div>
           </div>
-        </div>
+        </main>
 
-        {/* Bottom Navigation */}
-        <nav className="bottom-nav">
-          <Link href="/" className="nav-item active">
-            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M8 19a4 4 0 0 1-2.24-7.32A3.5 3.5 0 0 1 9 6.03V6a3 3 0 1 1 6 0v.04a3.5 3.5 0 0 1 3.24 5.65A4 4 0 0 1 16 19Z" />
-              <path d="M12 19v3" />
-            </svg>
-            <span>Garden</span>
-          </Link>
-          <Link href="/progress" className="nav-item">
-            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-              <path d="M3 3v18h18" />
-              <path d="M7 16l4-8 4 4 4-12" />
-            </svg>
-            <span>Progress</span>
-          </Link>
-        </nav>
+        <PatientNav active="/" />
+      </>
+    )
+  }
+
+  if (sessionState === 'preparing' && exercise) {
+    return (
+      <>
+      <main className="session-prep">
+        <Link href="/levels" className="pill-btn pill-btn-ghost">← Exercises</Link>
+        <header className="patient-heading">
+          <h1>{exercise.name}</h1>
+          <p>Get comfortable before you begin.</p>
+        </header>
+        <div className="session-prep-layout">
+          <section aria-labelledby="exercise-instructions">
+            <h2 id="exercise-instructions">Your exercise</h2>
+            <p className="prep-target">{TARGET_REPS} repetitions{holdSeconds > 0 ? ` · ${holdSeconds}-second hold` : ''}</p>
+            {exercise.description && <p>{exercise.description}</p>}
+            <p className="prep-note">{repInstruction}</p>
+            <ExerciseDemo frames={exercise.demo_images ?? []} />
+          </section>
+          <section aria-labelledby="camera-setup">
+            <h2 id="camera-setup">Set up your camera</h2>
+            <ol className="prep-checklist">
+              <li>Place your device on a steady surface with enough room to move.</li>
+              <li>{mode === 'hand' ? 'Keep your whole hand in view, with your palm facing the camera.' : 'Position the camera so your upper body and the joints used in this exercise stay in view.'}</li>
+              <li>Face the light. You’ll check your camera preview before starting.</li>
+            </ol>
+            <details className="tracking-help">
+              <summary>How the on-screen guide works</summary>
+              <p>The outline is a movement reference. Follow the written cue as you move; the repetition counter updates when a movement meets this exercise’s settings.</p>
+              <p>Tracking feedback is not a diagnosis or a clinical assessment. Follow your therapist’s instructions.</p>
+            </details>
+            <p className="prep-note">Video is processed on your device, not recorded or uploaded. Exercise results are saved to your account.</p>
+            <button className="btn btn-primary w-full" onClick={() => { setSessionState('loading'); setCameraEnabled(true) }}>Enable camera</button>
+            <p className="prep-note text-center">The session starts only when you tap Start session.</p>
+          </section>
+        </div>
+      </main>
+      <PatientNav active="/levels" />
       </>
     )
   }
@@ -1151,7 +1131,7 @@ export default function SessionPage() {
   )
 
   return (
-    <div className="fixed inset-0 overflow-hidden session">
+    <main className="session-camera session" aria-label="Exercise session">
 
       {/* Camera feed */}
       <video
@@ -1160,6 +1140,7 @@ export default function SessionPage() {
         className="absolute inset-0 w-full h-full object-cover"
         playsInline
         muted
+        aria-label="Mirrored camera preview"
         style={{ transform: 'scaleX(-1)' }}
       />
 
@@ -1289,563 +1270,100 @@ export default function SessionPage() {
         </svg>
       )}
 
-      {/* Ready overlay — tap unlocks mobile audio, then countdown starts */}
-      {sessionState === 'loading' && (
-        <div className="absolute inset-0 flex items-center justify-center z-20 px-8 text-center" style={{ background: 'rgba(0,0,0,0.7)', color: 'white' }}>
-          <p role="status">Starting camera and movement tracking…</p>
-        </div>
-      )}
-      {(sessionState === 'ready' || sessionState === 'starting') && (
-        <div className="gx-overlay absolute inset-0 flex items-center justify-center z-20" style={{ background: 'rgba(0,0,0,0.7)', backdropFilter: 'blur(8px)' }}>
-          <div className="gx-panel text-center px-8" style={{ width: '100%', maxWidth: '360px' }}>
-            <p className="font-display text-3xl mb-3" style={{ color: 'white', fontWeight: 600 }}>
-              Ready?
-            </p>
-            <p className="mb-6" style={{ color: 'rgba(255,255,255,0.75)', fontSize: 'var(--text-base)' }}>
-              {mode === 'hand'
-                ? 'Hold your hand up so it fills the frame, palm facing the camera'
-                : 'Place your phone where your upper body is in frame'}
-            </p>
-            <ExerciseDemo frames={exercise?.demo_images ?? []} />
-            {startError && <p role="alert" className="mb-4" style={{ color: 'white' }}>{startError}</p>}
-            <button
-              onClick={() => void startSession()}
-              disabled={sessionState === 'starting'}
-              className="btn btn-primary"
-              style={{ fontSize: 'var(--text-lg)', padding: 'var(--space-4) var(--space-12)' }}
-            >
-              {sessionState === 'starting' ? 'Preparing session…' : 'Start'}
+      <div className="session-ui">
+        <header className="session-toolbar">
+          <p className="session-reps" aria-live="polite" aria-atomic="true">
+            <span data-completed={repJustCompleted}>{repCount}</span><span> / {TARGET_REPS}<small>repetitions</small></span>
+          </p>
+          <div className="session-actions">
+            {(sessionState === 'active' || sessionState === 'countdown' || sessionState === 'paused') && (
+              <button className="session-control" onClick={handlePause} aria-label="Pause session">Pause</button>
+            )}
+            <button className="session-control" onClick={handleExit} disabled={sessionState === 'starting'} aria-label="Exit session">Exit</button>
+          </div>
+        </header>
+
+        {sessionState === 'loading' && <div className="session-center"><p role="status">Starting camera and movement tracking…</p></div>}
+
+        {sessionState === 'countdown' && <div className="session-center">
+          <p role="status" aria-atomic="true">Starting in <strong className="session-countdown">{countdown}</strong></p>
+        </div>}
+
+        {(sessionState === 'ready' || sessionState === 'starting') && (
+          <section className="session-guidance session-ready" aria-labelledby="camera-ready">
+            <h1 id="camera-ready">Check your camera view</h1>
+            <p>{mode === 'hand' ? 'Can you see your whole hand clearly?' : 'Can you see your upper body and the joints you’ll move?'}</p>
+            <p className="session-caption">{isDetecting ? 'Tracking is ready.' : 'Preparing tracking.'} Move into position, then start.</p>
+            {startError && <p role="alert">{startError}</p>}
+            <button onClick={() => void startSession()} disabled={sessionState === 'starting'} className="btn session-primary">
+              {sessionState === 'starting' ? 'Preparing session…' : 'Start session'}
             </button>
-          </div>
-        </div>
-      )}
+          </section>
+        )}
 
-      {/* Countdown overlay */}
-      {sessionState === 'countdown' && countdown > 0 && (
-        <div className="gx-overlay absolute inset-0 flex items-center justify-center z-20" style={{ background: 'rgba(0,0,0,0.7)', backdropFilter: 'blur(8px)' }}>
-          <div className="gx-panel text-center px-8">
-            <p style={{ color: 'var(--muted)', fontSize: 'var(--text-lg)' }} className="mb-4 font-display">
-              Starting in
-            </p>
-            <p key={countdown} className="animate-countdownPop text-8xl font-display font-bold mb-8" style={{ color: 'var(--primary)' }}>
-              {countdown}
-            </p>
-            <div style={{
-              background: 'rgba(255,255,255,0.08)',
-              border: '1px solid rgba(255,255,255,0.15)',
-              borderRadius: 'var(--radius-xl)',
-              padding: 'var(--space-4) var(--space-6)',
-              maxWidth: '280px',
-              margin: '0 auto',
-            }}>
-              <p style={{ color: 'rgba(255,255,255,0.75)', fontSize: 'var(--text-sm)', lineHeight: 1.5 }}>
-                Hold each position for <strong style={{ color: 'white' }}>{((exercise?.hold_duration_ms ?? 500) / 1000).toFixed(1)} seconds</strong> to count a rep
-              </p>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Shoulders-out-of-frame warning */}
-      {sessionState === 'active' && !shouldersVisible && (
-        <div
-          className="absolute top-24 left-0 right-0 flex justify-center z-10 pointer-events-none"
-          style={{ padding: '0 var(--space-6)' }}
-        >
-          <div style={{
-            background: 'rgba(0,0,0,0.85)',
-            backdropFilter: 'blur(8px)',
-            border: '2px solid #f97316',
-            borderRadius: 'var(--radius-xl)',
-            padding: 'var(--space-4) var(--space-6)',
-            display: 'flex',
-            alignItems: 'center',
-            gap: 'var(--space-3)',
-          }}>
-            <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="#f97316" strokeWidth="2.5" style={{ flexShrink: 0 }}>
-              <circle cx="12" cy="12" r="10" />
-              <line x1="12" y1="8" x2="12" y2="12" />
-              <line x1="12" y1="16" x2="12.01" y2="16" />
-            </svg>
-            <span style={{ color: 'white', fontSize: 'var(--text-xl)', fontWeight: 700, lineHeight: 1.3 }}>
-              {mode === 'hand'
-                ? 'Move your hand fully into frame'
-                : 'Step back so your shoulders are visible'}
-            </span>
-          </div>
-        </div>
-      )}
-
-      {/* Exit confirmation prompt */}
-      {showExitPrompt && (
-        <div className="gx-overlay absolute inset-0 flex items-center justify-center z-30" style={{ background: 'rgba(0,0,0,0.85)', backdropFilter: 'blur(12px)' }}>
-          <div className="gx-panel bg-[var(--surface)] p-8 rounded-2xl max-w-md mx-4 text-center">
-            <h3 className="font-display text-2xl mb-4" style={{ color: 'var(--ink)', fontWeight: 600 }}>
-              End session?
-            </h3>
-            <p style={{ color: 'var(--muted)' }} className="mb-2">
-              You&apos;ve completed {repCount} of {TARGET_REPS} reps
-            </p>
-            <p className="text-sm mb-6" style={{ color: 'var(--muted)' }}>
-              Choose Save and Exit to keep these repetitions. A star is earned only after completing the full session.
-            </p>
-            <div className="flex flex-col gap-3">
-              <button
-                onClick={handleExitWithSave}
-                className="btn btn-primary"
-              >
-                Save & Exit
-              </button>
-              <button
-                onClick={() => setShowExitPrompt(false)}
-                style={{
-                  padding: 'var(--space-3) var(--space-6)',
-                  background: 'transparent',
-                  color: 'var(--primary)',
-                  border: '2px solid var(--primary)',
-                  borderRadius: 'var(--radius-xl)',
-                  fontFamily: 'var(--font-body)',
-                  fontWeight: 600,
-                  fontSize: 'var(--text-base)',
-                  minHeight: '56px',
-                  cursor: 'pointer',
-                }}
-              >
-                Keep Going
+        {sessionState === 'active' && (
+          <section className="session-guidance" aria-label="Movement guidance">
+            <div className="session-cue-row">
+              <p className="session-cue" role="status" aria-live="polite">{currentCue}</p>
+              <button className="session-control session-speaker" onClick={() => speak(currentCue)} aria-label="Read instructions aloud" aria-pressed={isSpeaking}>
+                <svg aria-hidden="true" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M11 5 6 9H2v6h4l5 4V5ZM16 8a6 6 0 0 1 0 8M19 5a10 10 0 0 1 0 14" /></svg>
               </button>
             </div>
-          </div>
-        </div>
-      )}
-
-      {/* Paused overlay */}
-      {sessionState === 'paused' && (
-        <div className="gx-overlay absolute inset-0 flex items-center justify-center z-20" style={{ background: 'rgba(0,0,0,0.8)', backdropFilter: 'blur(12px)' }}>
-          <div className="gx-panel text-center max-w-md px-8">
-            <h2 className="font-display text-3xl mb-4" style={{ color: 'white', fontWeight: 600 }}>
-              Paused
-            </h2>
-            <p style={{ color: 'var(--muted)' }} className="mb-2">
-              {repCount} / {TARGET_REPS} reps completed
-            </p>
-            <p className="text-sm mb-8" style={{ color: 'var(--muted)' }}>
-              Take your time
-            </p>
-            <div className="flex flex-col gap-3">
-              <button
-                onClick={handleResume}
-                className="btn btn-primary text-lg"
-              >
-                Resume Session
-              </button>
-              <button
-                onClick={handleExit}
-                style={{ color: 'var(--muted)', padding: 'var(--space-3)', fontSize: 'var(--text-base)' }}
-              >
-                End Session
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* UI Overlay */}
-      <div className="relative z-10 h-full flex flex-col">
-        {/* Top bar */}
-        <div className="flex items-center justify-between p-6">
-          <div className="flex items-center gap-3">
-            <div style={{
-              background: 'rgba(255, 255, 255, 0.9)',
-              backdropFilter: 'blur(8px)',
-              padding: 'var(--space-3) var(--space-6)',
-              borderRadius: 'var(--radius-full)',
-            }}>
-              <p className="font-display" style={{ color: 'var(--ink)' }}>
-                Reps: <span style={{
-                  color: 'var(--primary)',
-                  fontWeight: 600,
-                  display: 'inline-block',
-                  transition: 'transform 200ms var(--ease-out-quart)',
-                  transform: repJustCompleted ? 'scale(1.25)' : 'scale(1)'
-                }}>{repCount}</span> / {TARGET_REPS}
-              </p>
-            </div>
-
-            {/* Live movement ring — fills as the primary joint travels from
-                rest to the target, giving continuous "it's following me"
-                feedback instead of only reacting at the extreme. */}
-            {sessionState === 'active' && movementProgress > 0.02 && (
-              <div style={{
-                background: 'rgba(255, 255, 255, 0.9)',
-                backdropFilter: 'blur(8px)',
-                padding: 'var(--space-2) var(--space-3)',
-                borderRadius: 'var(--radius-full)',
-                display: 'flex',
-                alignItems: 'center',
-                gap: 'var(--space-2)',
-              }}>
-                <svg width="22" height="22" viewBox="0 0 24 24" style={{ transform: 'rotate(-90deg)' }}>
-                  <circle cx="12" cy="12" r="9" fill="none" stroke="var(--border)" strokeWidth="3" />
-                  <circle
-                    cx="12" cy="12" r="9" fill="none"
-                    stroke={movementProgress >= 0.99 ? '#22c55e' : 'var(--primary)'}
-                    strokeWidth="3" strokeLinecap="round"
-                    strokeDasharray={2 * Math.PI * 9}
-                    strokeDashoffset={2 * Math.PI * 9 * (1 - movementProgress)}
-                    style={{ transition: 'stroke-dashoffset 80ms linear, stroke 200ms ease' }}
-                  />
-                </svg>
-                <span className="text-xs" style={{ color: 'var(--muted)' }}>
-                  {Math.round(movementProgress * 100)}%
-                </span>
-              </div>
-            )}
-
-            {/* DTW path match of the last rep — how closely the movement
-                followed the therapist's recorded curve */}
-            {pathScore && (
-              <div style={{
-                background: 'rgba(255, 255, 255, 0.9)',
-                backdropFilter: 'blur(8px)',
-                padding: 'var(--space-2) var(--space-4)',
-                borderRadius: 'var(--radius-full)',
-                display: 'flex',
-                alignItems: 'center',
-                gap: 'var(--space-2)',
-              }}>
-                <div style={{
-                  width: '8px',
-                  height: '8px',
-                  borderRadius: '50%',
-                  background: pathScore.score >= 80 ? '#10b981' : pathScore.score >= 60 ? '#f97316' : '#ef4444',
-                }} />
-                <span className="text-xs" style={{ color: 'var(--muted)' }}>
-                  Path {pathScore.score}%
-                </span>
-              </div>
-            )}
-
-            {/* Detection status indicator */}
-            {isDetecting && (
-              <div style={{
-                background: 'rgba(255, 255, 255, 0.9)',
-                backdropFilter: 'blur(8px)',
-                padding: 'var(--space-2) var(--space-4)',
-                borderRadius: 'var(--radius-full)',
-                display: 'flex',
-                alignItems: 'center',
-                gap: 'var(--space-2)',
-              }}>
-                <div style={{
-                  width: '8px',
-                  height: '8px',
-                  borderRadius: '50%',
-                  background: '#10b981',
-                  animation: 'pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite',
-                }} />
-                <span className="text-xs" style={{ color: 'var(--muted)' }}>AI Active</span>
-              </div>
-            )}
-          </div>
-
-          <div className="flex gap-3">
-            {sessionState === 'active' && (
-              <button
-                onClick={handlePause}
-                style={{
-                  width: '48px',
-                  height: '48px',
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  background: 'rgba(255, 255, 255, 0.9)',
-                  backdropFilter: 'blur(8px)',
-                  borderRadius: '50%',
-                  border: 'none',
-                  cursor: 'pointer',
-                }}
-                aria-label="Pause session"
-              >
-                <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 24 24" style={{ color: 'var(--ink)' }}>
-                  <path d="M6 4h4v16H6V4zm8 0h4v16h-4V4z" />
-                </svg>
-              </button>
-            )}
-
-            <button
-              onClick={handleExit}
-              style={{
-                width: '48px',
-                height: '48px',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                background: 'rgba(255, 255, 255, 0.9)',
-                backdropFilter: 'blur(8px)',
-                borderRadius: '50%',
-                border: 'none',
-                cursor: 'pointer',
-              }}
-              aria-label="Exit session"
-            >
-              <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24" style={{ color: 'var(--ink)' }}>
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-              </svg>
-            </button>
-          </div>
-        </div>
-
-        {/* Center guidance (loading only) */}
-        <div className="flex-1 flex items-center justify-center">
-          {sessionState === 'loading' && (
-            <div style={{
-              background: 'rgba(255, 255, 255, 0.9)',
-              backdropFilter: 'blur(8px)',
-              padding: 'var(--space-6) var(--space-8)',
-              borderRadius: 'var(--radius-xl)',
-            }}>
-              <p className="font-display text-xl" style={{ color: 'var(--ink)' }}>Loading camera...</p>
-            </div>
-          )}
-        </div>
-
-        {/* Bottom instruction */}
-        <div className="p-6 pb-safe">
-          <div style={{
-            background: 'rgba(255, 255, 255, 0.9)',
-            backdropFilter: 'blur(8px)',
-            padding: 'var(--space-4) var(--space-6)',
-            borderRadius: 'var(--radius-xl)',
-            textAlign: 'center',
-            maxWidth: '28rem',
-            margin: '0 auto',
-            position: 'relative',
-            transform: `translate(${instructionBoxPos.x}px, ${instructionBoxPos.y}px)`,
-            cursor: isDraggingBox ? 'grabbing' : 'auto',
-            userSelect: 'none',
-            border: '2px solid var(--border)',
-          }}>
-            {/* Drag handle + speaker button */}
-            <div style={{
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'space-between',
-              marginBottom: 'var(--space-3)',
-              paddingBottom: 'var(--space-2)',
-              borderBottom: '1px solid var(--border)',
-            }}>
-              <div
-                onMouseDown={(e) => {
-                  setIsDraggingBox(true)
-                  setBoxDragStart({ x: e.clientX, y: e.clientY })
-                }}
-                onTouchStart={(e) => {
-                  const touch = e.touches[0]
-                  setIsDraggingBox(true)
-                  setBoxDragStart({ x: touch.clientX, y: touch.clientY })
-                }}
-                style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: 'var(--space-2)',
-                  cursor: 'grab',
-                  flex: 1,
-                }}
-              >
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--muted)" strokeWidth="2">
-                  <circle cx="9" cy="6" r="1" fill="var(--muted)" />
-                  <circle cx="15" cy="6" r="1" fill="var(--muted)" />
-                  <circle cx="9" cy="12" r="1" fill="var(--muted)" />
-                  <circle cx="15" cy="12" r="1" fill="var(--muted)" />
-                  <circle cx="9" cy="18" r="1" fill="var(--muted)" />
-                  <circle cx="15" cy="18" r="1" fill="var(--muted)" />
-                </svg>
-                <span style={{ fontSize: 'var(--text-xs)', color: 'var(--muted)' }}>
-                  Drag to move
-                </span>
-              </div>
-
-              {/* Speaker button */}
-              <button
-                onClick={() => {
-                  const instruction = exercise?.description || 'Follow the instructions on screen'
-                  speak(`${holdMissed ? 'Hold a little longer next time' : feedbackMessage}. ${instruction}`)
-                }}
-                style={{
-                  background: isSpeaking ? 'var(--primary)' : 'transparent',
-                  border: 'none',
-                  cursor: 'pointer',
-                  padding: 'var(--space-2)',
-                  borderRadius: 'var(--radius-full)',
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  transition: 'background 200ms ease',
-                }}
-                aria-label="Read instructions aloud"
-              >
-                <svg
-                  width="20"
-                  height="20"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke={isSpeaking ? 'white' : 'var(--primary)'}
-                  strokeWidth="2"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                >
-                  <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5" />
-                  {isSpeaking ? (
-                    <>
-                      <path d="M15.54 8.46a5 5 0 0 1 0 7.07" />
-                      <path d="M19.07 4.93a10 10 0 0 1 0 14.14" />
-                    </>
-                  ) : (
-                    <path d="M15 9l6 3-6 3V9z" />
-                  )}
-                </svg>
-              </button>
-            </div>
-
-            <p
-              className="font-display text-lg transition-colors mb-2"
-              style={{ color: holdMissed ? '#f97316' : feedbackColor[postureFeedback], fontWeight: 600 }}
-            >
-              {holdMissed ? 'Hold a little longer next time' : feedbackMessage}
-            </p>
-
-            {/* Hold progress bar — visible while arms are raised */}
-            {holdProgress > 0 && (
-              <div style={{
-                height: '4px',
-                background: 'var(--border)',
-                borderRadius: 'var(--radius-full)',
-                overflow: 'hidden',
-                marginBottom: 'var(--space-3)',
-              }}>
-                <div style={{
-                  height: '100%',
-                  width: `${holdProgress * 100}%`,
-                  background: holdProgress >= 1 ? '#22c55e' : '#f97316',
-                  borderRadius: 'var(--radius-full)',
-                  transition: 'width 80ms linear, background 200ms ease',
-                }} />
-              </div>
-            )}
-
-            <p style={{ color: 'var(--muted)', fontSize: 'var(--text-sm)' }}>
-              {exercise?.description || 'Follow the instructions on screen'}
-            </p>
-          </div>
-        </div>
+            <p className="session-caption">{!shouldersVisible || postureFeedback === 'analyzing' ? 'Waiting for a clear view' : 'Following your movement'}</p>
+            {holdProgress > 0 && <div className="session-hold">
+              <span>{holdProgress >= 1 ? 'Hold complete' : 'Keep holding'}</span>
+              <progress aria-label="Hold progress" max="1" value={holdProgress} />
+            </div>}
+          </section>
+        )}
       </div>
 
-      <style jsx>{`
-        @keyframes pulse {
-          0%, 100% {
-            opacity: 1;
-          }
-          50% {
-            opacity: 0.5;
-          }
-        }
-
-        @media (prefers-reduced-motion: reduce) {
-          * {
-            animation-duration: 0.01ms !important;
-          }
-        }
-      `}</style>
-    </div>
+      <ModalDialog open={sessionState === 'paused'} onClose={() => showExitPrompt ? setShowExitPrompt(false) : handleResume()} labelledBy={showExitPrompt ? 'exit-heading' : 'pause-heading'} className="session-dialog">
+        {showExitPrompt ? <>
+          <h2 id="exit-heading">Save and end session?</h2>
+          <p>You’ve completed {repCount} of {TARGET_REPS} repetitions.</p>
+          <p className="prep-note">These repetitions will be saved. A star is earned only when the full session is complete.</p>
+          <div className="dialog-actions">
+            <button className="btn btn-primary" onClick={() => void handleExitWithSave()}>Save &amp; Exit</button>
+            <button className="btn btn-secondary" autoFocus onClick={() => setShowExitPrompt(false)}>Back to pause</button>
+          </div>
+        </> : <>
+          <h2 id="pause-heading">Paused</h2>
+          <p>{repCount} / {TARGET_REPS} reps completed</p>
+          <p className="prep-note">Take your time. Resting time isn’t counted.</p>
+          <div className="dialog-actions">
+            <button className="btn btn-primary" autoFocus onClick={handleResume}>Resume Session</button>
+            <button className="btn btn-secondary" onClick={handleExit}>End Session</button>
+          </div>
+          <details className="tracking-help">
+            <summary>Exercise and tracking details</summary>
+            <p>{exercise?.description}</p>
+            <p>{repInstruction}</p>
+            {cyclic && <p>Last movement position: {Math.round(movementProgress * 100)}% of the configured range.</p>}
+            {pathScore && <p>Last repetition’s path match: {pathScore.score}%. This compares the movement with the recorded reference, not a clinical assessment.</p>}
+          </details>
+        </>}
+      </ModalDialog>
+    </main>
   )
 }
 
-// Pre-session picture holder. Shows the exercise's own demo pictures (uploaded
-// in the admin editor, stored in exercises.demo_images). All images stay
-// mounted and swap by opacity so the exchange is seamless — a two-frame
-// "video" loop. No pictures → an explicit placeholder, not a broken image.
-function ExerciseDemo({ frames, intervalMs = 700 }: { frames: string[]; intervalMs?: number }) {
+// Patient-controlled reference frames: no automatic loop competing for attention.
+function ExerciseDemo({ frames }: { frames: string[] }) {
   const [frame, setFrame] = useState(0)
-
-  useEffect(() => {
-    if (frames.length < 2) return // nothing to alternate
-    const id = setInterval(() => {
-      setFrame(f => (f + 1) % frames.length)
-    }, intervalMs)
-    return () => clearInterval(id)
-  }, [frames.length, intervalMs])
-
-  if (frames.length === 0) {
-    return (
-      <div
-        style={{
-          width: '100%',
-          aspectRatio: '4 / 3',
-          margin: '0 auto var(--space-6)',
-          borderRadius: 'var(--radius-xl)',
-          border: '1px dashed rgba(255,255,255,0.35)',
-          background: 'rgba(255,255,255,0.06)',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          padding: 'var(--space-4)',
-        }}
-      >
-        <span style={{ color: 'rgba(255,255,255,0.65)', fontSize: 'var(--text-sm)', textAlign: 'center' }}>
-          No demonstration pictures for this exercise yet
-        </span>
-      </div>
-    )
-  }
-
+  if (!frames.length) return <p className="prep-note">No demonstration pictures have been added for this exercise.</p>
   return (
-    <div
-      style={{
-        position: 'relative',
-        width: '100%',
-        aspectRatio: '4 / 3',
-        margin: '0 auto var(--space-6)',
-        borderRadius: 'var(--radius-xl)',
-        overflow: 'hidden',
-        border: '1px solid rgba(255,255,255,0.25)',
-        background: 'rgba(255,255,255,0.06)',
-        boxShadow: '0 8px 24px rgba(0,0,0,0.35)',
-      }}
-    >
-      {frames.map((src, i) => (
-        // eslint-disable-next-line @next/next/no-img-element
-        <img
-          key={src}
-          src={src}
-          alt={`Exercise demonstration, position ${i + 1}`}
-          style={{
-            position: 'absolute',
-            inset: 0,
-            width: '100%',
-            height: '100%',
-            objectFit: 'cover',
-            opacity: frame === i ? 1 : 0,
-            transition: 'opacity 300ms ease-in-out',
-          }}
-        />
-      ))}
-      <span
-        style={{
-          position: 'absolute',
-          top: 'var(--space-2)',
-          left: 'var(--space-2)',
-          padding: 'var(--space-1) var(--space-3)',
-          borderRadius: 'var(--radius-full)',
-          background: 'rgba(0,0,0,0.55)',
-          color: 'white',
-          fontSize: 'var(--text-xs)',
-          fontWeight: 600,
-          letterSpacing: '0.02em',
-        }}
-      >
-        Demo
-      </span>
-    </div>
+    <figure className="exercise-demo">
+      {/* eslint-disable-next-line @next/next/no-img-element */}
+      <img src={frames[frame]} alt={`Exercise demonstration, position ${frame + 1} of ${frames.length}`} />
+      <figcaption>
+        <span>Position {frame + 1} of {frames.length}</span>
+        {frames.length > 1 && <div className="flex gap-2">
+          <button className="pill-btn pill-btn-outline" disabled={frame === 0} onClick={() => setFrame(f => f - 1)} aria-label="Previous demonstration picture">←</button>
+          <button className="pill-btn pill-btn-outline" disabled={frame === frames.length - 1} onClick={() => setFrame(f => f + 1)} aria-label="Next demonstration picture">→</button>
+        </div>}
+      </figcaption>
+    </figure>
   )
 }
 

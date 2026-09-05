@@ -10,3 +10,4 @@ tsconfig.tsbuildinfo
 
 # graphify knowledge-graph output (regenerated locally)
 graphify-out/
+test-results/

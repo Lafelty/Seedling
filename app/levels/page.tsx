@@ -1,12 +1,13 @@
 'use client'
 
 import Link from 'next/link'
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { AnimatePresence, MotionConfig, motion } from 'framer-motion'
+import { MotionConfig, motion } from 'framer-motion'
 import { createClient } from '@/lib/supabase/client'
 import { buildLevelMap, type CompletedSession, type GroupNode, type LevelExercise, type LevelGroup } from '@/lib/levels'
 import { tintOf } from '@/lib/levels-theme'
+import ModalDialog from '@/components/ModalDialog'
 import BoxMark from '@/components/BoxMark'
 import GrowthStages, { GROWTH_MARK_CELL, growthStageName } from '@/components/GrowthStage'
 
@@ -52,42 +53,9 @@ export default function LevelsPage() {
   const [map, setMap] = useState<GroupNode[]>([])
   /** The box whose panel is open. The grid card morphs into it and back. */
   const [active, setActive] = useState<GroupNode | null>(null)
-  const panelRef = useRef<HTMLDivElement>(null)
-  const closeRef = useRef<HTMLButtonElement>(null)
-  // Where focus came from, so closing puts it back on the card the patient opened.
-  const openerRef = useRef<HTMLElement | null>(null)
-
   useEffect(() => {
     loadMap()
   }, [])
-
-  // While a panel is open it owns the screen: escape closes it, the page behind
-  // it stays put, and focus starts on the close button.
-  useEffect(() => {
-    if (!active) return
-
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') setActive(null)
-    }
-    const onPointerDown = (event: MouseEvent | TouchEvent) => {
-      if (panelRef.current && !panelRef.current.contains(event.target as Node)) setActive(null)
-    }
-
-    const previousOverflow = document.body.style.overflow
-    document.body.style.overflow = 'hidden'
-    closeRef.current?.focus()
-
-    window.addEventListener('keydown', onKeyDown)
-    document.addEventListener('mousedown', onPointerDown)
-    document.addEventListener('touchstart', onPointerDown)
-    return () => {
-      document.body.style.overflow = previousOverflow
-      window.removeEventListener('keydown', onKeyDown)
-      document.removeEventListener('mousedown', onPointerDown)
-      document.removeEventListener('touchstart', onPointerDown)
-      openerRef.current?.focus()
-    }
-  }, [active])
 
   async function loadMap() {
     const supabase = createClient()
@@ -163,7 +131,7 @@ export default function LevelsPage() {
   return (
     // `reducedMotion="user"` makes every layout morph below honour the OS
     // setting: the panel then appears and leaves without travelling.
-    <MotionConfig reducedMotion="user">
+    <MotionConfig reducedMotion="user" transition={{ duration: 0.2, ease: [0.25, 1, 0.5, 1] }}>
       <style>{`
         .lvl-card {
           transition: box-shadow var(--dur-fast) var(--ease-out), border-color var(--dur-fast) var(--ease-out);
@@ -339,7 +307,7 @@ export default function LevelsPage() {
         {/* Header. Progress rides in the sentence and the rail rather than its
             own slab, and says nothing about which box to pick. */}
         <div className="mb-8 animate-fadeIn">
-          <h1 style={{ color: 'var(--primary)' }}>Your boxes</h1>
+          <h1 style={{ color: 'var(--primary)' }}>Exercises</h1>
           <p style={{ color: 'var(--muted)', marginTop: 'var(--space-1)' }}>
             {visibleBoxes.length === 0
               ? 'Work through each box of poses at your own pace'
@@ -383,14 +351,12 @@ export default function LevelsPage() {
                     tabIndex={0}
                     aria-expanded={isOpen}
                     aria-label={`${node.group.name}, ${node.clearedCount} of ${node.total} poses done, ${label.toLowerCase()}`}
-                    onClick={(event) => {
-                      openerRef.current = event.currentTarget
+                    onClick={() => {
                       setActive(node)
                     }}
                     onKeyDown={(event) => {
                       if (event.key !== 'Enter' && event.key !== ' ') return
                       event.preventDefault()
-                      openerRef.current = event.currentTarget
                       setActive(node)
                     }}
                     style={{
@@ -412,9 +378,6 @@ export default function LevelsPage() {
                       background: `linear-gradient(160deg, ${tint.wash}, var(--surface) 72%)`,
                       borderColor: tint.edge,
                       cursor: 'pointer',
-                      // The panel takes over the shared layout; leaving the card
-                      // visible underneath would show it twice mid-morph.
-                      visibility: isOpen ? 'hidden' : 'visible',
                     }}
                   >
                     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 'var(--space-3)' }}>
@@ -497,42 +460,15 @@ export default function LevelsPage() {
       </main>
       </div>
 
-      <AnimatePresence>
         {active && (
           <ExpandedBox
             key={active.group.id}
             node={active}
-            panelRef={panelRef}
-            closeRef={closeRef}
             onClose={() => setActive(null)}
           />
         )}
-      </AnimatePresence>
 
-      {/* Bottom Navigation */}
-      <nav className="bottom-nav">
-        <Link href="/" className="nav-item">
-          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-            <path d="M8 19a4 4 0 0 1-2.24-7.32A3.5 3.5 0 0 1 9 6.03V6a3 3 0 1 1 6 0v.04a3.5 3.5 0 0 1 3.24 5.65A4 4 0 0 1 16 19Z" />
-            <path d="M12 19v3" />
-          </svg>
-          <span>Garden</span>
-        </Link>
-        <Link href="/progress" className="nav-item">
-          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-            <path d="M3 3v18h18" />
-            <path d="M7 16l4-8 4 4 4-12" />
-          </svg>
-          <span>Progress</span>
-        </Link>
-        <Link href="/profile" className="nav-item">
-          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-            <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" />
-            <circle cx="12" cy="7" r="4" />
-          </svg>
-          <span>Profile</span>
-        </Link>
-      </nav>
+
     </MotionConfig>
   )
 }
@@ -544,42 +480,24 @@ export default function LevelsPage() {
  */
 function ExpandedBox({
   node,
-  panelRef,
-  closeRef,
   onClose,
 }: {
   node: GroupNode
-  panelRef: React.RefObject<HTMLDivElement | null>
-  closeRef: React.RefObject<HTMLButtonElement | null>
   onClose: () => void
 }) {
   const { cleared, started, label } = statusOf(node)
   const pct = node.total > 0 ? Math.round((node.clearedCount / node.total) * 100) : 0
-  const cta = cleared ? 'Review box' : started ? 'Continue box' : 'Start box'
+  const cta = 'View exercises'
   const tint = tintOf(node.group.id, cleared)
 
   return (
-    <>
-      <motion.div
-        aria-hidden
-        initial={{ opacity: 0 }}
-        animate={{ opacity: 1 }}
-        exit={{ opacity: 0 }}
-        transition={{ duration: 0.2 }}
-        style={{ position: 'fixed', inset: 0, background: 'rgba(38, 48, 42, 0.38)', zIndex: 1000 }}
-      />
-
-      <div style={{ position: 'fixed', inset: 0, display: 'grid', placeItems: 'center', padding: 'var(--space-4)', zIndex: 1001 }}>
+    <ModalDialog open onClose={onClose} labelledBy={`box-heading-${node.group.id}`} className="exercise-dialog">
         <motion.div
-          ref={panelRef}
           layoutId={`box-${node.group.id}`}
-          role="dialog"
-          aria-modal="true"
-          aria-labelledby={`box-heading-${node.group.id}`}
           className="card"
           style={{
             width: 'min(560px, 100%)',
-            maxHeight: '85vh',
+            maxHeight: 'none',
             overflowY: 'auto',
             display: 'flex',
             flexDirection: 'column',
@@ -594,7 +512,7 @@ function ExpandedBox({
             backgroundColor: 'var(--surface)',
             backgroundImage: `linear-gradient(160deg, ${tint.wash}, transparent 72%)`,
             borderColor: tint.edge,
-            boxShadow: '0 24px 60px rgba(38, 48, 42, 0.22)',
+            boxShadow: 'none',
           }}
         >
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 'var(--space-2)' }}>
@@ -607,7 +525,7 @@ function ExpandedBox({
                 {label}
               </motion.span>
               <button
-                ref={closeRef}
+                autoFocus
                 onClick={onClose}
                 aria-label="Close box"
                 className="pill-btn"
@@ -708,7 +626,6 @@ function ExpandedBox({
             </Link>
           </div>
         </motion.div>
-      </div>
-    </>
+    </ModalDialog>
   )
 }

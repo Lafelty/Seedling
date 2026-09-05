@@ -13,6 +13,7 @@
  * a pointer. The maths behind all three lives in lib/avatarCrop.ts.
  */
 
+import ModalDialog from './ModalDialog'
 import { useCallback, useEffect, useRef, useState } from 'react'
 
 import {
@@ -130,22 +131,6 @@ export function AvatarCropper({ file, onConfirm, onCancel }: AvatarCropperProps)
     return () => frame.removeEventListener('wheel', onWheel)
   }, [natural, viewport])
 
-  // Escape closes, and the page behind stops scrolling while this is up.
-  useEffect(() => {
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') onCancel()
-    }
-    document.addEventListener('keydown', onKeyDown)
-
-    const previousOverflow = document.body.style.overflow
-    document.body.style.overflow = 'hidden'
-
-    return () => {
-      document.removeEventListener('keydown', onKeyDown)
-      document.body.style.overflow = previousOverflow
-    }
-  }, [onCancel])
-
   // Arrow keys land on the frame, so it takes focus rather than a button: the
   // frame is the control, and moving the photo is what this screen is for.
   useEffect(() => {
@@ -252,29 +237,14 @@ export function AvatarCropper({ file, onConfirm, onCancel }: AvatarCropperProps)
     : {}
 
   return (
-    <div
-      role="dialog"
-      aria-modal="true"
-      aria-labelledby="avatar-cropper-title"
-      style={{
-        position: 'fixed',
-        inset: 0,
-        zIndex: 'var(--z-modal)',
-        display: 'grid',
-        placeItems: 'center',
-        padding: 'var(--space-4)',
-        background: 'rgba(31, 36, 33, 0.55)',
-        backdropFilter: 'blur(2px)',
-        WebkitBackdropFilter: 'blur(2px)',
-      }}
-    >
+    <ModalDialog open onClose={() => { if (!busy) onCancel() }} labelledBy="avatar-cropper-title" className="avatar-dialog">
       <div
         className="card animate-scaleIn"
         style={{
           width: '100%',
-          maxWidth: '380px',
+          maxWidth: '100%',
           background: 'var(--surface)',
-          boxShadow: '0 16px 40px rgba(31, 36, 33, 0.32)',
+          boxShadow: 'none', padding: 0,
         }}
       >
         <h2
@@ -348,7 +318,7 @@ export function AvatarCropper({ file, onConfirm, onCancel }: AvatarCropperProps)
           value={view.zoom}
           disabled={!ready || busy}
           onChange={(event) => applyView({ ...view, zoom: Number(event.target.value) })}
-          style={{ width: '100%', accentColor: 'var(--primary)' }}
+          style={{ width: '100%', minHeight: 48, accentColor: 'var(--primary)' }}
         />
 
         {error && (
@@ -379,6 +349,6 @@ export function AvatarCropper({ file, onConfirm, onCancel }: AvatarCropperProps)
           </button>
         </div>
       </div>
-    </div>
+    </ModalDialog>
   )
 }

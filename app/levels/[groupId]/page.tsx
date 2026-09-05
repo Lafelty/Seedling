@@ -658,29 +658,7 @@ export default function LevelGroupPage() {
       </div>
 
       {/* Same shell as every other page in the app. */}
-      <nav className="bottom-nav">
-        <Link href="/" className="nav-item">
-          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-            <path d="M8 19a4 4 0 0 1-2.24-7.32A3.5 3.5 0 0 1 9 6.03V6a3 3 0 1 1 6 0v.04a3.5 3.5 0 0 1 3.24 5.65A4 4 0 0 1 16 19Z" />
-            <path d="M12 19v3" />
-          </svg>
-          <span>Garden</span>
-        </Link>
-        <Link href="/progress" className="nav-item">
-          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-            <path d="M3 3v18h18" />
-            <path d="M7 16l4-8 4 4 4-12" />
-          </svg>
-          <span>Progress</span>
-        </Link>
-        <Link href="/profile" className="nav-item">
-          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-            <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" />
-            <circle cx="12" cy="7" r="4" />
-          </svg>
-          <span>Profile</span>
-        </Link>
-      </nav>
+
     </>
   )
 }

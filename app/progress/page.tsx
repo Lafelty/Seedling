@@ -1,6 +1,7 @@
 'use client';
 
 import Link from 'next/link';
+import ProgressTabs from '@/components/ProgressTabs';
 import { useRouter } from 'next/navigation';
 import { loadProgressSnapshot } from '@/lib/progressSync';
 import { useEffect, useMemo, useState } from 'react';
@@ -127,75 +128,19 @@ export default function ProgressPage() {
       className="min-h-screen max-w-4xl mx-auto px-4 py-8 pb-24"
       style={{ background: 'linear-gradient(180deg, rgba(74, 107, 90, 0.07), rgba(107, 143, 122, 0.03) 240px, transparent 480px)' }}
     >
-      {/* Header */}
-      <div className="mb-8 animate-fadeIn" style={{ position: 'relative' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-2)', marginBottom: 'var(--space-2)' }}>
-          <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="var(--primary)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-            <path d="M11 20A7 7 0 0 1 9.8 6.1C15.5 5 17 4.48 19 2c1 2 2 4.18 2 8 0 5.5-4.78 10-10 10Z" />
-            <path d="M2 21c0-3 1.85-5.36 5.08-6C9.5 14.52 12 13 13 12" />
-          </svg>
-          <h1 style={{ color: 'var(--primary)' }}>Growth Journal</h1>
-        </div>
-        <p style={{ color: 'var(--muted)' }}>Every session waters your garden — watch your healing take root</p>
-      </div>
+      <header className="patient-heading">
+        <h1>Progress</h1>
+        <p>Your sessions, day by day. Rest days belong here, too.</p>
+      </header>
+      <ProgressTabs view="journal" />
 
       {/* Stats Grid */}
       {loadError && <div className="card mb-6"><p role="alert">{loadError}</p><button className="btn mt-3" onClick={() => setRefreshKey(k => k + 1)}>Retry loading</button></div>}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: 'var(--space-3)', marginBottom: 'var(--space-12)' }}>
-        <div
-          className="card text-center animate-scaleIn stagger-1"
-          style={{
-            background: 'linear-gradient(160deg, rgba(201, 184, 138, 0.20), rgba(107, 143, 122, 0.10) 70%)',
-            minWidth: 0, padding: 'var(--space-4) var(--space-2)',
-            borderColor: 'rgba(74, 107, 90, 0.25)',
-          }}
-        >
-          <svg width="24" height="24" viewBox="0 0 20 20" fill="#C9B88A" style={{ margin: '0 auto var(--space-2)' }}>
-            <path d="M10 0l2.5 6.5H19l-5.5 4 2 6.5L10 13l-5.5 4 2-6.5-5.5-4h6.5z" />
-          </svg>
-          <p style={{ color: 'var(--primary)', fontWeight: 600, marginBottom: 'var(--space-2)' }}>Total Stars</p>
-          <p style={{ fontSize: 'var(--text-3xl)', fontFamily: 'var(--font-display)', fontWeight: 700, color: 'var(--primary)' }}>
-            {progress.totalStars}
-          </p>
-        </div>
-
-        <div
-          className="card text-center animate-scaleIn stagger-2"
-          style={{
-            background: 'linear-gradient(160deg, rgba(74, 107, 90, 0.20), rgba(107, 143, 122, 0.08) 70%)',
-            minWidth: 0, padding: 'var(--space-4) var(--space-2)',
-            borderColor: 'rgba(74, 107, 90, 0.25)',
-          }}
-        >
-          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="var(--primary)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ margin: '0 auto var(--space-2)' }}>
-            <path d="M12 22v-7" />
-            <path d="M12 15q-6 0-7-8 7 1 7 8Z" />
-            <path d="M12 13q0-6 7-9-1 9-7 9Z" />
-          </svg>
-          <p style={{ color: 'var(--primary)', fontWeight: 600, marginBottom: 'var(--space-2)' }}>Day Streak</p>
-          <p style={{ fontSize: 'var(--text-3xl)', fontFamily: 'var(--font-display)', fontWeight: 700, color: 'var(--primary)' }}>
-            {progress.completionStreak}
-          </p>
-        </div>
-
-        <div
-          className="card text-center animate-scaleIn stagger-3"
-          style={{
-            background: 'linear-gradient(160deg, rgba(107, 143, 122, 0.22), rgba(74, 107, 90, 0.08) 70%)',
-            minWidth: 0, padding: 'var(--space-4) var(--space-2)',
-            borderColor: 'rgba(74, 107, 90, 0.25)',
-          }}
-        >
-          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="var(--primary)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ margin: '0 auto var(--space-2)' }}>
-            <path d="M12 22v-5" />
-            <path d="M9 8a3 3 0 0 1 6 0c1.5.5 3 2 3 4.5 0 3-2.5 4.5-6 4.5s-6-1.5-6-4.5C6 10 7.5 8.5 9 8Z" />
-          </svg>
-          <p style={{ color: 'var(--primary)', fontWeight: 600, marginBottom: 'var(--space-2)' }}>Tree Stage</p>
-          <p style={{ fontSize: 'var(--text-xl)', fontFamily: 'var(--font-display)', fontWeight: 600, textTransform: 'capitalize', color: 'var(--primary)' }}>
-            {progress.treeStage}
-          </p>
-        </div>
-      </div>
+      <dl className="progress-summary">
+        <div><dt>Total stars</dt><dd>{progress.totalStars}</dd></div>
+        <div><dt>Day streak</dt><dd>{progress.completionStreak}</dd></div>
+        <div><dt>Tree stage</dt><dd className="capitalize">{progress.treeStage}</dd></div>
+      </dl>
 
       {/* Calendar */}
       <div
@@ -205,14 +150,14 @@ export default function ProgressPage() {
           borderColor: 'rgba(74, 107, 90, 0.20)',
         }}
       >
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 'var(--space-6)' }}>
+        <div className="calendar-heading">
           <h2 style={{ color: 'var(--primary)' }}>{format(viewMonth, 'MMMM yyyy')}</h2>
           <div style={{ display: 'flex', gap: 'var(--space-2)' }}>
             <button
               onClick={() => changeMonth(-1)}
               aria-label="Previous month"
               style={{
-                width: '36px', height: '36px', borderRadius: 'var(--radius-full)',
+                width: '48px', height: '48px', flexShrink: 0, borderRadius: 'var(--radius-full)',
                 border: '1px solid rgba(74, 107, 90, 0.35)', background: 'rgba(107, 143, 122, 0.12)',
                 color: 'var(--primary)', cursor: 'pointer', fontSize: 'var(--text-base)', fontWeight: 700,
               }}
@@ -224,7 +169,7 @@ export default function ProgressPage() {
               disabled={isSameMonth(viewMonth, today)}
               aria-label="Next month"
               style={{
-                width: '36px', height: '36px', borderRadius: 'var(--radius-full)',
+                width: '48px', height: '48px', flexShrink: 0, borderRadius: 'var(--radius-full)',
                 border: '1px solid rgba(74, 107, 90, 0.35)', background: 'rgba(107, 143, 122, 0.12)',
                 color: 'var(--primary)', cursor: isSameMonth(viewMonth, today) ? 'default' : 'pointer',
                 opacity: isSameMonth(viewMonth, today) ? 0.35 : 1, fontSize: 'var(--text-base)', fontWeight: 700,
@@ -235,7 +180,18 @@ export default function ProgressPage() {
           </div>
         </div>
 
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: 'var(--space-2)', marginBottom: 'var(--space-4)' }}>
+        <div className="calendar-compact">
+          <label htmlFor="journal-day">Choose a day</label>
+          <select id="journal-day" value={selectedDay} onChange={event => setSelectedDay(event.target.value)}>
+            {daysInMonth.filter(day => day <= today).map(day => {
+              const key = format(day, 'yyyy-MM-dd');
+              const count = sessionsByDay.get(key)?.length ?? 0;
+              return <option key={key} value={key}>{format(day, 'EEE, MMM d')}{count ? ` · ${count} session${count === 1 ? '' : 's'}` : ''}</option>;
+            })}
+          </select>
+          {(monthLoading || monthError) && <div className="mt-4"><p role={monthError ? 'alert' : 'status'}>{monthError ?? 'Loading sessions…'}</p>{monthError && <button className="btn mt-3" onClick={() => setRefreshKey(k => k + 1)}>Retry loading</button>}</div>}
+        </div>
+        <div className="calendar-weekdays" style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: 'var(--space-2)', marginBottom: 'var(--space-4)' }}>
           {['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'].map((day) => (
             <div key={day} style={{ textAlign: 'center', fontSize: 'var(--text-xs)', color: 'var(--primary)', fontWeight: 700 }}>
               {day}
@@ -243,7 +199,7 @@ export default function ProgressPage() {
           ))}
         </div>
 
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: 'var(--space-2)' }}>
+        <div className="calendar-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: 'var(--space-2)' }}>
           {Array.from({ length: (daysInMonth[0].getDay() + 6) % 7 }).map((_, i) => (
             <div key={`empty-${i}`} />
           ))}
@@ -298,7 +254,8 @@ export default function ProgressPage() {
                 <button
                   onClick={() => !isFuture && setSelectedDay(dayStr)}
                   disabled={isFuture}
-                  aria-label={format(day, 'MMMM d')}
+                  aria-label={`${format(day, 'MMMM d, yyyy')} — ${hasCompleted ? 'Session complete' : hasPartial ? 'Partial session' : isFuture ? 'Upcoming day' : 'Rest day'}`}
+                  aria-pressed={isSelected}
                   title={
                     mood === 'great' ? 'Amazing day — tap to view'
                     : mood === 'happy' ? 'Session complete — tap to view'
@@ -327,8 +284,8 @@ export default function ProgressPage() {
           })}
         </div>
 
-        {/* Legend */}
-        <div style={{ display: 'flex', gap: 'var(--space-4)', flexWrap: 'wrap', marginTop: 'var(--space-4)', fontSize: 'var(--text-xs)', color: 'var(--muted)' }}>
+        {/* The legend belongs to the visual calendar, not the compact picker. */}
+        <div className="calendar-legend" style={{ display: 'flex', gap: 'var(--space-4)', flexWrap: 'wrap', marginTop: 'var(--space-4)', fontSize: 'var(--text-xs)', color: 'var(--muted)' }}>
           <span style={{ display: 'inline-flex', alignItems: 'center', gap: 'var(--space-1)' }}>
             <span style={{ width: '14px', height: '14px', borderRadius: '50%', background: MOOD_BG.great, display: 'inline-block' }} />
             Amazing day
@@ -456,30 +413,7 @@ export default function ProgressPage() {
       <MilestoneJourney totalStars={progress.totalStars} />
     </main>
 
-      {/* Bottom Navigation */}
-      <nav className="bottom-nav">
-        <Link href="/" className="nav-item">
-          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-            <path d="M8 19a4 4 0 0 1-2.24-7.32A3.5 3.5 0 0 1 9 6.03V6a3 3 0 1 1 6 0v.04a3.5 3.5 0 0 1 3.24 5.65A4 4 0 0 1 16 19Z" />
-            <path d="M12 19v3" />
-          </svg>
-          <span>Garden</span>
-        </Link>
-        <Link href="/progress" className="nav-item active">
-          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-            <path d="M3 3v18h18" />
-            <path d="M7 16l4-8 4 4 4-12" />
-          </svg>
-          <span>Progress</span>
-        </Link>
-        <Link href="/profile" className="nav-item">
-          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-            <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" />
-            <circle cx="12" cy="7" r="4" />
-          </svg>
-          <span>Profile</span>
-        </Link>
-      </nav>
+
     </>
   );
 }
@@ -670,7 +604,7 @@ function MilestoneJourney({ totalStars }: { totalStars: number }) {
               <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 'var(--space-3)', marginBottom: 'var(--space-2)' }}>
                 <span style={{ fontSize: '2rem', lineHeight: 1, filter: realTreeReached ? 'none' : 'grayscale(0.4) opacity(0.85)' }}>🌳</span>
                 <div>
-                  <p style={{ fontFamily: 'var(--font-display)', fontSize: 'var(--text-xl)', fontWeight: 700, color: 'var(--ink)', lineHeight: 1.2 }}>
+                  <p style={{ fontFamily: 'var(--font-body)', fontSize: 'var(--text-xl)', fontWeight: 700, color: 'var(--ink)', lineHeight: 1.2 }}>
                     {realTreeReached ? 'Real-tree milestone reached' : 'Your real-tree milestone'}
                   </p>
                   {realTreeReached && (

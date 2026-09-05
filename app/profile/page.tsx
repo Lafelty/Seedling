@@ -2,7 +2,6 @@
 
 import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
-import Link from 'next/link'
 import { createClient } from '@/lib/supabase/client'
 import { SmoothInput } from '@/components/SmoothInput'
 import { AvatarCropper } from '@/components/AvatarCropper'
@@ -64,11 +63,11 @@ const labelStyle: React.CSSProperties = {
 
 function ProfileSkeleton() {
   return (
-    <main className="min-h-screen max-w-xl mx-auto px-4 py-8 pb-16">
+    <main className="profile-page min-h-screen max-w-xl mx-auto px-4 py-8 pb-24">
       <div className="skeleton" style={{ height: '56px', borderRadius: 'var(--radius-full)', marginBottom: 'var(--space-6)' }} />
       <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-4)', marginBottom: 'var(--space-8)' }}>
         <div className="skeleton" style={{ width: '76px', height: '76px', borderRadius: '50%', flexShrink: 0 }} />
-        <div style={{ flex: 1 }}>
+        <div style={{ flex: 1, minWidth: 0 }}>
           <div className="skeleton" style={{ width: '180px', height: '32px', marginBottom: 'var(--space-2)' }} />
           <div className="skeleton" style={{ width: '220px', height: '16px' }} />
         </div>
@@ -82,6 +81,8 @@ function ProfileSkeleton() {
 
 export default function ProfilePage() {
   const router = useRouter()
+  const [loadError, setLoadError] = useState(false)
+  const [signingOut, setSigningOut] = useState(false)
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   /** Problems only — a successful save is announced by the overlay instead. */
@@ -109,8 +110,7 @@ export default function ProfilePage() {
   /** The picked file, held while the patient frames it. Null when no cropper is up. */
   const [photoToFrame, setPhotoToFrame] = useState<File | null>(null)
 
-  // Read-only: the guardian card is locked (see below), but showing what is
-  // already stored is still worth doing.
+  // Keep existing guardian preferences read-only until sending is available.
   const [guardianEmail, setGuardianEmail] = useState('')
   const [guardianNotify, setGuardianNotify] = useState(false)
 
@@ -127,45 +127,54 @@ export default function ProfilePage() {
   }, [avatarUrl])
 
   async function loadProfile() {
-    const supabase = createClient()
-    const { data: { user } } = await supabase.auth.getUser()
+    setLoading(true)
+    setLoadError(false)
+    setMessage(null)
+    try {
+      const supabase = createClient()
+      const { data: { user } } = await supabase.auth.getUser()
 
-    if (!user) {
-      router.push('/login')
-      return
-    }
+      if (!user) {
+        router.push('/login')
+        return
+      }
 
-    const { data: profile, error } = await supabase
-      .from('profiles')
-      .select('email, name, phone, avatar_path, height_cm, weight_kg, guardian_email, guardian_notify')
-      .eq('id', user.id)
-      .single()
+      const { data: profile, error } = await supabase
+        .from('profiles')
+        .select('email, name, phone, avatar_path, height_cm, weight_kg, guardian_email, guardian_notify')
+        .eq('id', user.id)
+        .single()
 
-    if (error) {
-      console.error('Error loading profile:', error)
-      setMessage('Failed to load profile. Check your connection and refresh.')
+      if (error || !profile) {
+        setLoadError(true)
+        console.error('Error loading profile:', error)
+        setMessage('Failed to load profile. Check your connection and refresh.')
+        setLoading(false)
+        return
+      }
+
+      if (profile) {
+        setEmail(profile.email ?? '')
+        setName(profile.name ?? '')
+        setPhone(profile.phone ?? '')
+        setHeightCm(profile.height_cm != null ? String(profile.height_cm) : '')
+        setWeightKg(profile.weight_kg != null ? String(profile.weight_kg) : '')
+        // Whatever is already stored stays selectable even when it predates the
+        // dropdown — otherwise saving anything would quietly rewrite it.
+        setHeightOptions(optionsWithStored(HEIGHT_CM.min, HEIGHT_CM.max, profile.height_cm))
+        setWeightOptions(optionsWithStored(WEIGHT_KG.min, WEIGHT_KG.max, profile.weight_kg))
+        setGuardianEmail(profile.guardian_email ?? '')
+        setGuardianNotify(!!profile.guardian_notify)
+
+        setCommittedAvatar(profile.avatar_path)
+        setAvatarPath(profile.avatar_path)
+        setAvatarUrl(await signAvatar(supabase, profile.avatar_path))
+      }
+    } catch {
+      setLoadError(true)
+    } finally {
       setLoading(false)
-      return
     }
-
-    if (profile) {
-      setEmail(profile.email ?? '')
-      setName(profile.name ?? '')
-      setPhone(profile.phone ?? '')
-      setHeightCm(profile.height_cm != null ? String(profile.height_cm) : '')
-      setWeightKg(profile.weight_kg != null ? String(profile.weight_kg) : '')
-      // Whatever is already stored stays selectable even when it predates the
-      // dropdown — otherwise saving anything would quietly rewrite it.
-      setHeightOptions(optionsWithStored(HEIGHT_CM.min, HEIGHT_CM.max, profile.height_cm))
-      setWeightOptions(optionsWithStored(WEIGHT_KG.min, WEIGHT_KG.max, profile.weight_kg))
-      setGuardianEmail(profile.guardian_email ?? '')
-      setGuardianNotify(!!profile.guardian_notify)
-
-      setCommittedAvatar(profile.avatar_path)
-      setAvatarPath(profile.avatar_path)
-      setAvatarUrl(await signAvatar(supabase, profile.avatar_path))
-    }
-    setLoading(false)
   }
 
   /**
@@ -273,31 +282,19 @@ export default function ProfilePage() {
     return <ProfileSkeleton />
   }
 
+  if (loadError) return (
+    <main className="min-h-screen max-w-xl mx-auto px-4 py-8">
+      <header className="patient-heading"><h1>Profile</h1></header>
+      <p role="alert">Your profile couldn’t be loaded. Retry before making changes.</p>
+      <button className="btn btn-primary mt-4" onClick={() => void loadProfile()}>Retry loading</button>
+    </main>
+  )
+
   return (
     <main
-      className="min-h-screen max-w-xl mx-auto px-4 py-8 pb-16"
+      className="profile-page min-h-screen max-w-xl mx-auto px-4 py-8 pb-24"
       style={{ background: 'linear-gradient(180deg, rgba(74, 107, 90, 0.07), transparent 320px)' }}
     >
-      {/* Back to the garden. /profile sits outside the (dashboard) route group,
-          so there is no bottom nav here — this is the only way out, and it is
-          sized to say so. */}
-      <Link
-        href="/"
-        className="btn btn-back w-full animate-fadeIn"
-        style={{ marginBottom: 'var(--space-6)' }}
-      >
-        <svg className="btn-back-chevron" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
-          <path d="M15 18l-6-6 6-6" />
-        </svg>
-        Back to Garden
-        {/* The same canopy the bottom nav uses for Garden — the button carries
-            the mark of where it lands. */}
-        <svg className="btn-back-garden" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
-          <path d="M8 19a4 4 0 0 1-2.24-7.32A3.5 3.5 0 0 1 9 6.03V6a3 3 0 1 1 6 0v.04a3.5 3.5 0 0 1 3.24 5.65A4 4 0 0 1 16 19Z" />
-          <path d="M12 19v3" />
-        </svg>
-      </Link>
-
       {/* Header: photo, then who this is */}
       <div
         className="mb-8 animate-fadeIn"
@@ -312,7 +309,7 @@ export default function ProfilePage() {
           alt={name ? `${name}'s profile picture` : 'Your profile picture'}
         />
         <div style={{ minWidth: 0 }}>
-          <h1 style={{ color: 'var(--primary)', marginBottom: '2px' }}>My Profile</h1>
+          <h1 className="patient-title" style={{ color: 'var(--primary)', marginBottom: '2px' }}>Profile</h1>
           <p style={{ color: 'var(--muted)', overflowWrap: 'anywhere' }}>{email}</p>
         </div>
       </div>
@@ -360,7 +357,7 @@ export default function ProfilePage() {
               display: 'flex',
               justifyContent: 'space-between',
               gap: 'var(--space-2)',
-              fontSize: 'var(--text-xs)',
+              fontSize: 'var(--text-sm)',
               color: 'var(--muted)',
               marginTop: 'var(--space-1)',
             }}
@@ -411,142 +408,19 @@ export default function ProfilePage() {
         </p>
       </div>
 
-      {/* Guardian — locked. /api/notify-guardian needs RESEND_API_KEY, which is
-          not configured, so the route returns { skipped: 'no-api-key' } every
-          time. A card that promises email nobody receives is worse than one that
-          says it is not ready yet. Stored values are left untouched, so nothing
-          is lost when the key is set. */}
-      <div className="card mb-6 animate-fadeInUp" style={{
-        position: 'relative',
-        background: 'linear-gradient(180deg, rgba(201, 184, 138, 0.12), var(--surface) 55%)',
-        borderColor: 'rgba(74, 107, 90, 0.20)',
-      }}>
-        <h2 style={{ fontSize: 'var(--text-lg)', fontWeight: 600, color: 'var(--primary)', marginBottom: 'var(--space-2)' }}>
-          Guardian updates
-        </h2>
-        <p style={{ fontSize: 'var(--text-sm)', color: 'var(--muted)', marginBottom: 'var(--space-4)' }}>
-          A family member or caregiver gets a short email each time you complete a session.
-        </p>
-
-        {/* A disabled fieldset turns off every control inside it natively, and
-            keeps them announced as disabled rather than hidden. The grey sheet
-            below is what says so on screen; this is what says so to a keyboard
-            and a screen reader. */}
-        <fieldset
-          disabled
-          style={{ border: 'none', padding: 0, margin: 0, minInlineSize: 0 }}
-        >
-          <div style={{ marginBottom: 'var(--space-4)' }}>
-            <label style={labelStyle} htmlFor="guardian-email">Guardian email</label>
-            <SmoothInput
-              id="guardian-email"
-              inputMode="email"
-              autoComplete="off"
-              autoCapitalize="none"
-              spellCheck={false}
-              readOnly
-              value={guardianEmail}
-              placeholder="family@example.com"
-              style={{ ...inputStyle, cursor: 'not-allowed' }}
-            />
-          </div>
-
-          <div
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: 'var(--space-3)',
-              width: '100%',
-              padding: 'var(--space-3)',
-              background: 'var(--surface)',
-              border: '1px solid var(--border)',
-              borderRadius: 'var(--radius-lg)',
-              textAlign: 'left',
-            }}
-          >
-            <span
-              style={{
-                width: '44px',
-                height: '26px',
-                borderRadius: 'var(--radius-full)',
-                background: guardianNotify ? 'var(--primary)' : 'var(--border)',
-                position: 'relative',
-                flexShrink: 0,
-              }}
-            >
-              <span
-                style={{
-                  position: 'absolute',
-                  top: '3px',
-                  left: guardianNotify ? '21px' : '3px',
-                  width: '20px',
-                  height: '20px',
-                  borderRadius: '50%',
-                  background: 'white',
-                  boxShadow: '0 1px 3px rgba(0,0,0,0.25)',
-                }}
-              />
-            </span>
-            <span>
-              <span style={{ display: 'block', fontWeight: 600, color: 'var(--ink)', fontSize: 'var(--text-sm)' }}>
-                Email my guardian after each session
-              </span>
-              <span style={{ display: 'block', color: 'var(--muted)', fontSize: 'var(--text-xs)', marginTop: '2px' }}>
-                Off — no emails are sent
-              </span>
-            </span>
-          </div>
-        </fieldset>
-
-        {/* The grey sheet over the whole card. Decorative — the disabled
-            fieldset underneath is what actually stops anyone reaching the
-            fields; this is only how it looks. `inset: -1px` covers the card's
-            own border, so the sheet ends where the card does rather than
-            leaving a bright rim around it. */}
-        <div
-          aria-hidden
-          style={{
-            position: 'absolute',
-            inset: '-1px',
-            display: 'grid',
-            placeItems: 'center',
-            gap: 'var(--space-2)',
-            alignContent: 'center',
-            borderRadius: 'var(--radius-lg)',
-            background: 'rgba(96, 100, 96, 0.55)',
-            backdropFilter: 'grayscale(1)',
-            WebkitBackdropFilter: 'grayscale(1)',
-          }}
-        >
-          <svg
-            width="46"
-            height="46"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="white"
-            strokeWidth="1.8"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            style={{ filter: 'drop-shadow(0 2px 6px rgba(0, 0, 0, 0.35))' }}
-          >
-            <rect x="4" y="10.5" width="16" height="10.5" rx="2.5" />
-            <path d="M8 10.5V7a4 4 0 0 1 8 0v3.5" />
-          </svg>
-          <span
-            style={{
-              fontSize: 'var(--text-sm)',
-              fontWeight: 700,
-              color: 'white',
-              textShadow: '0 1px 4px rgba(0, 0, 0, 0.4)',
-            }}
-          >
-            Not available yet
-          </span>
-        </div>
-      </div>
+      <section className="guardian-status" aria-labelledby="guardian-heading">
+        <h2 id="guardian-heading">Guardian updates</h2>
+        <p className="prep-note">Automatic guardian emails aren’t available yet. Your saved preferences haven’t been changed.</p>
+        {guardianEmail && <details className="tracking-help">
+          <summary>Saved preferences</summary>
+          <p className="profile-email">{guardianEmail}</p>
+          <p>Notifications: {guardianNotify ? 'requested, but not being sent' : 'off'}</p>
+        </details>}
+      </section>
 
       {message && (
         <p
+          role="alert"
           className="animate-scaleIn"
           style={{
             marginBottom: 'var(--space-4)',
@@ -567,6 +441,21 @@ export default function ProfilePage() {
       >
         {saving ? 'Saving...' : uploading ? 'Uploading picture...' : 'Save Profile'}
       </button>
+
+      <section className="account-actions" aria-label="Account">
+        <button className="pill-btn pill-btn-outline" disabled={signingOut || saving || uploading} onClick={async () => {
+          setSigningOut(true)
+          try {
+            const { error } = await createClient().auth.signOut()
+            if (error) throw error
+            router.replace('/login')
+            router.refresh()
+          } catch {
+            setMessage('Sign out didn’t finish. Please try again.')
+            setSigningOut(false)
+          }
+        }}>{signingOut ? 'Signing out…' : 'Sign out'}</button>
+      </section>
 
       {photoToFrame && (
         <AvatarCropper

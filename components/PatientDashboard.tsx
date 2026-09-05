@@ -37,6 +37,7 @@ import {
   type Period,
   type SessionRow,
 } from '@/lib/dashboard-stats';
+import ProgressTabs from '@/components/ProgressTabs';
 import GaugeWheel from '@/components/GaugeWheel';
 import SessionSplitBar from '@/components/SessionSplitBar';
 import Sprig from '@/components/Sprig';
@@ -146,7 +147,7 @@ export default function PatientDashboard({ targetUserId }: PatientDashboardProps
   if (loading) return <DashboardSkeleton adminView={adminView} />;
 
   return (
-    <div className="dash-page">
+    <main className="dash-page patient-page">
       <style>{`
         .dash-page {
           min-height: 100vh;
@@ -212,7 +213,7 @@ export default function PatientDashboard({ targetUserId }: PatientDashboardProps
           font-size: var(--text-sm);
           font-weight: 600;
           padding: var(--space-2) var(--space-4);
-          min-height: 36px;
+          min-height: 48px;
           border-radius: var(--radius-full);
           transition: background var(--dur-fast) var(--ease-out),
                       color var(--dur-fast) var(--ease-out),
@@ -244,8 +245,8 @@ export default function PatientDashboard({ targetUserId }: PatientDashboardProps
           display: inline-flex;
           align-items: center;
           justify-content: center;
-          width: 34px;
-          height: 34px;
+          width: 48px;
+          height: 48px;
           border: none;
           border-radius: var(--radius-full);
           background: transparent;
@@ -274,15 +275,10 @@ export default function PatientDashboard({ targetUserId }: PatientDashboardProps
           position: relative;
           background: var(--surface);
           border: 1px solid var(--border);
-          border-radius: var(--radius-xl);
+          border-radius: var(--radius-lg);
           padding: var(--space-6);
-          box-shadow: 0 1px 2px rgba(45, 45, 45, 0.04),
-                      0 12px 28px -18px rgba(47, 107, 69, 0.35);
+          box-shadow: none;
         }
-        /* The shared entrance keyframes start at opacity 0 but set no fill mode,
-           so a staggered card would paint fully opaque for its delay and then
-           blink out. Holding the first frame is what makes the stagger read. */
-        .animate-fadeInUp { animation-fill-mode: backwards; }
         .dash-card-title {
           margin: 0 0 var(--space-2);
           font-size: var(--text-sm);
@@ -292,7 +288,7 @@ export default function PatientDashboard({ targetUserId }: PatientDashboardProps
         }
         .dash-value {
           margin: 0;
-          font-family: var(--font-display);
+          font-family: var(--font-body);
           font-size: var(--text-3xl);
           font-weight: 700;
           color: var(--ink);
@@ -327,10 +323,9 @@ export default function PatientDashboard({ targetUserId }: PatientDashboardProps
         .dash-panel {
           background: var(--surface);
           border: 1px solid var(--border);
-          border-radius: var(--radius-xl);
+          border-radius: var(--radius-lg);
           padding: var(--space-6);
-          box-shadow: 0 1px 2px rgba(45, 45, 45, 0.04),
-                      0 12px 28px -18px rgba(47, 107, 69, 0.35);
+          box-shadow: none;
         }
         .dash-panel h2 {
           margin: 0 0 var(--space-1);
@@ -381,12 +376,12 @@ export default function PatientDashboard({ targetUserId }: PatientDashboardProps
           <div>
             {adminView ? <p className="dash-context">Read-only patient dashboard</p> : null}
             <h1 className="dash-greeting">
-              {adminView ? `${userName}'s progress` : `Welcome back, ${userName}`}
+              {adminView ? `${userName}'s progress` : 'Progress'}
             </h1>
             <p className="dash-sub">
               {adminView
                 ? 'Review their therapy activity without changing their records'
-                : 'Track your therapy progress and stay consistent'}
+                : 'See patterns in your exercise activity over time'}
             </p>
           </div>
           {adminView ? (
@@ -401,22 +396,13 @@ export default function PatientDashboard({ targetUserId }: PatientDashboardProps
           ) : (
             <div className="dash-actions">
               <Link href="/levels" className="pill-btn pill-btn-outline">
-                Practise
+                Choose an exercise
               </Link>
-              <button
-                className="pill-btn pill-btn-ghost"
-                onClick={async () => {
-                  const supabase = createClient();
-                  await supabase.auth.signOut();
-                  router.push('/login');
-                  router.refresh();
-                }}
-              >
-                Sign out
-              </button>
+
             </div>
           )}
         </header>
+        {!adminView && <ProgressTabs view="trends" />}
 
         {error ? (
           <div className="dash-panel" style={{ textAlign: 'center' }}>
@@ -579,7 +565,9 @@ export default function PatientDashboard({ targetUserId }: PatientDashboardProps
                         stroke="url(#dashFormLine)"
                         strokeWidth={3}
                         fill="url(#dashFormFill)"
-                        dot={false}
+                        // A single measured day still needs a visible mark;
+                        // without a dot, an isolated point draws no area.
+                        dot={{ r: 4, fill: '#2F6B45', stroke: '#FFFFFF', strokeWidth: 2 }}
                         activeDot={{ r: 5, fill: '#2F6B45', stroke: '#FFFFFF', strokeWidth: 2 }}
                       />
                     </AreaChart>
@@ -639,7 +627,7 @@ export default function PatientDashboard({ targetUserId }: PatientDashboardProps
           </>
         )}
       </div>
-    </div>
+    </main>
   );
 }
 

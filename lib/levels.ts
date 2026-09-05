@@ -2,10 +2,9 @@
 //
 // Unlock model: inside a box (group) poses are ordered by rank_in_group.
 // A pose is "cleared" when some completed session on it reached the
-// pose's requirements — form_quality_score >= unlock_min_score and, when
-// unlock_max_seconds is set, duration_seconds within the cap. The AI pose
-// model produces form_quality_score during the session, so no extra
-// analysis pass is needed here.
+// pose's requirements — target-pose time (stored as form_quality_score) >=
+// unlock_min_score and, when unlock_max_seconds is set, active duration within
+// the cap. This time-in-target metric is not a clinical form assessment.
 //
 // Every box is open — patients can enter any box in any order. Progression
 // still applies inside a box: poses unlock in rank_in_group order as earlier

@@ -1366,11 +1366,16 @@ export class GenericRepCounter {
     };
   }
 
-  reset() {
+  /** Drop an interrupted hold while retaining repetitions already completed. */
+  interrupt() {
     this.wasInPosition = false;
     this.positionHeldSince = 0;
     this.lastInPositionAt = 0;
     this.countedThisHold = false;
+  }
+
+  reset() {
+    this.interrupt();
     this.repCount = 0;
     this.lastTransitionTime = 0;
   }
@@ -1533,6 +1538,8 @@ export class CycleRepCounter {
  * isn't measurable (progress undefined), holding the current phase.
  */
 export class RomCycleRepCounter {
+  private lastReadableAt = 0;
+  private readingLost = false;
   private phase: CyclePhase = 'rest';
   private reachedTop = false;
   private holdStart = 0;
@@ -1574,18 +1581,24 @@ export class RomCycleRepCounter {
     const p = analysis.progress;
     let justCompleted = false;
 
-    // No reading this frame (primary joint hidden) — keep the current phase.
+    // Preserve brief tracking jitter, but never earn a hold or complete a
+    // movement using a long interval with no observable primary joint.
     if (typeof p !== 'number') {
+      this.readingLost = true;
+      if (now - this.lastReadableAt >= this.exitGraceMs) this.interrupt();
       return {
         repCount: this.repCount,
         justCompleted,
-        holdProgress: this.holdProgressNow(now),
+        holdProgress: this.holdProgressNow(this.lastReadableAt),
         holdMissed: false,
         holdEarned: this.holdSatisfied,
         phase: this.phase,
       };
     }
 
+    if (this.readingLost && now - this.lastReadableAt >= this.exitGraceMs) this.interrupt();
+    this.readingLost = false;
+    this.lastReadableAt = now;
     const atTop = p >= this.enterHigh;
     const atRest = p <= this.exitLow;
 
@@ -1653,12 +1666,18 @@ export class RomCycleRepCounter {
     };
   }
 
-  reset() {
+  /** An interrupted movement must begin again; completed repetitions survive. */
+  interrupt() {
+    this.readingLost = false;
     this.phase = 'rest';
     this.reachedTop = false;
     this.holdStart = 0;
     this.lastAboveAt = 0;
     this.holdSatisfied = false;
+  }
+
+  reset() {
+    this.interrupt();
     this.repCount = 0;
     this.lastRepTime = 0;
   }

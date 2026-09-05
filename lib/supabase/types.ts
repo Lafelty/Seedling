@@ -109,7 +109,13 @@ export interface Database {
         };
         // No client UPDATE privilege at all — use the complete_session() RPC.
         Update: Record<string, never>;
-        Relationships: [];
+        Relationships: [{
+          foreignKeyName: 'therapy_sessions_exercise_id_fkey';
+          columns: ['exercise_id'];
+          isOneToOne: false;
+          referencedRelation: 'exercises';
+          referencedColumns: ['id'];
+        }];
       };
       rep_data: {
         Row: {

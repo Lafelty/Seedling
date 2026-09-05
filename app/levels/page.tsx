@@ -113,7 +113,7 @@ export default function LevelsPage() {
         .not('completed_at', 'is', null),
     ])
 
-    if (groupsRes.error || exercisesRes.error) {
+    if (groupsRes.error || exercisesRes.error || sessionsRes.error) {
       console.error('Error loading level map:', groupsRes.error || exercisesRes.error)
       setLoadError(true)
       setLoading(false)

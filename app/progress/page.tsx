@@ -1,10 +1,12 @@
 'use client';
 
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
+import { loadProgressSnapshot } from '@/lib/progressSync';
 import { useEffect, useMemo, useState } from 'react';
 import { getProgress, setProgressUid, applyServerProgress, type ProgressData } from '@/lib/progress';
 import { createClient } from '@/lib/supabase/client';
-import { startOfMonth, endOfMonth, eachDayOfInterval, format, isSameDay, isSameMonth, addMonths, startOfDay, subDays } from 'date-fns';
+import { startOfMonth, endOfMonth, eachDayOfInterval, format, isSameDay, isSameMonth, addMonths } from 'date-fns';
 import { DayFace, MOOD_BG, computeDayMood, type DayMood } from '@/components/DayFace';
 import { StarBadge, StarGlyph } from '@/components/StarBadge';
 
@@ -25,69 +27,74 @@ export default function ProgressPage() {
   const [viewMonth, setViewMonth] = useState(() => startOfMonth(new Date()));
   const [selectedDay, setSelectedDay] = useState(() => format(new Date(), 'yyyy-MM-dd'));
 
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [monthError, setMonthError] = useState<string | null>(null);
+  const [monthLoading, setMonthLoading] = useState(true);
+  const [refreshKey, setRefreshKey] = useState(0);
+  const router = useRouter();
+
   useEffect(() => {
+    let cancelled = false;
+    setLoadError(null);
     (async () => {
-      const supabase = createClient();
-      const { data: { user } } = await supabase.auth.getUser();
-      if (!user) {
+      try {
+        const supabase = createClient();
+        const { data: { user }, error } = await supabase.auth.getUser();
+        if (error) throw error;
+        if (!user) { router.replace('/login'); return; }
+        if (cancelled) return;
+        setProgressUid(user.id);
         setProgress(getProgress());
-        return;
+        const { profile, completedDates } = await loadProgressSnapshot(supabase, user.id);
+        if (!cancelled) setProgress(applyServerProgress(profile.total_stars ?? 0, completedDates));
+      } catch {
+        if (!cancelled) setLoadError('Your latest progress could not be loaded. Any progress shown is the last saved copy.');
       }
-      setProgressUid(user.id);
-
-      // Database owns the star total and the completion history; derive the
-      // streak from the database's completed dates rather than localStorage,
-      // which was device-local and lost on a browser clear.
-      const [{ data: profile }, { data: completed }] = await Promise.all([
-        supabase.from('profiles').select('total_stars').eq('id', user.id).single(),
-        supabase
-          .from('therapy_sessions')
-          .select('started_at')
-          .eq('user_id', user.id)
-          .not('completed_at', 'is', null)
-          .gte('started_at', startOfDay(subDays(new Date(), 90)).toISOString()),
-      ]);
-      const completedDates = (completed ?? []).map((row: { started_at: string }) =>
-        format(new Date(row.started_at), 'yyyy-MM-dd')
-      );
-      setProgress(applyServerProgress(profile?.total_stars ?? 0, completedDates));
     })();
-  }, []);
+    return () => { cancelled = true; };
+  }, [router, refreshKey]);
 
-  // Load this month's sessions so each day can be inspected.
+  // Ignore late responses when the patient changes months quickly.
   useEffect(() => {
+    let cancelled = false;
+    const controller = new AbortController();
+    setMonthLoading(true);
+    setMonthError(null);
+    setSessions([]);
     (async () => {
-      const supabase = createClient();
-      const { data: { user } } = await supabase.auth.getUser();
-      if (!user) return;
-
-      const { data, error } = await supabase
-        .from('therapy_sessions')
-        .select('id, started_at, completed_at, duration_seconds, completed_reps, target_reps, form_quality_score, exercises(name)')
-        .eq('user_id', user.id)
-        .gte('started_at', startOfMonth(viewMonth).toISOString())
-        .lte('started_at', endOfMonth(viewMonth).toISOString())
-        .order('started_at', { ascending: true });
-
-      if (error) {
-        console.error('Error loading sessions:', error);
-        return;
-      }
-
-      setSessions(
-        (data ?? []).map((row: any) => ({
-          id: row.id,
-          started_at: row.started_at,
-          completed_at: row.completed_at,
-          duration_seconds: row.duration_seconds,
-          completed_reps: row.completed_reps,
+      try {
+        const supabase = createClient();
+        const { data: { user }, error: authError } = await supabase.auth.getUser();
+        if (authError || !user) throw new Error('Sign in to load session history.');
+        const { data, error } = await supabase.from('therapy_sessions')
+          .select('id, started_at, completed_at, duration_seconds, completed_reps, target_reps, form_quality_score, exercises(name)')
+          .eq('user_id', user.id)
+          .gte('started_at', startOfMonth(viewMonth).toISOString())
+          .lte('started_at', endOfMonth(viewMonth).toISOString())
+          .order('started_at', { ascending: true }).abortSignal(controller.signal);
+        if (error) throw error;
+        if (!cancelled) setSessions((data ?? []).map(row => ({
+          id: row.id, started_at: row.started_at, completed_at: row.completed_at,
+          duration_seconds: row.duration_seconds, completed_reps: row.completed_reps,
           target_reps: row.target_reps,
           form_quality_score: row.form_quality_score === null ? null : Number(row.form_quality_score),
           exercise_name: row.exercises?.name ?? 'Exercise',
-        }))
-      );
+        })));
+      } catch {
+        if (!cancelled) setMonthError('This month’s sessions could not be loaded. Please retry.');
+      } finally {
+        if (!cancelled) setMonthLoading(false);
+      }
     })();
-  }, [viewMonth]);
+    return () => { cancelled = true; controller.abort(); };
+  }, [viewMonth, refreshKey]);
+
+  function changeMonth(delta: number) {
+    const next = addMonths(viewMonth, delta);
+    setViewMonth(next);
+    setSelectedDay(format(isSameMonth(next, new Date()) ? new Date() : next, 'yyyy-MM-dd'));
+    setMonthLoading(true);
+  }
 
   const sessionsByDay = useMemo(() => {
     const map = new Map<string, DaySession[]>();
@@ -101,6 +108,7 @@ export default function ProgressPage() {
   }, [sessions]);
 
   if (!progress) {
+    if (loadError) return <main className="max-w-md mx-auto p-8"><p role="alert">{loadError}</p><button className="btn btn-primary mt-4" onClick={() => setRefreshKey(k => k + 1)}>Retry loading</button></main>;
     return <ProgressSkeleton />;
   }
 
@@ -132,11 +140,13 @@ export default function ProgressPage() {
       </div>
 
       {/* Stats Grid */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 'var(--space-3)', marginBottom: 'var(--space-12)' }}>
+      {loadError && <div className="card mb-6"><p role="alert">{loadError}</p><button className="btn mt-3" onClick={() => setRefreshKey(k => k + 1)}>Retry loading</button></div>}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: 'var(--space-3)', marginBottom: 'var(--space-12)' }}>
         <div
           className="card text-center animate-scaleIn stagger-1"
           style={{
             background: 'linear-gradient(160deg, rgba(201, 184, 138, 0.20), rgba(107, 143, 122, 0.10) 70%)',
+            minWidth: 0, padding: 'var(--space-4) var(--space-2)',
             borderColor: 'rgba(74, 107, 90, 0.25)',
           }}
         >
@@ -153,6 +163,7 @@ export default function ProgressPage() {
           className="card text-center animate-scaleIn stagger-2"
           style={{
             background: 'linear-gradient(160deg, rgba(74, 107, 90, 0.20), rgba(107, 143, 122, 0.08) 70%)',
+            minWidth: 0, padding: 'var(--space-4) var(--space-2)',
             borderColor: 'rgba(74, 107, 90, 0.25)',
           }}
         >
@@ -171,6 +182,7 @@ export default function ProgressPage() {
           className="card text-center animate-scaleIn stagger-3"
           style={{
             background: 'linear-gradient(160deg, rgba(107, 143, 122, 0.22), rgba(74, 107, 90, 0.08) 70%)',
+            minWidth: 0, padding: 'var(--space-4) var(--space-2)',
             borderColor: 'rgba(74, 107, 90, 0.25)',
           }}
         >
@@ -197,7 +209,7 @@ export default function ProgressPage() {
           <h2 style={{ color: 'var(--primary)' }}>{format(viewMonth, 'MMMM yyyy')}</h2>
           <div style={{ display: 'flex', gap: 'var(--space-2)' }}>
             <button
-              onClick={() => setViewMonth(m => addMonths(m, -1))}
+              onClick={() => changeMonth(-1)}
               aria-label="Previous month"
               style={{
                 width: '36px', height: '36px', borderRadius: 'var(--radius-full)',
@@ -208,7 +220,7 @@ export default function ProgressPage() {
               ‹
             </button>
             <button
-              onClick={() => setViewMonth(m => addMonths(m, 1))}
+              onClick={() => changeMonth(1)}
               disabled={isSameMonth(viewMonth, today)}
               aria-label="Next month"
               style={{
@@ -236,7 +248,12 @@ export default function ProgressPage() {
             <div key={`empty-${i}`} />
           ))}
 
-          {daysInMonth.map((day) => {
+          {monthLoading || monthError ? (
+            <div className="col-span-7 py-8 text-center">
+              <p role={monthError ? 'alert' : 'status'}>{monthError ?? 'Loading sessions…'}</p>
+              {monthError && <button className="btn mt-3" onClick={() => setRefreshKey(k => k + 1)}>Retry loading</button>}
+            </div>
+          ) : daysInMonth.map((day) => {
             const isToday = isSameDay(day, today);
             const isFuture = day > today && !isToday;
             const dayStr = format(day, 'yyyy-MM-dd');
@@ -345,7 +362,7 @@ export default function ProgressPage() {
       >
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 'var(--space-3)', flexWrap: 'wrap', marginBottom: 'var(--space-4)' }}>
           <h2 style={{ color: 'var(--primary)' }}>{format(selectedDate, 'EEEE, MMMM d')}</h2>
-          {selectedCompleted && (
+          {!monthLoading && !monthError && selectedCompleted && (
             <StarBadge as="span" style={{ fontSize: 'var(--text-sm)', padding: 'var(--space-1) var(--space-3)' }}>
               <StarGlyph size={14} />
               <span>Star earned</span>
@@ -353,7 +370,9 @@ export default function ProgressPage() {
           )}
         </div>
 
-        {selectedSessions.length === 0 ? (
+        {monthLoading || monthError ? (
+          <p style={{ color: 'var(--muted)' }}>{monthLoading ? 'Loading session details…' : 'Session details are unavailable until this month loads.'}</p>
+        ) : selectedSessions.length === 0 ? (
           <div style={{ textAlign: 'center', padding: 'var(--space-8) var(--space-4)' }}>
             <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="var(--muted)" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" style={{ margin: '0 auto var(--space-3)', opacity: 0.6 }}>
               <path d="M12 22v-7" />
@@ -423,7 +442,7 @@ export default function ProgressPage() {
                       {format(new Date(s.started_at), 'h:mm a')}
                       {' · '}{s.completed_reps}/{s.target_reps} reps
                       {s.duration_seconds != null && <>{' · '}{mins > 0 ? `${mins}m ` : ''}{secs}s</>}
-                      {s.form_quality_score != null && <>{' · '}form {Math.round(s.form_quality_score)}%</>}
+                      {s.form_quality_score != null && <>{' · '}target-pose time {Math.round(s.form_quality_score)}%</>}
                     </p>
                   </div>
                 </div>
@@ -568,7 +587,7 @@ function MilestoneJourney({ totalStars }: { totalStars: number }) {
     >
       <h2 style={{ marginBottom: 'var(--space-1)', color: 'var(--primary)' }}>Your journey to a real tree</h2>
       <p style={{ color: 'var(--muted)', fontSize: 'var(--text-sm)', marginBottom: 'var(--space-6)' }}>
-        Every star grows your garden. Reach {REAL_TREE_STARS} and our partner NGO plants a real tree in your name.
+        Every star grows your garden. At {REAL_TREE_STARS} stars, you reach your real-tree milestone. Planting requires a separate confirmation from a partner.
       </p>
 
       {/* Growth stages */}
@@ -619,7 +638,7 @@ function MilestoneJourney({ totalStars }: { totalStars: number }) {
                         borderRadius: 'var(--radius-full)',
                       }}
                     >
-                      You're here
+                      You&apos;re here
                     </span>
                   )}
                 </div>
@@ -636,7 +655,7 @@ function MilestoneJourney({ totalStars }: { totalStars: number }) {
           <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', width: '44px', flexShrink: 0 }}>
             <Connector filled={realTreeReached} grown={grown} delay={`${JOURNEY_NODES.length * 120}ms`} top />
           </div>
-          <div style={{ flex: 1, paddingTop: 'var(--space-1)' }}>
+          <div style={{ flex: 1, minWidth: 0, paddingTop: 'var(--space-1)' }}>
             <div
               className={realTreeReached ? 'gx-hero-glow' : undefined}
               style={{
@@ -648,23 +667,23 @@ function MilestoneJourney({ totalStars }: { totalStars: number }) {
                 border: `1px solid ${realTreeReached ? 'rgba(201, 184, 138, 0.7)' : 'rgba(201, 184, 138, 0.4)'}`,
               }}
             >
-              <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-3)', marginBottom: 'var(--space-2)' }}>
+              <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 'var(--space-3)', marginBottom: 'var(--space-2)' }}>
                 <span style={{ fontSize: '2rem', lineHeight: 1, filter: realTreeReached ? 'none' : 'grayscale(0.4) opacity(0.85)' }}>🌳</span>
                 <div>
                   <p style={{ fontFamily: 'var(--font-display)', fontSize: 'var(--text-xl)', fontWeight: 700, color: 'var(--ink)', lineHeight: 1.2 }}>
-                    {realTreeReached ? 'A real tree, planted in your name' : 'A real tree, in your name'}
+                    {realTreeReached ? 'Real-tree milestone reached' : 'Your real-tree milestone'}
                   </p>
                   {realTreeReached && (
                     <span style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', marginTop: '4px', fontSize: 'var(--text-sm)', fontWeight: 700, color: 'var(--primary)' }}>
-                      <CheckIcon size={14} stroke="var(--primary)" /> Planted
+                      <CheckIcon size={14} stroke="var(--primary)" /> Star goal reached
                     </span>
                   )}
                 </div>
               </div>
               <p style={{ fontSize: 'var(--text-sm)', color: realTreeReached ? 'var(--ink)' : 'var(--muted)' }}>
                 {realTreeReached
-                  ? 'Because of your effort, our partner NGO planted a real tree. Your healing left something living behind.'
-                  : `Keep tending your garden — ${starsToRealTree} more ${starsToRealTree === 1 ? 'star' : 'stars'} and a real tree is planted for you.`}
+                  ? 'You have reached the star goal. Planting has not been confirmed in the app. Your therapist can share any available partner updates.'
+                  : `Keep tending your garden — ${starsToRealTree} more ${starsToRealTree === 1 ? 'star' : 'stars'} to reach this milestone.`}
               </p>
             </div>
           </div>

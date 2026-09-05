@@ -470,16 +470,17 @@ export default function PatientDashboard({ targetUserId }: PatientDashboardProps
                 <SessionSplitBar finished={stats.finished} unfinished={stats.unfinished} />
               </Card>
 
-              <Card title="Form Quality" className="animate-fadeInUp stagger-2">
+              <Card title="Target-pose Time" className="animate-fadeInUp stagger-2">
                 <div className="dash-gauge">
                   <GaugeWheel
                     value={stats.avgForm}
                     size={150}
-                    subLabel="avg form"
-                    ariaLabel={`Average form quality ${stats.avgForm} percent`}
+                    subLabel="avg target time"
+                    ariaLabel={`Average target-pose time ${stats.avgForm} percent`}
                   />
                 </div>
                 <DeltaLine delta={formatDelta(stats.avgForm, stats.prevAvgForm, unit)} />
+                <p className="text-sm mt-3" style={{ color: 'var(--muted)' }}>Share of tracked exercise time spent in the configured target pose. This is not a clinical assessment or movement-match score.</p>
               </Card>
 
               <Card title="Total Reps" className="animate-fadeInUp stagger-3">
@@ -491,7 +492,7 @@ export default function PatientDashboard({ targetUserId }: PatientDashboardProps
               </Card>
 
               <Card
-                title={resolved.mode === 'week' ? 'Weekly Improvement' : 'Monthly Improvement'}
+                title={resolved.mode === 'week' ? 'Weekly Score Change' : 'Monthly Score Change'}
                 sprig
                 className="animate-fadeInUp stagger-4"
               >
@@ -501,7 +502,7 @@ export default function PatientDashboard({ targetUserId }: PatientDashboardProps
                     signed
                     size={150}
                     subLabel={`vs last ${unit}`}
-                    ariaLabel={`Form quality changed ${stats.improvement} percent versus last ${unit}`}
+                    ariaLabel={`Target-pose time changed ${stats.improvement} percent versus last ${unit}`}
                   />
                 </div>
                 <p
@@ -525,7 +526,7 @@ export default function PatientDashboard({ targetUserId }: PatientDashboardProps
 
             <div className="dash-charts">
               <section className="dash-panel animate-fadeInUp stagger-5">
-                <h2>Form Quality Trend</h2>
+                <h2>Target-pose Time Trend</h2>
                 <p className="dash-panel-sub">Average score on the days you practised</p>
                 {empty ? (
                   <Empty
@@ -566,7 +567,7 @@ export default function PatientDashboard({ targetUserId }: PatientDashboardProps
                         tick={{ fontSize: 12, fill: '#6B6B6B' }}
                       />
                       <Tooltip
-                        content={<ChartTip suffix="%" name="Form" emptyText="Rest day" />}
+                        content={<ChartTip suffix="%" name="Target-pose time" emptyText="Rest day" />}
                         cursor={false}
                       />
                       <Area

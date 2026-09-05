@@ -119,7 +119,7 @@ export default function LevelGroupPage() {
 
     // A failed request is not the same as a box that isn't there: offer a
     // retry here rather than silently bouncing the patient back to the map.
-    if (groupsRes.error || exercisesRes.error) {
+    if (groupsRes.error || exercisesRes.error || sessionsRes.error) {
       console.error('Error loading box:', groupsRes.error || exercisesRes.error)
       setLoadError(true)
       setLoading(false)
@@ -576,8 +576,8 @@ export default function LevelGroupPage() {
                         description, which they can't act on yet. */}
                     {locked && prev ? (
                       <p className="pose-desc">
-                        Opens when you reach {exercise.unlock_min_score}% form on {prev.name}
-                        {exercise.unlock_max_seconds != null && ` within ${exercise.unlock_max_seconds} seconds`}.
+                        Opens after completing {prev.name} with at least {prev.unlock_min_score}% target-pose time
+                        {prev.unlock_max_seconds != null && ` within ${prev.unlock_max_seconds} active seconds`}.
                       </p>
                     ) : (
                       exercise.description && <p className="pose-desc">{exercise.description}</p>
@@ -594,7 +594,7 @@ export default function LevelGroupPage() {
                           <svg width="12" height="12" viewBox="0 0 20 20" fill="currentColor" aria-hidden>
                             <path d="M10 0l2.5 6.5H19l-5.5 4 2 6.5L10 13l-5.5 4 2-6.5-5.5-4h6.5z" />
                           </svg>
-                          Best form {Math.round(bestScore)}%
+                          Best target-pose time {Math.round(bestScore)}%
                         </span>
                       )}
                     </span>

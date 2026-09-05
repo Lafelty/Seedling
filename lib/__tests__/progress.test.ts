@@ -5,7 +5,7 @@ process.env.TZ = 'Asia/Bangkok'; // UTC+7
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { format } from 'date-fns';
-import { dayKey, computeStreak, getDayStrip } from '../progress';
+import { dayKey, computeStreak, getDayStrip, setProgressUid, applyServerProgress, getProgress, recordCompletion } from '../progress';
 
 // 01:00 local on 2026-07-25 in Bangkok — still 2026-07-24 in UTC. Every
 // assertion below distinguishes the two.
@@ -51,5 +51,59 @@ describe('day keys are local calendar days', () => {
     expect(strip).toHaveLength(7);
     expect(strip[6].date).toBe('2026-07-25');
     expect(strip[0].date).toBe('2026-07-19');
+  });
+});
+
+describe('progress cache resilience', () => {
+  let entries: Map<string, string>;
+  beforeEach(() => {
+    entries = new Map();
+    vi.stubGlobal('window', {});
+    vi.stubGlobal('localStorage', {
+      getItem: (key: string) => entries.get(key) ?? null,
+      setItem: (key: string, value: string) => entries.set(key, value),
+    });
+    setProgressUid(crypto.randomUUID());
+  });
+  afterEach(() => vi.unstubAllGlobals());
+
+  it('clears stale history only when an explicit successful empty snapshot is supplied', () => {
+    applyServerProgress(4, ['2026-09-01']);
+    expect(applyServerProgress(5).completedDates).toEqual(['2026-09-01']);
+    const cleared = applyServerProgress(0, []);
+    expect(cleared.completedDates).toEqual([]);
+    expect(cleared.lastSessionDate).toBeNull();
+  });
+
+  it('does not let blocked browser storage prevent completion', () => {
+    vi.stubGlobal('localStorage', {
+      getItem() { throw new Error('denied'); },
+      setItem() { throw new Error('denied'); },
+    });
+    applyServerProgress(4, []);
+    expect(recordCompletion(5).totalStars).toBe(5);
+    expect(getProgress().totalStars).toBe(5);
+  });
+
+  it('isolates users and ignores a shared last-user key changed by another tab', () => {
+    setProgressUid('account-a');
+    applyServerProgress(8, []);
+    localStorage.setItem('medproj_current_uid', 'account-b');
+    expect(getProgress().totalStars).toBe(8);
+    setProgressUid('account-b');
+    expect(getProgress().totalStars).toBe(0);
+  });
+
+  it('ignores malformed persisted data', () => {
+    setProgressUid('corrupt-account');
+    localStorage.setItem('medproj_progress_corrupt-account', '{');
+    expect(getProgress().totalStars).toBe(0);
+  });
+
+  it('attributes a recovered completion to its original session day', () => {
+    const updated = recordCompletion(1, EARLY_MORNING);
+    expect(updated.completedDates).toEqual(['2026-07-25']);
+    expect(updated.lastSessionDate).toBe('2026-07-25');
+    expect(recordCompletion(1, EARLY_MORNING).completedDates).toEqual(['2026-07-25']);
   });
 });

@@ -11,6 +11,8 @@ import confetti from 'canvas-confetti';
 import { format, parseISO, startOfDay, subDays } from 'date-fns';
 import { DayFace, MOOD_BG, computeDayMood } from '@/components/DayFace';
 import { StarBadge } from '@/components/StarBadge';
+import { pendingSessionResults, type SessionResult } from '@/lib/sessionResult';
+import { loadProgressSnapshot } from '@/lib/progressSync';
 
 interface WeekSession {
   started_at: string;
@@ -30,6 +32,10 @@ export default function DashboardPage() {
   const [showEmptyState, setShowEmptyState] = useState(false);
   const [user, setUser] = useState<any>(null);
   const [isAdmin, setIsAdmin] = useState(false);
+  const [profileName, setProfileName] = useState<string | null>(null);
+  const [pending, setPending] = useState<SessionResult[]>([]);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [refreshKey, setRefreshKey] = useState(0);
   const [homeView, setHomeView] = useState<HomeView>('tree');
   // Garden stage to animate into when arriving right after a session that
   // revealed a new element (set by the session page via sessionStorage).
@@ -47,88 +53,50 @@ export default function DashboardPage() {
       // Fresh bloom: land on the garden so the user sees it grow.
       setBloomReveal(Number(reveal));
       setHomeView('garden');
-      localStorage.setItem(HOME_VIEW_KEY, 'garden');
+      try { localStorage.setItem(HOME_VIEW_KEY, 'garden'); } catch { /* optional preference */ }
       return;
     }
 
-    const saved = localStorage.getItem(HOME_VIEW_KEY);
-    if (saved === 'garden' || saved === 'tree') setHomeView(saved);
+    try {
+      const saved = localStorage.getItem(HOME_VIEW_KEY);
+      if (saved === 'garden' || saved === 'tree') setHomeView(saved);
+    } catch { /* optional preference */ }
   }, []);
 
   const switchView = (view: HomeView) => {
     setHomeView(view);
-    localStorage.setItem(HOME_VIEW_KEY, view);
+    try { localStorage.setItem(HOME_VIEW_KEY, view); } catch { /* optional preference */ }
   };
 
   useEffect(() => {
-    // Check if user is logged in (only in browser)
-    if (typeof window !== 'undefined') {
+    let cancelled = false;
+    setLoadError(null);
+    (async () => {
       try {
         const supabase = createClient();
-        supabase.auth.getUser().then(async ({ data: { user } }) => {
-          if (!user) {
-            router.push('/login');
-            return;
-          }
-
-          setUser(user);
-
-          // Re-read garden progress under this user's namespace (the initial
-          // synchronous read below may have used a stale/anon key).
-          setProgressUid(user.id);
-          setProgress(getProgress());
-          setDayStrip(getDayStrip());
-
-          if (user) {
-            const { data: profile, error: profileError } = await supabase
-              .from('profiles')
-              .select('is_admin, total_stars')
-              .eq('id', user.id)
-              .single();
-
-            if (profileError) {
-              console.error('Error loading profile:', profileError);
-              return;
-            }
-
-            if (profile?.is_admin) {
-              setIsAdmin(true);
-            }
-
-            // Database owns both the star total (server-awarded per session,
-            // admin-editable) and the completion history — mirror them into the
-            // local cache so the two never drift and an admin edit isn't
-            // reverted. Streak is derived from the database's completed dates.
-            const totalStars = profile?.total_stars ?? 0;
-            const { data: completed } = await supabase
-              .from('therapy_sessions')
-              .select('started_at')
-              .eq('user_id', user.id)
-              .not('completed_at', 'is', null)
-              .gte('started_at', startOfDay(subDays(new Date(), 90)).toISOString());
-            const completedDates = (completed ?? []).map((row: { started_at: string }) =>
-              format(new Date(row.started_at), 'yyyy-MM-dd')
-            );
-            setProgress(applyServerProgress(totalStars, completedDates));
-            if (totalStars > 0) setShowEmptyState(false);
-          }
-        }).catch((error) => {
-          console.error('Error checking auth:', error);
-        });
-      } catch (error) {
-        console.error('Error creating Supabase client:', error);
+        const { data: { user }, error } = await supabase.auth.getUser();
+        if (error) throw error;
+        if (!user) { router.replace('/login'); return; }
+        if (cancelled) return;
+        setUser(user);
+        setProgressUid(user.id);
+        setProgress(getProgress());
+        setDayStrip(getDayStrip());
+        setPending(pendingSessionResults(user.id));
+        const { profile, completedDates } = await loadProgressSnapshot(supabase, user.id);
+        if (cancelled) return;
+        setIsAdmin(profile.is_admin === true);
+        setProfileName(profile.name);
+        const updated = applyServerProgress(profile.total_stars ?? 0, completedDates);
+        setProgress(updated);
+        setDayStrip(getDayStrip());
+        setShowEmptyState(updated.totalStars === 0 && completedDates.length === 0);
+      } catch {
+        if (!cancelled) setLoadError('Your latest progress could not be loaded. Any progress shown is the last saved copy.');
       }
-    }
-
-    const data = getProgress();
-    setProgress(data);
-    setDayStrip(getDayStrip());
-
-    // Show empty state if no stars and no completed days
-    if (data.totalStars === 0 && data.completedDates.length === 0) {
-      setShowEmptyState(true);
-    }
-  }, []);
+    })();
+    return () => { cancelled = true; };
+  }, [router, refreshKey]);
 
   // Load this week's sessions so the day strip can show mood faces
   // (same great/happy/partial/rest logic as the progress calendar).
@@ -174,6 +142,7 @@ export default function DashboardPage() {
   }, [weekSessions]);
 
   if (!progress) {
+    if (loadError) return <main className="max-w-md mx-auto p-8"><p role="alert">{loadError}</p><button className="btn btn-primary mt-4" onClick={() => setRefreshKey(k => k + 1)}>Retry loading</button></main>;
     return (
       <div className="min-h-screen pb-24">
         {/* Skeleton Header */}
@@ -217,6 +186,7 @@ export default function DashboardPage() {
 
   const starsNeeded = getStarsNeededForNextStage(progress.treeStage, progress.totalStars);
   const displayName =
+    profileName ||
     user?.user_metadata?.name ||
     user?.user_metadata?.full_name ||
     user?.email?.split('@')[0] ||
@@ -291,6 +261,18 @@ export default function DashboardPage() {
         </header>
 
         {/* Growth view: tree or garden */}
+        {(loadError || pending.length > 0) && (
+          <section className="max-w-2xl mx-auto px-6 space-y-4">
+            {loadError && <div className="card"><p role="alert">{loadError}</p><button className="btn mt-3" onClick={() => setRefreshKey(k => k + 1)}>Retry loading</button></div>}
+            {pending.map(result => (
+              <div className="card" key={result.sessionId}>
+                <h2 className="text-lg">A session is waiting to save</h2>
+                <p className="mt-2">{result.exerciseName} · {result.reps.length} {result.reps.length === 1 ? 'repetition' : 'repetitions'}. Your results are kept on this device.</p>
+                <Link className="btn btn-primary mt-3" href={`/session?recover=${encodeURIComponent(result.sessionId)}`}>Review and retry saving</Link>
+              </div>
+            ))}
+          </section>
+        )}
         <section className="px-6 py-12 animate-fadeInUp" style={{ animationDelay: '150ms' }}>
           <div className="max-w-2xl mx-auto text-center">
             {homeView === 'tree' ? (
@@ -308,7 +290,7 @@ export default function DashboardPage() {
                       {getStageName(progress.treeStage)}
                     </h2>
                     <p style={{ color: 'var(--muted)', fontSize: 'var(--text-base)' }}>
-                      {starsNeeded} more stars until "{getNextStageName(progress.treeStage)}"
+                      {progress.treeStage === 'mature' ? 'Your tree is fully grown. Keep growing your garden.' : <>{starsNeeded} more stars until &quot;{getNextStageName(progress.treeStage)}&quot;</>}
                     </p>
 
                     <StageProgressBar percent={getStageProgressPercent(progress.treeStage, progress.totalStars)} />
@@ -426,7 +408,7 @@ export default function DashboardPage() {
         <section className="px-6 py-8 animate-fadeInUp" style={{ animationDelay: '400ms' }}>
           <div className="max-w-2xl mx-auto">
             <Link href="/levels" className="btn btn-primary w-full text-center flex items-center justify-center gap-2">
-              Begin today's session
+              Begin today&apos;s session
               <svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="2">
                 <path d="M5 10h10M10 5l5 5-5 5" />
               </svg>

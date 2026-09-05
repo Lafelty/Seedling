@@ -12,7 +12,7 @@ try {
 const supabaseWs = supabaseOrigin.replace(/^https/, 'wss')
 
 // CSP shipped in Report-Only first: the pose engine compiles WebAssembly
-// (MediaPipe tasks-vision) and runs TF.js, so an over-tight policy would break
+// (MediaPipe tasks-vision), so an over-tight policy would break
 // the core feature. Watch the browser's CSP violation reports, then switch the
 // header key below to 'Content-Security-Policy' to enforce.
 const contentSecurityPolicy = [
@@ -21,7 +21,7 @@ const contentSecurityPolicy = [
   "object-src 'none'",
   "frame-ancestors 'none'",
   "form-action 'self'",
-  // 'wasm-unsafe-eval' for MediaPipe/TF.js WebAssembly; Next injects small
+  // 'wasm-unsafe-eval' for MediaPipe WebAssembly; Next injects small
   // inline bootstrap scripts, hence 'unsafe-inline'.
   "script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval'",
   "style-src 'self' 'unsafe-inline'",
@@ -45,12 +45,6 @@ const securityHeaders = [
 ]
 
 const nextConfig = {
-  transpilePackages: ['@tensorflow/tfjs', '@tensorflow-models/pose-detection'],
-  turbopack: {
-    resolveAlias: {
-      '@mediapipe/pose': './lib/mediapipe-stub.js',
-    },
-  },
   async headers() {
     return [
       {

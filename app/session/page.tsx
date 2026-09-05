@@ -3,11 +3,12 @@
 import Link from 'next/link'
 import { useEffect, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { recordCompletion, applyServerProgress, getProgress, setProgressUid } from '@/lib/progress'
+import { SessionClock } from '@/lib/sessionClock'
+import { forgetSessionResult, pendingSessionResults, retainSessionResult, saveSessionResult, type SessionResult } from '@/lib/sessionResult'
+import { recordCompletion, getProgress, setProgressUid } from '@/lib/progress'
 import { getGardenStage, getGardenStageName, getGardenImagePath, getStarsToNextBloom, getGardenProgressPercent } from '@/lib/garden'
 import { playRepChime, playCompletionFanfare, vibrate } from '@/lib/rewardFx'
 import confetti from 'canvas-confetti'
-import { useToast } from '@/components/Toast'
 import { createClient } from '@/lib/supabase/client'
 import {
   initDetector,
@@ -35,10 +36,11 @@ import {
 } from '@/lib/trajectory'
 import type { ExerciseRow } from '@/lib/supabase/types'
 
-type SessionState = 'loading' | 'ready' | 'countdown' | 'active' | 'paused' | 'completed'
+type SessionState = 'loading' | 'ready' | 'starting' | 'countdown' | 'active' | 'paused' | 'completed'
 type PostureFeedback = 'good' | 'adjust' | 'analyzing'
 
 interface RepData {
+  id: string
   repNumber: number
   holdDuration: number
   formScore: number
@@ -77,7 +79,8 @@ type Exercise = Pick<
 export default function SessionPage() {
   const router = useRouter()
   const videoRef = useRef<HTMLVideoElement>(null)
-  const canvasRef = useRef<HTMLCanvasElement>(null)
+  const [videoSize, setVideoSize] = useState({ width: 0, height: 0 })
+  const mountedRef = useRef(false)
   const repCounterRef = useRef<RepCounter | null>(null)
   // DTW path scoring for cyclic exercises — null when the exercise has no
   // usable demo curves (feature silently off).
@@ -90,21 +93,29 @@ export default function SessionPage() {
   // completeSession() is fired from the detection loop; this makes it one-shot
   // so a stray frame can never double-save the session or its rep rows.
   const completingRef = useRef(false)
+  const activeRef = useRef(false)
+  const cameraReadyRef = useRef(false)
+  const userIdRef = useRef<string | null>(null)
+  const sessionClockRef = useRef(new SessionClock())
+  const pendingResultRef = useRef<SessionResult | null>(null)
+  const [pendingResult, setPendingResult] = useState<SessionResult | null>(null)
+  const savingRef = useRef(false)
+  const [saving, setSaving] = useState(false)
+  const [saveError, setSaveError] = useState<string | null>(null)
+  const [retained, setRetained] = useState(false)
+  const [cameraEnabled, setCameraEnabled] = useState(false)
+  const [startError, setStartError] = useState<string | null>(null)
 
   // Exercise state
   const [exercise, setExercise] = useState<Exercise | null>(null)
   const [exerciseLoading, setExerciseLoading] = useState(true)
 
   // Session tracking state
-  const [sessionId, setSessionId] = useState<string | null>(null)
-  const [sessionStartTime, setSessionStartTime] = useState<Date | null>(null)
-  const [repDataList, setRepDataList] = useState<RepData[]>([])
   const lastFrameTime = useRef<number>(Date.now())
 
   // Refs mirror session values so the detection loop and completeSession never
   // read stale state captured in the (rarely re-run) effect closure.
   const sessionIdRef = useRef<string | null>(null)
-  const sessionStartTimeRef = useRef<Date | null>(null)
   const repCountRef = useRef(0)
   const repDataListRef = useRef<RepData[]>([])
   const goodPostureTimeRef = useRef(0) // ms in "good" posture
@@ -143,16 +154,43 @@ export default function SessionPage() {
   const [isSpeaking, setIsSpeaking] = useState(false)
   const [reward, setReward] = useState<SessionReward | null>(null)
 
-  const { showToast, ToastComponent } = useToast()
 
   const TARGET_REPS = exercise?.target_reps ?? 10
   const mode: TrackingMode = exercise?.tracking_mode ?? 'body'
 
   // Load exercise from database
   useEffect(() => {
+    let cancelled = false
+    mountedRef.current = true
     async function loadExercise() {
       try {
         const supabase = createClient()
+
+        const { data: { user } } = await supabase.auth.getUser()
+        if (cancelled) return
+        if (!user) {
+          router.replace('/login')
+          return
+        }
+        userIdRef.current = user.id
+        setProgressUid(user.id)
+        const recoveryId = new URLSearchParams(window.location.search).get('recover')
+        if (recoveryId) {
+          const pending = pendingSessionResults(user.id).find(result => result.sessionId === recoveryId)
+          if (!pending) {
+            setCameraError('This session is no longer waiting to save. Return to your garden to check your progress.')
+            return
+          }
+          pendingResultRef.current = pending
+          setPendingResult(pending)
+          sessionIdRef.current = pending.sessionId
+          repCountRef.current = pending.reps.length
+          setRepCount(pending.reps.length)
+          setRetained(true)
+          setSaveError('This session is waiting to sync. Retry saving when you are connected.')
+          setSessionState('completed')
+          return
+        }
 
         // /levels passes ?exercise=<id>; without it fall back to the most
         // recent active exercise (classic single-exercise session).
@@ -170,6 +208,7 @@ export default function SessionPage() {
         }
 
         const { data, error } = await query.single()
+        if (cancelled) return
 
         if (error) {
           console.error('Error loading exercise:', error)
@@ -178,7 +217,12 @@ export default function SessionPage() {
         }
 
         if (data) {
+          if (!Number.isInteger(data.target_reps) || (data.target_reps ?? 0) < 1) {
+            setCameraError('This exercise needs a repetition target. Please contact your therapist.')
+            return
+          }
           setExercise(data as Exercise)
+          setCameraEnabled(true)
           // Ghost skeleton: the therapist's recorded target pose, shown behind
           // the patient's live skeleton as a visual goal.
           setGhostPose(pickReferencePose(data.recorded_paths, data.pose_criteria))
@@ -202,15 +246,22 @@ export default function SessionPage() {
           console.log('✅ Loaded exercise:', data.name)
         }
       } catch (err) {
+        if (cancelled) return
         console.error('Failed to load exercise:', err)
         setCameraError('Failed to load exercise. Please try again.')
       } finally {
-        setExerciseLoading(false)
+        if (!cancelled) setExerciseLoading(false)
       }
     }
 
     loadExercise()
-  }, [])
+    return () => {
+      cancelled = true
+      mountedRef.current = false
+      activeRef.current = false
+      if ('speechSynthesis' in window) window.speechSynthesis.cancel()
+    }
+  }, [router])
 
   // Pin TTS to a fixed language/accent instead of the phone's preferred
   // language. Change TTS_LANG to switch accent (e.g. 'en-GB', 'th-TH').
@@ -308,7 +359,7 @@ export default function SessionPage() {
   // Setup camera and pose detector
   useEffect(() => {
     // Wait for exercise to load before setting up camera
-    if (exerciseLoading || !exercise) return
+    if (exerciseLoading || !exercise || !cameraEnabled) return
 
     // `stream` used to be assigned only after getUserMedia resolved, so an
     // unmount before that (StrictMode's double-mount, a fast navigation) ran
@@ -329,6 +380,14 @@ export default function SessionPage() {
           return
         }
         stream = acquired
+        acquired.getVideoTracks().forEach(track => track.addEventListener('ended', () => {
+          if (cancelled) return
+          cameraReadyRef.current = false
+          handlePause()
+          setIsDetecting(false)
+          setCameraEnabled(false)
+          setCameraError('The camera disconnected. Your session is paused and completed repetitions are still here. Reconnect the camera and retry, or save and exit.')
+        }))
 
         if (videoRef.current) {
           videoRef.current.srcObject = acquired
@@ -346,20 +405,33 @@ export default function SessionPage() {
         const initialized = await initDetector(exercise?.tracking_mode ?? 'body')
         if (cancelled) return
         if (!initialized) {
-          console.warn('Pose detector failed to initialize, continuing without AI')
-        } else {
-          console.log('✅ Pose detector initialized successfully')
-          setIsDetecting(true)
+          acquired.getTracks().forEach(track => track.stop())
+          setCameraEnabled(false)
+          setIsDetecting(false)
+          setCameraError('Movement tracking could not start. Check your connection, then retry. No session has started.')
+          return
         }
+        setIsDetecting(true)
+        cameraReadyRef.current = true
 
         // Wait for a tap before starting — mobile browsers only allow
         // speech synthesis after a user gesture on the page, so the
         // Start tap doubles as the audio unlock.
-        setSessionState('ready')
+        setSessionState(sessionIdRef.current ? 'paused' : 'ready')
       } catch (err) {
         if (cancelled) return // play() rejects on teardown — not a camera failure
         console.error('Camera error:', err)
-        setCameraError('Camera access denied. Please allow camera access to continue.')
+        stream?.getTracks().forEach(track => track.stop())
+        setCameraEnabled(false)
+        setIsDetecting(false)
+        const name = err instanceof DOMException ? err.name : ''
+        setCameraError(name === 'NotAllowedError'
+          ? 'Camera permission is needed to track this exercise. Allow camera access in your browser settings, then retry.'
+          : name === 'NotFoundError'
+            ? 'No camera was found. Connect a camera or use a device with a front camera.'
+            : name === 'NotReadableError'
+              ? 'Your camera is busy. Close other apps using it, then retry.'
+              : 'The camera or movement tracker could not start. Check your connection and retry.')
       }
     }
 
@@ -367,6 +439,7 @@ export default function SessionPage() {
 
     return () => {
       cancelled = true
+      cameraReadyRef.current = false
       if (stream) {
         stream.getTracks().forEach((track) => track.stop())
       }
@@ -375,7 +448,7 @@ export default function SessionPage() {
       }
       disposeDetector()
     }
-  }, [exerciseLoading, exercise])
+  }, [exerciseLoading, exercise, cameraEnabled])
 
   // Countdown effect
   useEffect(() => {
@@ -385,17 +458,13 @@ export default function SessionPage() {
       }, 1000)
       return () => clearTimeout(timer)
     } else if (sessionState === 'countdown' && countdown === 0) {
+      activeRef.current = true
+      sessionClockRef.current.start()
       setSessionState('active')
-      // Only stamp start time once — resuming after a pause must not reset it.
-      if (!sessionStartTimeRef.current) {
-        const now = new Date()
-        sessionStartTimeRef.current = now
-        setSessionStartTime(now)
-      }
-      createSessionRecord()
       // Speak initial instructions when session becomes active
       if (!hasSpoken) {
         setTimeout(() => {
+          if (!mountedRef.current || !activeRef.current) return
           const description = exercise?.description || 'Follow the instructions on screen'
           speak(`Position yourself in frame. ${description}`)
           setHasSpoken(true)
@@ -404,38 +473,51 @@ export default function SessionPage() {
     }
   }, [sessionState, countdown, hasSpoken, exercise])
 
-  // Create session record in database
-  async function createSessionRecord() {
-    if (!exercise) return
-    if (sessionIdRef.current) return // already created — guards pause/resume re-entry
+  const startingRef = useRef(false)
+  const openingTimeRef = useRef<string | null>(null)
 
-    const supabase = createClient()
-    const { data: { user } } = await supabase.auth.getUser()
-    if (!user) {
-      console.error('No user logged in')
-      return
-    }
-
-    // Bind garden progress to this user
-    setProgressUid(user.id)
-
-    const { data, error } = await supabase
-      .from('therapy_sessions')
-      .insert({
-        user_id: user.id,
-        exercise_id: exercise.id,
-        started_at: (sessionStartTimeRef.current ?? new Date()).toISOString(),
-        target_reps: TARGET_REPS,
-      })
-      .select()
-      .single()
-
-    if (error) {
-      console.error('Error creating session:', error)
-    } else if (data) {
-      sessionIdRef.current = data.id
-      setSessionId(data.id)
-      console.log('✅ Session created:', data.id)
+  async function startSession() {
+    if (!exercise || startingRef.current || !cameraReadyRef.current) return
+    unlockSpeech()
+    startingRef.current = true
+    setStartError(null)
+    setSessionState('starting')
+    try {
+      const supabase = createClient()
+      const { data: { user }, error: authError } = await supabase.auth.getUser()
+      if (!mountedRef.current) return
+      if (authError || !user || user.id !== userIdRef.current) {
+        throw new Error('Please sign in again before starting your session.')
+      }
+      // Reuse the opening timestamp if a prior insert succeeded but its response
+      // was lost. Movement never starts before we have a confirmed session ID.
+      const startedAt = openingTimeRef.current ?? new Date().toISOString()
+      openingTimeRef.current = startedAt
+      const existing = await supabase.from('therapy_sessions').select('id')
+        .eq('user_id', user.id).eq('exercise_id', exercise.id)
+        .eq('started_at', startedAt).maybeSingle()
+      if (existing.error) throw new Error('We could not prepare your session. Check your connection and retry.')
+      let id = existing.data?.id
+      if (!id) {
+        const opened = await supabase.from('therapy_sessions').insert({
+          user_id: user.id,
+          exercise_id: exercise.id,
+          exercise_type: exercise.exercise_type,
+          started_at: startedAt,
+          target_reps: TARGET_REPS,
+        }).select('id').single()
+        if (opened.error || !opened.data) throw new Error('We could not prepare your session. Check your connection and retry.')
+        id = opened.data.id
+      }
+      sessionIdRef.current = id
+      if (!mountedRef.current) return
+      setCountdown(3)
+      setSessionState(document.hidden || !cameraReadyRef.current ? 'paused' : 'countdown')
+    } catch (error) {
+      setStartError(error instanceof Error ? error.message : 'Your session could not start. Please retry.')
+      setSessionState('ready')
+    } finally {
+      startingRef.current = false
     }
   }
 
@@ -453,23 +535,21 @@ export default function SessionPage() {
     let running = true
 
     async function detectAndAnalyze() {
-      if (!running || !videoRef.current || !exercise || !repCounterRef.current) return
+      if (!running || !activeRef.current || !videoRef.current || !exercise || !repCounterRef.current) return
 
       // Track time for form quality calculation
       const now = Date.now()
-      const deltaTime = now - lastFrameTime.current
+      const frameGap = now - lastFrameTime.current
+      const deltaTime = Math.min(frameGap, 1000)
+      if (frameGap > 1000) repCounterRef.current.interrupt()
       lastFrameTime.current = now
 
       // Detect pose
       const pose = await detect(videoRef.current, exercise.tracking_mode ?? 'body')
       // Paused / navigated away while inference was in flight — drop this frame
       // rather than counting a rep and accumulating posture time for it.
-      if (!running) return
+      if (!running || !activeRef.current) return
       setDetectedPose(pose)
-
-      if (pose && pose.keypoints) {
-        console.log(`Detected ${pose.keypoints.length} keypoints, score: ${pose.score?.toFixed(2)}`)
-      }
 
       // Analyze using generic exercise validation
       const analysis = analyzeExercise(pose, exercise.pose_criteria, exercise.feedback_messages)
@@ -522,7 +602,7 @@ export default function SessionPage() {
       setPostureFeedback(displayFeedback)
       setFeedbackMessage(displayMessage)
 
-      // Track form quality time (refs — read later by saveSessionToDb).
+      // Track target-pose time for the persisted session percentage.
       // Scored off the RAW engine verdict, never displayFeedback: the phase
       // coaching above forces 'good' for the whole lowering phase and for an
       // earned hold, so scoring the displayed value measured time spent in a
@@ -558,6 +638,7 @@ export default function SessionPage() {
 
         // Save rep data
         const repData: RepData = {
+          id: crypto.randomUUID(),
           repNumber: newCount,
           // Same 500ms default the rep counters were constructed with.
           holdDuration: exercise.hold_duration_ms ?? 500,
@@ -565,7 +646,6 @@ export default function SessionPage() {
           timestamp: new Date(),
         }
         repDataListRef.current = [...repDataListRef.current, repData]
-        setRepDataList(prev => [...prev, repData])
 
         repCountRef.current = newCount
         setRepCount(newCount)
@@ -584,6 +664,7 @@ export default function SessionPage() {
           colors: ['#C9B88A', '#E8D9A8', '#FAF9F7'],
           origin: { x: 0.5, y: 0.35 },
           zIndex: 50,
+          disableForReducedMotion: true,
         })
         // Low path match = rep counted but movement strayed from the demo —
         // coach it right away, while the next rep can still improve.
@@ -641,61 +722,72 @@ export default function SessionPage() {
     return () => cancelAnimationFrame(raf)
   }, [sessionState])
 
-  // Persist the session (and its reps) to the database. Reads refs so it never
-  // sees stale state. `completed` marks a full finish vs. an early save-and-exit.
-  async function saveSessionToDb(completed: boolean) {
-    if (!sessionIdRef.current) {
-      console.error('No session id — nothing to save')
-      return
+  function captureResult(completed: boolean): SessionResult {
+    if (!sessionIdRef.current || !userIdRef.current || !exercise) {
+      throw new Error('This session could not be prepared for saving. Keep this page open and retry.')
     }
-
-    const endTime = new Date()
-    const durationSeconds = sessionStartTimeRef.current
-      ? Math.floor((endTime.getTime() - sessionStartTimeRef.current.getTime()) / 1000)
-      : 0
-    const formQualityScore = totalActiveTimeRef.current > 0
-      ? Math.round((goodPostureTimeRef.current / totalActiveTimeRef.current) * 100)
-      : 0
-
-    const supabase = createClient()
-    // The completion columns are UPDATE-revoked for client roles
-    // (20260725000000_session_write_lockdown.sql) so that stars_awarded can't be
-    // reset from the console and re-claimed. The RPC stamps them server-side,
-    // checks ownership, clamps the values, and returns false if the session was
-    // already completed (a completed session is final).
-    const { data: stamped, error: sessionError } = await supabase.rpc('complete_session', {
-      p_session_id: sessionIdRef.current,
-      p_completed: completed,
-      p_duration_seconds: durationSeconds,
-      p_completed_reps: repCountRef.current,
-      p_form_quality_score: formQualityScore,
-    })
-
-    if (sessionError) {
-      console.error('Error updating session:', sessionError)
-    } else {
-      console.log('✅ Session updated:', { durationSeconds, formQualityScore, completed, stamped })
+    return {
+      version: 1,
+      userId: userIdRef.current,
+      sessionId: sessionIdRef.current,
+      exerciseId: exercise.id,
+      exerciseName: exercise.name,
+      startedAt: openingTimeRef.current ?? new Date().toISOString(),
+      completed,
+      durationSeconds: sessionClockRef.current.seconds(),
+      targetReps: TARGET_REPS,
+      formQualityScore: totalActiveTimeRef.current > 0
+        ? Math.round(goodPostureTimeRef.current / totalActiveTimeRef.current * 100) : 0,
+      reps: repDataListRef.current.map(rep => ({ ...rep, timestamp: rep.timestamp.toISOString() })),
     }
+  }
 
-    const sessionId = sessionIdRef.current
-    if (sessionId && repDataListRef.current.length > 0) {
-      const repInserts = repDataListRef.current.map(rep => ({
-        session_id: sessionId,
-        rep_number: rep.repNumber,
-        hold_duration_ms: rep.holdDuration,
-        form_score: rep.formScore,
-        timestamp: rep.timestamp.toISOString(),
-      }))
-
-      const { error: repsError } = await supabase
-        .from('rep_data')
-        .insert(repInserts)
-
-      if (repsError) {
-        console.error('Error saving rep data:', repsError)
-      } else {
-        console.log(`✅ Saved ${repDataListRef.current.length} reps`)
+  async function retrySave() {
+    const result = pendingResultRef.current
+    if (!result || savingRef.current) return
+    savingRef.current = true
+    setSaving(true)
+    setSaveError(null)
+    setRetained(retainSessionResult(result))
+    try {
+      const before = getProgress()
+      const total = await saveSessionResult(createClient(), result)
+      if (result.completed && total !== null) {
+        const updated = recordCompletion(total, new Date(result.startedAt))
+        const gardenAfter = getGardenStage(total)
+        const bloomed = gardenAfter > getGardenStage(before.totalStars)
+        setReward({
+          totalStars: total,
+          streak: updated.completionStreak,
+          reps: result.reps.length,
+          durationSeconds: result.durationSeconds,
+          newGardenStage: bloomed ? gardenAfter : null,
+          newTreeStage: updated.treeStage !== before.treeStage ? updated.treeStage : null,
+        })
+        if (bloomed) {
+          try { sessionStorage.setItem('medproj_bloom_reveal', String(gardenAfter)) } catch { /* optional animation */ }
+        }
+        try {
+          playCompletionFanfare()
+          vibrate([60, 40, 120])
+          speak('Session saved. Great job!')
+          confetti({
+            particleCount: 45, spread: 100, startVelocity: 32, scalar: 1.2,
+            ticks: 90, shapes: ['star'], colors: ['#C9B88A', '#E8D9A8', '#F5EAC8'],
+            origin: { x: 0.5, y: 0.4 }, zIndex: 50, disableForReducedMotion: true,
+          })
+        } catch { /* Optional celebration must not turn a successful save into an error. */ }
+        // A recovered result may already have sent mail before a lost response.
+        if (exercise) void notifyGuardian()
       }
+      forgetSessionResult(result)
+      pendingResultRef.current = null
+      if (!result.completed) router.push('/')
+    } catch (error) {
+      setSaveError(error instanceof Error ? error.message : 'Saving did not finish. Please retry.')
+    } finally {
+      savingRef.current = false
+      setSaving(false)
     }
   }
 
@@ -708,9 +800,7 @@ export default function SessionPage() {
       const token = session?.access_token
       if (!token) return
 
-      const durationSeconds = sessionStartTimeRef.current
-        ? Math.floor((Date.now() - sessionStartTimeRef.current.getTime()) / 1000)
-        : 0
+      const durationSeconds = sessionClockRef.current.seconds()
       const formScore = totalActiveTimeRef.current > 0
         ? Math.round((goodPostureTimeRef.current / totalActiveTimeRef.current) * 100)
         : null
@@ -737,114 +827,31 @@ export default function SessionPage() {
   async function completeSession() {
     if (completingRef.current) return
     completingRef.current = true
+    activeRef.current = false
+    sessionClockRef.current.pause()
+    setCameraEnabled(false)
     setSessionState('completed')
-    const before = getProgress()
-
-    // Celebrate immediately with the expected new total so the reward screen
-    // never waits on the network. The database award below is authoritative and
-    // the cache is corrected if the server disagrees; the home page also
-    // re-syncs from the database on arrival.
-    const optimisticTotal = before.totalStars + 1
-    const updated = recordCompletion(optimisticTotal)
-
-    // Did this star reveal a new garden element or grow the tree?
-    const gardenAfter = getGardenStage(updated.totalStars)
-    const bloomed = gardenAfter > getGardenStage(before.totalStars)
-    setReward({
-      totalStars: updated.totalStars,
-      streak: updated.completionStreak,
-      reps: repCountRef.current,
-      durationSeconds: sessionStartTimeRef.current
-        ? Math.floor((Date.now() - sessionStartTimeRef.current.getTime()) / 1000)
-        : 0,
-      newGardenStage: bloomed ? gardenAfter : null,
-      newTreeStage: updated.treeStage !== before.treeStage ? updated.treeStage : null,
-    })
-
-    // Hand the reveal moment to the home page: it plays the garden growing
-    // from the previous stage into the new one when the user lands there.
-    if (bloomed) {
-      try {
-        sessionStorage.setItem('medproj_bloom_reveal', String(gardenAfter))
-      } catch { /* private mode — reveal just won't animate */ }
+    try {
+      pendingResultRef.current = captureResult(true)
+      setPendingResult(pendingResultRef.current)
+      await retrySave()
+    } catch (error) {
+      setSaveError(error instanceof Error ? error.message : 'Saving did not finish. Keep this page open.')
     }
-
-    playCompletionFanfare()
-    vibrate([60, 40, 120])
-
-    speak(
-      bloomed
-        ? 'Session complete! Great job! A new bloom appeared in your garden!'
-        : 'Session complete! Great job!'
-    )
-
-    // Persist the session as completed FIRST so the award RPC can verify it,
-    // then award exactly one star for this session. The RPC decides the amount
-    // and dedupes by session id, so the client can't mint stars.
-    await saveSessionToDb(true)
-
-    const sessionId = sessionIdRef.current
-    if (sessionId) {
-      const { data, error } = await createClient().rpc('award_stars', { p_session_id: sessionId })
-      if (error) {
-        console.error('Error awarding star:', error)
-      } else if (typeof data === 'number' && data !== optimisticTotal) {
-        // Server total differs (already awarded, or another device) — reconcile
-        // the local cache and the reward display to the authoritative value.
-        applyServerProgress(data)
-        setReward((r) => (r ? { ...r, totalStars: data } : r))
-      }
-    }
-
-    notifyGuardian()
-
-    // Golden star burst front and center, then the falling side confetti
-    confetti({
-      particleCount: 45,
-      spread: 100,
-      startVelocity: 32,
-      scalar: 1.2,
-      ticks: 90,
-      shapes: ['star'],
-      colors: ['#C9B88A', '#E8D9A8', '#F5EAC8'],
-      origin: { x: 0.5, y: 0.4 },
-      zIndex: 50,
-    })
-
-    // Trigger confetti celebration
-    const duration = 3000;
-    const animationEnd = Date.now() + duration;
-    const defaults = { startVelocity: 30, spread: 360, ticks: 60, zIndex: 0, colors: ['#4A6B5A', '#C9B88A', '#FAF9F7'] };
-
-    function randomInRange(min: number, max: number) {
-      return Math.random() * (max - min) + min;
-    }
-
-    const interval: any = setInterval(function() {
-      const timeLeft = animationEnd - Date.now();
-
-      if (timeLeft <= 0) {
-        return clearInterval(interval);
-      }
-
-      const particleCount = 50 * (timeLeft / duration);
-      confetti({
-        ...defaults,
-        particleCount,
-        origin: { x: randomInRange(0.1, 0.3), y: Math.random() - 0.2 }
-      });
-      confetti({
-        ...defaults,
-        particleCount,
-        origin: { x: randomInRange(0.7, 0.9), y: Math.random() - 0.2 }
-      });
-    }, 250);
   }
 
   function handlePause() {
-    if (animationFrameRef.current) {
-      cancelAnimationFrame(animationFrameRef.current)
-    }
+    activeRef.current = false
+    sessionClockRef.current.pause()
+    repCounterRef.current?.interrupt()
+    trajectoryRef.current = exercise
+      ? createTrajectoryTracker(exercise.recorded_paths, exercise.pose_criteria) : null
+    prevPhaseRef.current = null
+    holdCueSpokenRef.current = false
+    setHoldProgress(0)
+    setMovementProgress(0)
+    if (animationFrameRef.current) cancelAnimationFrame(animationFrameRef.current)
+    if ('speechSynthesis' in window) window.speechSynthesis.cancel()
     setSessionState('paused')
   }
 
@@ -854,31 +861,56 @@ export default function SessionPage() {
   }
 
   function handleExit() {
-    if (repCount > 0 && sessionState !== 'completed') {
-      setShowExitPrompt(true)
-    } else {
-      router.push('/')
-    }
+    if (sessionState === 'starting') return
+    handlePause()
+    if (repCountRef.current > 0) setShowExitPrompt(true)
+    else router.push('/')
   }
 
   async function handleExitWithSave() {
-    // Persist whatever was completed so far (data, not a garden star — stars are
-    // awarded only for a full session).
-    if (repCountRef.current > 0) {
-      await saveSessionToDb(false)
-      showToast('Progress saved', 'success')
+    if (savingRef.current || completingRef.current) return
+    completingRef.current = true
+    setShowExitPrompt(false)
+    setCameraError(null)
+    setCameraEnabled(false)
+    setSessionState('completed')
+    try {
+      pendingResultRef.current = captureResult(false)
+      setPendingResult(pendingResultRef.current)
+      await retrySave()
+    } catch (error) {
+      setSaveError(error instanceof Error ? error.message : 'Saving did not finish. Keep this page open.')
     }
-    router.push('/')
   }
 
   function handleExitWithoutSave() {
+    setCameraEnabled(false)
     router.push('/')
   }
+
+  useEffect(() => {
+    const onVisibilityChange = () => {
+      if (document.hidden && (sessionState === 'active' || sessionState === 'countdown')) handlePause()
+    }
+    const onBeforeUnload = (event: BeforeUnloadEvent) => {
+      if ((repCountRef.current > 0 && sessionState !== 'completed') ||
+          (pendingResultRef.current && !retained)) {
+        event.preventDefault()
+        event.returnValue = ''
+      }
+    }
+    document.addEventListener('visibilitychange', onVisibilityChange)
+    window.addEventListener('beforeunload', onBeforeUnload)
+    return () => {
+      document.removeEventListener('visibilitychange', onVisibilityChange)
+      window.removeEventListener('beforeunload', onBeforeUnload)
+    }
+  }, [sessionState, retained])
 
   const feedbackColor = {
     good: '#22c55e',    // correct
     adjust: '#f97316',  // almost correct
-    analyzing: '#ef4444', // incorrect / not yet confirmed
+    analyzing: '#CBD5D1', // tracking is not yet confident; this is not a form error
   }
 
   if (cameraError) {
@@ -888,11 +920,17 @@ export default function SessionPage() {
           <p className="text-xl mb-6" style={{ color: 'var(--ink)' }}>{cameraError}</p>
           <div className="flex flex-col gap-4">
             <button
-              onClick={() => window.location.reload()}
+              onClick={() => {
+                if (!sessionIdRef.current) { window.location.reload(); return }
+                setCameraError(null)
+                setSessionState('loading')
+                setCameraEnabled(true)
+              }}
               className="btn btn-primary"
             >
-              Reload and Try Again
+              Retry camera and tracking
             </button>
+            {repCount > 0 && <button className="btn btn-primary" onClick={() => void handleExitWithSave()}>Save repetitions and exit</button>}
             <button
               onClick={() => router.push('/')}
               style={{
@@ -936,6 +974,36 @@ export default function SessionPage() {
           `}</style>
         </div>
       </div>
+    )
+  }
+
+  if (sessionState === 'completed' && !reward) {
+    const result = pendingResult
+    return (
+      <main className="min-h-screen px-6 py-12 flex items-center justify-center">
+        <section className="w-full max-w-md text-center" aria-busy={saving}>
+          <h1 className="mb-3">{result?.completed ? 'Session complete' : 'Session ended'}</h1>
+          <p className="mb-4" style={{ color: 'var(--muted)' }}>
+            {result?.exerciseName ?? exercise?.name} · {result?.reps.length ?? repCount} {(result?.reps.length ?? repCount) === 1 ? 'repetition' : 'repetitions'}
+          </p>
+          <p role={saveError ? 'alert' : 'status'} className="mb-4">
+            {saving ? 'Saving your session…' : saveError ?? 'Preparing your results…'}
+          </p>
+          <p className="mb-6 text-sm" style={{ color: 'var(--muted)' }}>
+            {retained
+              ? 'Your results are kept on this device until saving finishes. You can also retry from your garden.'
+              : 'Keep this page open until saving finishes so your results are not lost.'}
+            {result?.completed && ' Your star will appear after saving is confirmed.'}
+          </p>
+          <button className="btn btn-primary w-full" disabled={saving || !result} onClick={() => void retrySave()}>
+            {saving ? 'Saving…' : 'Retry saving'}
+          </button>
+          {retained && <Link href="/" className="btn mt-3 w-full">Return to garden</Link>}
+          {saveError?.startsWith('Sign in') && (
+            <Link href="/login" target="_blank" className="btn mt-3 w-full">Sign in in another tab</Link>
+          )}
+        </section>
+      </main>
     )
   }
 
@@ -1078,17 +1146,17 @@ export default function SessionPage() {
   // which shares the video's aspect ratio but not its pixel dimensions — so the
   // SVG viewBox has to be the canonical box, not videoWidth × videoHeight.
   const overlayBox = canonicalFrameSize(
-    videoRef.current?.videoWidth ?? 0,
-    videoRef.current?.videoHeight ?? 0
+    videoSize.width,
+    videoSize.height
   )
 
   return (
     <div className="fixed inset-0 overflow-hidden session">
-      {ToastComponent}
 
       {/* Camera feed */}
       <video
         ref={videoRef}
+        onLoadedMetadata={event => setVideoSize({ width: event.currentTarget.videoWidth, height: event.currentTarget.videoHeight })}
         className="absolute inset-0 w-full h-full object-cover"
         playsInline
         muted
@@ -1099,7 +1167,7 @@ export default function SessionPage() {
           it always demonstrates (including during the countdown, before the
           patient moves). Anchored to the patient's shoulders when they're
           detected, otherwise centered in the frame. */}
-      {(sessionState === 'active' || sessionState === 'countdown') && videoRef.current && (guidePose ?? ghostPose) && (
+      {(sessionState === 'active' || sessionState === 'countdown') && videoSize.width > 0 && (guidePose ?? ghostPose) && (
         <svg
           className="absolute inset-0 pointer-events-none"
           viewBox={`0 0 ${overlayBox.w} ${overlayBox.h}`}
@@ -1108,7 +1176,7 @@ export default function SessionPage() {
         >
           {(() => {
             const guide = guidePose ?? ghostPose
-            if (!guide || !videoRef.current) return null
+            if (!guide) return null
             const find = (pose: Pose, name: string) => {
               const kp = pose.keypoints.find((k) => k.name === name)
               return kp && (kp.score ?? 0) > 0.3 ? kp : null
@@ -1163,7 +1231,7 @@ export default function SessionPage() {
       )}
 
       {/* Skeleton overlay — live skeleton */}
-      {sessionState === 'active' && detectedPose && videoRef.current && (
+      {sessionState === 'active' && detectedPose && videoSize.width > 0 && (
         <svg
           className="absolute inset-0 pointer-events-none"
           viewBox={`0 0 ${overlayBox.w} ${overlayBox.h}`}
@@ -1222,7 +1290,12 @@ export default function SessionPage() {
       )}
 
       {/* Ready overlay — tap unlocks mobile audio, then countdown starts */}
-      {sessionState === 'ready' && (
+      {sessionState === 'loading' && (
+        <div className="absolute inset-0 flex items-center justify-center z-20 px-8 text-center" style={{ background: 'rgba(0,0,0,0.7)', color: 'white' }}>
+          <p role="status">Starting camera and movement tracking…</p>
+        </div>
+      )}
+      {(sessionState === 'ready' || sessionState === 'starting') && (
         <div className="gx-overlay absolute inset-0 flex items-center justify-center z-20" style={{ background: 'rgba(0,0,0,0.7)', backdropFilter: 'blur(8px)' }}>
           <div className="gx-panel text-center px-8" style={{ width: '100%', maxWidth: '360px' }}>
             <p className="font-display text-3xl mb-3" style={{ color: 'white', fontWeight: 600 }}>
@@ -1234,15 +1307,14 @@ export default function SessionPage() {
                 : 'Place your phone where your upper body is in frame'}
             </p>
             <ExerciseDemo frames={exercise?.demo_images ?? []} />
+            {startError && <p role="alert" className="mb-4" style={{ color: 'white' }}>{startError}</p>}
             <button
-              onClick={() => {
-                unlockSpeech()
-                setSessionState('countdown')
-              }}
+              onClick={() => void startSession()}
+              disabled={sessionState === 'starting'}
               className="btn btn-primary"
               style={{ fontSize: 'var(--text-lg)', padding: 'var(--space-4) var(--space-12)' }}
             >
-              Start
+              {sessionState === 'starting' ? 'Preparing session…' : 'Start'}
             </button>
           </div>
         </div>
@@ -1312,10 +1384,10 @@ export default function SessionPage() {
               End session?
             </h3>
             <p style={{ color: 'var(--muted)' }} className="mb-2">
-              You've completed {repCount} of {TARGET_REPS} reps
+              You&apos;ve completed {repCount} of {TARGET_REPS} reps
             </p>
             <p className="text-sm mb-6" style={{ color: 'var(--muted)' }}>
-              Your progress will be saved
+              Choose Save and Exit to keep these repetitions. A star is earned only after completing the full session.
             </p>
             <div className="flex flex-col gap-3">
               <button

@@ -32,66 +32,59 @@ export interface DayStatus {
 }
 
 const STORAGE_KEY = 'medproj_progress';
-const UID_KEY = 'medproj_current_uid';
+// Kept in this tab, not in shared storage: another account in a second tab
+// must never switch this tab's progress namespace.
+let activeUid: string | null = null;
+const memoryCache = new Map<string, ProgressData>();
 
-/**
- * Bind garden progress to a specific signed-in user so two accounts sharing a
- * browser never see each other's stars. Call once the auth user resolves.
- */
 export function setProgressUid(uid: string): void {
-  if (typeof window === 'undefined') return;
-  const prev = localStorage.getItem(UID_KEY);
-  localStorage.setItem(UID_KEY, uid);
-
-  // One-time migration: the first user to sign in on a browser that has legacy
-  // (pre-namespacing) progress inherits it. Later users start fresh.
-  const userKey = `${STORAGE_KEY}_${uid}`;
-  if (!localStorage.getItem(userKey) && (!prev || prev === uid)) {
-    const legacy = localStorage.getItem(STORAGE_KEY);
-    if (legacy) localStorage.setItem(userKey, legacy);
-  }
+  activeUid = uid;
 }
 
 function storageKey(): string {
-  if (typeof window === 'undefined') return STORAGE_KEY;
-  const uid = localStorage.getItem(UID_KEY);
-  return uid ? `${STORAGE_KEY}_${uid}` : STORAGE_KEY;
+  return activeUid ? `${STORAGE_KEY}_${activeUid}` : STORAGE_KEY;
+}
+
+function emptyProgress(): ProgressData {
+  return {
+    totalStars: 0, dailyStars: 0, completionStreak: 0, treeStage: 'seed',
+    lastSessionDate: null, completedDates: [], hasSeenOnboarding: false,
+  };
 }
 
 export function getProgress(): ProgressData {
-  if (typeof window === 'undefined') {
-    return {
-      totalStars: 0,
-      dailyStars: 0,
-      completionStreak: 0,
-      treeStage: 'seed',
-      lastSessionDate: null,
-      completedDates: [],
-      hasSeenOnboarding: false,
-    };
-  }
+  if (typeof window === 'undefined' || !activeUid) return emptyProgress();
+  const cacheKey = storageKey();
+  try {
+    const stored = localStorage.getItem(cacheKey);
+    if (stored) {
+      const parsed = JSON.parse(stored);
+      if (parsed && Number.isFinite(parsed.totalStars) && parsed.totalStars >= 0) {
+        const dates = Array.isArray(parsed.completedDates)
+          ? parsed.completedDates.filter((date: unknown): date is string =>
+              typeof date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(date)) : [];
+        const progress: ProgressData = {
+          ...emptyProgress(),
+          totalStars: parsed.totalStars,
+          dailyStars: Number.isFinite(parsed.dailyStars) ? parsed.dailyStars : 0,
+          completedDates: dates,
+          completionStreak: computeStreak(dates),
+          treeStage: getTreeStage(parsed.totalStars),
+          lastSessionDate: [...dates].sort().at(-1) ?? null,
+          hasSeenOnboarding: parsed.hasSeenOnboarding === true,
+        };
+        memoryCache.set(cacheKey, progress);
+        return progress;
+      }
+    }
+  } catch { /* A corrupt or unavailable cache must not break server saving. */ }
+  return memoryCache.get(cacheKey) ?? emptyProgress();
+}
 
-  const stored = localStorage.getItem(storageKey());
-  if (!stored) {
-    return {
-      totalStars: 0,
-      dailyStars: 0,
-      completionStreak: 0,
-      treeStage: 'seed',
-      lastSessionDate: null,
-      completedDates: [],
-      hasSeenOnboarding: false,
-    };
-  }
-
-  const parsed = JSON.parse(stored);
-
-  // Migration: add new fields if they don't exist
-  return {
-    ...parsed,
-    completedDates: parsed.completedDates || [],
-    hasSeenOnboarding: parsed.hasSeenOnboarding || false,
-  };
+function cacheProgress(progress: ProgressData): void {
+  if (typeof window === 'undefined' || !activeUid) return;
+  memoryCache.set(storageKey(), progress);
+  try { localStorage.setItem(storageKey(), JSON.stringify(progress)); } catch { /* memory only */ }
 }
 
 function todayStr(): string {
@@ -128,11 +121,12 @@ export function computeStreak(completedDates: string[]): number {
  * completion history, so it always wins — no more localStorage → database
  * seeding, which used to revert an admin's star edit and let the two totals
  * drift apart. `completedDates` should be the database's completed-session
- * dates ('yyyy-MM-dd'); pass [] to refresh only the star total.
+ * dates ('yyyy-MM-dd'); omit dates to refresh only the star total. An explicit
+ * empty array clears stale completion history.
  */
-export function applyServerProgress(dbStars: number, completedDates: string[] = []): ProgressData {
+export function applyServerProgress(dbStars: number, completedDates?: string[]): ProgressData {
   const current = getProgress();
-  const dates = completedDates.length
+  const dates = completedDates !== undefined
     ? Array.from(new Set(completedDates)).sort()
     : current.completedDates;
 
@@ -142,12 +136,10 @@ export function applyServerProgress(dbStars: number, completedDates: string[] = 
     completionStreak: computeStreak(dates),
     treeStage: getTreeStage(dbStars),
     completedDates: dates,
-    lastSessionDate: dates.length ? dates[dates.length - 1] : current.lastSessionDate,
+    lastSessionDate: dates.length ? dates[dates.length - 1] : null,
   };
 
-  if (typeof window !== 'undefined') {
-    localStorage.setItem(storageKey(), JSON.stringify(updated));
-  }
+  cacheProgress(updated);
   return updated;
 }
 
@@ -158,25 +150,27 @@ export function applyServerProgress(dbStars: number, completedDates: string[] = 
  * dates are recomputed locally for the reward screen; the home page re-syncs
  * from the database on arrival.
  */
-export function recordCompletion(totalStars: number): ProgressData {
+export function recordCompletion(totalStars: number, sessionDate = new Date()): ProgressData {
   const current = getProgress();
-  const today = todayStr();
+  const today = dayKey(sessionDate);
 
   const completedDates = current.completedDates.includes(today)
     ? current.completedDates
-    : [...current.completedDates, today];
+    : [...current.completedDates, today].sort();
 
   const updated: ProgressData = {
     totalStars,
-    dailyStars: current.lastSessionDate === today ? current.dailyStars + 1 : 1,
+    dailyStars: today === todayStr()
+      ? (current.lastSessionDate === today ? current.dailyStars : 0) + (totalStars > current.totalStars ? 1 : 0)
+      : current.dailyStars,
     completionStreak: computeStreak(completedDates),
     treeStage: getTreeStage(totalStars),
-    lastSessionDate: today,
+    lastSessionDate: completedDates[completedDates.length - 1] ?? null,
     completedDates,
     hasSeenOnboarding: current.hasSeenOnboarding,
   };
 
-  localStorage.setItem(storageKey(), JSON.stringify(updated));
+  cacheProgress(updated);
   return updated;
 }
 
@@ -210,5 +204,5 @@ export function getDayStrip(): DayStatus[] {
 export function markOnboardingComplete(): void {
   const current = getProgress();
   const updated = { ...current, hasSeenOnboarding: true };
-  localStorage.setItem(storageKey(), JSON.stringify(updated));
+  cacheProgress(updated);
 }

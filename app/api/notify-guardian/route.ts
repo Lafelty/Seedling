@@ -104,7 +104,7 @@ export async function POST(request: Request) {
               ${statRow('Exercise', exerciseName)}
               ${statRow('Reps', targetReps > 0 ? `${reps} / ${targetReps}` : `${reps}`)}
               ${statRow('Duration', duration)}
-              ${formScore != null ? statRow('Form accuracy', `${formScore}%`) : ''}
+              ${formScore != null ? statRow('Target-pose time', `${formScore}%`) : ''}
               ${profile.total_stars != null ? statRow('Total stars', `⭐ ${profile.total_stars}`) : ''}
               ${statRow('Completed', completedAt)}
             </table>

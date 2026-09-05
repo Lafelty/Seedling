@@ -29,20 +29,19 @@ export default function ModalDialog({ open, onClose, labelledBy, children, class
     <dialog ref={ref} className={`patient-dialog ${className}`} aria-labelledby={labelledBy}
       onKeyDown={event => {
         if (event.key !== 'Tab') return
-        // Keep sequential navigation inside the dialog, including browsers
-        // that otherwise send the last Tab stop into browser chrome.
+        // Move between controls explicitly: WebKit can skip links according
+        // to platform keyboard settings, bypassing a boundary-only trap.
         const controls = Array.from(event.currentTarget.querySelectorAll<HTMLElement>(
           'button, a[href], input, select, textarea, summary, [tabindex]'
-        )).filter(element => element.tabIndex >= 0 && !element.matches(':disabled') && element.getClientRects().length > 0)
-        const first = controls[0]
-        const last = controls[controls.length - 1]
-        if (event.shiftKey && document.activeElement === first) {
-          event.preventDefault()
-          last?.focus()
-        } else if (!event.shiftKey && document.activeElement === last) {
-          event.preventDefault()
-          first?.focus()
-        }
+        )).filter(element => element.tabIndex >= 0 && !element.matches(':disabled') &&
+          !element.closest('[inert]') && element.getClientRects().length > 0 &&
+          getComputedStyle(element).visibility === 'visible')
+        if (!controls.length) { event.preventDefault(); return }
+        const index = controls.indexOf(document.activeElement as HTMLElement)
+        const next = index < 0 ? (event.shiftKey ? controls.length - 1 : 0)
+          : (index + (event.shiftKey ? -1 : 1) + controls.length) % controls.length
+        event.preventDefault()
+        controls[next].focus()
       }}
       onCancel={event => { event.preventDefault(); onClose() }}>
       {children}

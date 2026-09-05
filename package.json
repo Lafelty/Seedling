@@ -10,6 +10,8 @@
     "lint": "eslint app components lib next.config.js",
     "test": "vitest run",
     "test:e2e": "node tests/e2e/patient-experience.cjs",
+    "test:release": "node tests/e2e/release-check.cjs",
+    "test:staging": "node scripts/verify-staging.cjs",
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit"
   },

@@ -9,9 +9,10 @@
 
 ## Current state
 
-Every migration in `migrations/` has already been applied to the production
-Supabase project (as of 2026-07-11). A fresh environment must run all of them,
-in filename order, top to bottom.
+The migration index describes the repository, not verified deployment state.
+The previous deployment note was dated 2026-07-11; several migrations below are
+newer. Compare the target project's applied migrations before releasing. A fresh
+environment must run all migrations in filename order, top to bottom.
 
 The application code assumes the full schema exists. There are **no runtime
 fallbacks** for missing tables or columns — an un-applied migration fails loudly

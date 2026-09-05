@@ -2,6 +2,7 @@ node_modules
 .next
 .vercel
 .env.local
+.env.staging.local
 .gstack/
 GardenPack.pdf
 

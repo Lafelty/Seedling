@@ -1,7 +1,7 @@
 const { loadEnvConfig } = require('@next/env');
 loadEnvConfig(process.cwd());
 
-const baseURL = 'http://localhost:3000';
+const baseURL = process.env.E2E_BASE_URL || 'http://localhost:3000';
 const origin = new URL(process.env.NEXT_PUBLIC_SUPABASE_URL).origin;
 const ref = new URL(origin).hostname.split('.')[0];
 const user = { id: '11111111-1111-4111-8111-111111111111', aud: 'authenticated', role: 'authenticated', email: 'fixture@example.test', user_metadata: {}, app_metadata: {}, created_at: '2026-01-01T00:00:00Z' };
@@ -13,8 +13,37 @@ const group = { id: '55555555-5555-4555-8555-555555555555', name: 'Shoulder mobi
 const exercise = { id: result.exerciseId, group_id: group.id, rank_in_group: 0, difficulty: 'easy', unlock_min_score: null, unlock_max_seconds: null, name: 'Shoulder raise', description: 'Follow the recorded movement.', exercise_type: 'static', tracking_mode: 'body', target_reps: 2, hold_duration_ms: 500, pose_criteria: { targetBodyParts: ['left_shoulder','left_elbow','left_wrist'], criteria: [{ joint:'left_elbow', targetAngle:90, minAngle:80, maxAngle:100, relativeTo:['left_shoulder','left_wrist'] }], levelingRules: [] }, recorded_paths: [], feedback_messages: {}, demo_images: [] };
 
 async function makeContext(browser, width = 390) {
-  const state = { profileFailure: false, historyFailure: false, repFailure: false, historyRows: [], writes: [], completions: [], errors: [], profileWrites: [] };
-  const context = await browser.newContext({ viewport: { width, height: 844 }, reducedMotion: 'reduce', permissions: ['camera'] });
+  const state = { profileFailure: false, historyFailure: false, repFailure: false, completionFailure: false, awardFailure: false, historyRows: [], writes: [], completions: [], awards: [], errors: [], profileWrites: [] };
+  const chromium = browser.browserType().name() === 'chromium';
+  const context = await browser.newContext({ viewport: { width, height: 844 }, reducedMotion: 'reduce', permissions: chromium ? ['camera'] : [] });
+  if (!chromium) {
+    // A real MediaStream from a generated canvas; no hardware or permission UI.
+    // This exercises video playback/lifecycle, not physical camera compatibility.
+    await context.addInitScript(() => {
+      if (!navigator.mediaDevices) return; // about:blank / axe's sandboxed frames
+      navigator.mediaDevices.getUserMedia = async () => {
+        const canvas = document.createElement('canvas');
+        canvas.width = 640;
+        canvas.height = 480;
+        const paint = () => {
+          const ctx = canvas.getContext('2d');
+          ctx.fillStyle = '#526958';
+          ctx.fillRect(0, 0, canvas.width, canvas.height);
+        };
+        paint();
+        const stream = canvas.captureStream(15);
+        const timer = setInterval(paint, 66);
+        const track = stream.getVideoTracks()[0];
+        // Firefox's automation realm needs explicit synthetic-event opt-in.
+        // Other engines ignore the fourth addEventListener argument.
+        const listen = track.addEventListener.bind(track);
+        track.addEventListener = (type, callback, options) => listen(type, callback, options, true);
+        const stop = track.stop.bind(track);
+        track.stop = () => { clearInterval(timer); stop(); };
+        return stream;
+      };
+    });
+  }
   await context.addCookies([{ name: `sb-${ref}-auth-token`, value: 'base64-'+Buffer.from(JSON.stringify(session)).toString('base64url'), url: baseURL, sameSite: 'Lax' }]);
   await context.route('**/*', async route => {
     const request = route.request();
@@ -24,8 +53,8 @@ async function makeContext(browser, width = 390) {
       if (path.includes('/auth/v1/user')) return route.fulfill({ json: user });
       if (path.includes('/auth/v1/logout')) return route.fulfill({ status: 204 });
       if (path.endsWith('/rep_data')) { state.writes.push(request.postDataJSON()); return route.fulfill({ status: state.repFailure ? 503 : 201, json: state.repFailure ? { message: 'Fixture offline' } : null }); }
-      if (path.endsWith('/rpc/complete_session')) { state.completions.push(request.postDataJSON()); return route.fulfill({ json: true }); }
-      if (path.endsWith('/rpc/award_stars')) return route.fulfill({ json: 4 });
+      if (path.endsWith('/rpc/complete_session')) { state.completions.push(request.postDataJSON()); return route.fulfill({ status: state.completionFailure ? 503 : 200, json: state.completionFailure ? {message:'Fixture offline'} : true }); }
+      if (path.endsWith('/rpc/award_stars')) { state.awards.push(request.postDataJSON()); return route.fulfill({ status: state.awardFailure ? 503 : 200, json: state.awardFailure ? {message:'Fixture offline'} : 4 }); }
       if (path.endsWith('/profiles')) {
         if (request.method() !== 'GET') state.profileWrites.push(request.postDataJSON());
         return route.fulfill({ status: state.profileFailure ? 503 : 200, json: state.profileFailure ? {message:'Fixture offline'} : { email: user.email, name: 'Fixture Patient', is_admin: false, total_stars: 4, phone: '', avatar_path: null, height_cm: null, weight_kg: null, guardian_email: 'guardian@example.test', guardian_notify: true } });
@@ -48,6 +77,7 @@ async function makeContext(browser, width = 390) {
 
 async function fakeTracking(context) {
   await context.addInitScript(() => {
+    if (!navigator.mediaDevices) return;
     window.__fixtureGood = false;
     window.__cameraRequests = 0;
     window.Worker = class {

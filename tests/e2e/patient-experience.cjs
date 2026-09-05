@@ -1,8 +1,11 @@
 /* Run against `npm run dev -- --port 3000`. All account/API traffic is mocked. */
-const { chromium, expect } = require('@playwright/test');
+const { chromium, webkit, firefox, expect } = require('@playwright/test');
 const AxeBuilder = require('@axe-core/playwright').default;
-const { mkdir } = require('node:fs/promises');
+const { mkdir, writeFile } = require('node:fs/promises');
 const { makeContext, fakeTracking, baseURL, result, pendingKey, group } = require('./fixtures.cjs');
+const browserName = process.env.E2E_BROWSER || 'chromium';
+const browserType = { chromium, webkit, firefox }[browserName];
+if (!browserType) throw new Error('E2E_BROWSER must be chromium, webkit, or firefox');
 
 async function checkLayout(page, name) {
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), `${name}: page overflow`).toBe(true);
@@ -14,12 +17,13 @@ async function checkLayout(page, name) {
   expect(smallTargets, `${name}: 48px touch targets`).toEqual([]);
   const scan = await new AxeBuilder({page}).withTags(['wcag2a','wcag2aa','wcag21aa']).analyze();
   expect(scan.violations.map(v => ({id:v.id, nodes:v.nodes.map(n => ({target:n.target,summary:n.failureSummary}))})), `${name}: accessibility`).toEqual([]);
-  await page.screenshot({path:`test-results/${name}.png`,fullPage:true});
+  await page.screenshot({path:`test-results/${browserName}/${name}.png`,fullPage:true});
 }
 
 (async () => {
-  await mkdir('test-results', {recursive:true});
-  const browser = await chromium.launch({headless:true,args:['--use-fake-device-for-media-stream','--use-fake-ui-for-media-stream']});
+  await mkdir(`test-results/${browserName}`, {recursive:true});
+  const browser = await browserType.launch({headless:true,...(browserName === 'chromium' ? {args:['--use-fake-device-for-media-stream','--use-fake-ui-for-media-stream']} : {})});
+  console.log(`Browser: ${browserName}`);
   try {
     const {context,page,state} = await makeContext(browser,320);
     for (const width of [320,390,768,1440]) {
@@ -42,6 +46,13 @@ async function checkLayout(page, name) {
     const card = page.getByRole('button',{name:/Shoulder mobility/});
     await card.click();
     await expect(page.getByRole('dialog')).toBeVisible();
+    await page.getByRole('button',{name:'Close box',exact:true}).focus();
+    await page.keyboard.press('Tab');
+    await expect(page.getByRole('link',{name:'View exercises',exact:true})).toBeFocused();
+    await page.keyboard.press('Shift+Tab');
+    await expect(page.getByRole('button',{name:'Close box',exact:true})).toBeFocused();
+    await page.keyboard.press('Shift+Tab');
+    await expect(page.getByRole('link',{name:'View exercises',exact:true})).toBeFocused();
     for(let i=0;i<6;i++) {
       await page.keyboard.press('Tab');
       expect(await page.evaluate(() => !!document.activeElement.closest('dialog'))).toBe(true);
@@ -79,8 +90,10 @@ async function checkLayout(page, name) {
       await checkLayout(page,'populated-'+path.slice(1));
     }
     expect(state.errors).toEqual([]);
+    const supportsCamera = await page.evaluate(() => !!navigator.mediaDevices?.getUserMedia && typeof MediaStream !== 'undefined');
     await context.close();
 
+    if (supportsCamera) {
     const active=await makeContext(browser,320);
     await fakeTracking(active.context);
     await active.page.goto(baseURL+'/session?exercise='+result.exerciseId);
@@ -123,9 +136,25 @@ async function checkLayout(page, name) {
     expect(active.state.errors).toEqual([]);
     await active.context.close();
     console.log('PASS opt-in camera, preview, reps, accessible pause/exit, reconnection, single completion');
+    } else {
+      const unavailable = await makeContext(browser,320);
+      await unavailable.page.goto(baseURL+'/session?exercise='+result.exerciseId);
+      await expect(unavailable.page.getByRole('button',{name:'Enable camera',exact:true})).toBeVisible();
+      await checkLayout(unavailable.page,'session-preparation-320');
+      await unavailable.page.getByRole('button',{name:'Enable camera',exact:true}).click();
+      await expect(unavailable.page.locator('p[role="alert"]')).toContainText('The camera or movement tracker could not start');
+      await expect(unavailable.page.getByRole('button',{name:'Start session',exact:true})).toHaveCount(0);
+      expect(unavailable.state.errors).toEqual([]);
+      await unavailable.context.close();
+      console.log('UNSUPPORTED camera lifecycle: this browser build has no MediaStream/getUserMedia. Preparation and unavailable-camera recovery passed.');
+    }
 
     const denied=await makeContext(browser);
-    await denied.context.addInitScript(()=>{navigator.mediaDevices.getUserMedia=async()=>{throw new DOMException('denied','NotAllowedError')}});
+    await denied.context.addInitScript(()=>{
+      const deny=async()=>{throw new DOMException('denied','NotAllowedError')};
+      if (navigator.mediaDevices) navigator.mediaDevices.getUserMedia=deny;
+      else Object.defineProperty(navigator,'mediaDevices',{configurable:true,value:{getUserMedia:deny}});
+    });
     await denied.page.goto(baseURL+'/session?exercise='+result.exerciseId);
     await denied.page.getByRole('button',{name:'Enable camera'}).click();
     await expect(denied.page.locator('p[role="alert"]')).toContainText('Camera permission is needed');
@@ -133,6 +162,7 @@ async function checkLayout(page, name) {
     await checkLayout(denied.page,'camera-denied');
     await denied.context.close();
 
+    if (supportsCamera) {
     const failedTracker=await makeContext(browser);
     await failedTracker.context.route('**/mediapipe/**',route=>route.abort());
     await failedTracker.context.addInitScript(()=>{
@@ -150,6 +180,7 @@ async function checkLayout(page, name) {
     expect(await failedTracker.page.evaluate(()=>window.__fixtureTracks.every(t=>t.readyState==='ended'))).toBe(true);
     await expect(failedTracker.page.getByRole('button',{name:'Start session',exact:true})).toHaveCount(0);
     await failedTracker.context.close();
+    }
 
     const recovery=await makeContext(browser,320);
     recovery.state.repFailure=true;
@@ -168,5 +199,34 @@ async function checkLayout(page, name) {
     expect(recovery.state.errors).toEqual([]);
     await recovery.context.close();
     console.log('PASS camera denial and Phase 1 durable save/retry regression checks');
+
+    for (const [failure, message] of [
+      ['completionFailure', 'Your session could not be saved'],
+      ['awardFailure', 'its star is still waiting to sync'],
+    ]) {
+      const retry = await makeContext(browser, 390);
+      retry.state[failure] = true;
+      await retry.page.goto(baseURL+'/health');
+      await retry.page.evaluate(({key,value}) => localStorage.setItem(key,JSON.stringify(value)), {key:pendingKey,value:result});
+      await retry.page.goto(baseURL+'/session?recover='+result.sessionId);
+      await retry.page.getByRole('button',{name:'Retry saving',exact:true}).click();
+      await expect(retry.page.locator('p[role="alert"]')).toContainText(message);
+      await expect(retry.page.getByText('+1 star earned · 4 total')).toHaveCount(0);
+      if (failure === 'completionFailure') expect(retry.state.awards).toHaveLength(0);
+      expect(await retry.page.evaluate(key => localStorage.getItem(key), pendingKey)).not.toBeNull();
+      await retry.page.reload();
+      retry.state[failure] = false;
+      await retry.page.getByRole('button',{name:'Retry saving',exact:true}).click();
+      await expect(retry.page.getByText('+1 star earned · 4 total')).toBeVisible();
+      expect(retry.state.writes[0]).toEqual(retry.state.writes[1]);
+      expect(await retry.page.evaluate(key => localStorage.getItem(key), pendingKey)).toBeNull();
+      expect(retry.state.errors).toEqual([]);
+      await retry.context.close();
+    }
+    console.log('PASS completion and star-award failures retain results through reload and retry');
+    await writeFile(`test-results/${browserName}/coverage.json`,JSON.stringify({
+      browser:browserName, cameraLifecycle:supportsCamera ? 'passed with synthetic media' : 'unsupported by installed browser build',
+      patientRoutes:'passed',keyboardAndAxe:'passed',saveRecovery:'passed',
+    },null,2)+'\n');
   } finally { await browser.close(); }
 })().catch(error=>{ console.error(error); process.exitCode=1; });

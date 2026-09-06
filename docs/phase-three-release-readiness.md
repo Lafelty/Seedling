@@ -1,8 +1,12 @@
 # Phase 3: release readiness
 
-Status: local implementation complete; staging, physical-device and therapist
-sign-off pending. This is not a release approval. No deployment or migration was
-performed. Exercise thresholds, repetition rules and star rules are unchanged.
+Status: local implementation and live database contract verification complete.
+Public checks of the existing demo deployment found a signed-out navigation bug
+on Garden and Progress; the local fix is verified and awaits deployment.
+Real-camera save/retry and physical-device/accessibility
+checks were skipped at the user's request; therapist sign-off remains pending.
+This is not a release approval. No deployment or migration was performed during
+this verification. Exercise thresholds, repetition rules and star rules are unchanged.
 
 ## Changes
 
@@ -35,9 +39,11 @@ the accompanying commit contains the tested dialog and browser suite.
 | `npm run typecheck` | Passed after the dialog fix |
 | `npm run lint` | 0 errors / 43 existing warnings |
 | `npm run test:release` | Passed all supported checks in Chromium, WebKit and Firefox; Windows WebKit camera lifecycle explicitly unsupported |
-| `npm run test:staging -- --check-config` | Correctly refused missing configuration; no requests sent |
-| Live staging database | Pending approved project and two test-account credentials |
-| Physical phones / assistive technology | Pending manual checks below |
+| `npm run test:staging -- --check-config` | Passed after configuring the user-authorized demo database |
+| Live database contract | Passed against the existing demo database, authorized by the user; two non-admin test accounts |
+| Deployed public pages / navigation | Signed-out redirect bug fixed and verified locally; deployment pending |
+| Real-camera save/retry | Skipped at the user's request; not verified |
+| Physical phones / assistive technology | Skipped at the user's request; not verified |
 | Therapist review | Pending per-exercise sign-off below |
 
 Run from the repository root:
@@ -83,7 +89,57 @@ physical iPhone Safari remains a separate check. See [Playwright's browser
 documentation](https://playwright.dev/docs/browsers#webkit). The keyboard review
 used the [Web Interface Guidelines](https://github.com/vercel-labs/web-interface-guidelines/blob/main/command.md).
 
+## Existing demo deployment: public checks
+
+Checked https://neugrow.vercel.app/ on 2026-09-06 in a fresh, signed-out Chromium
+browser against the deployed app, without mocked responses or form submissions.
+
+- Login, signup and health pages loaded successfully. Login to signup and back
+  worked through the visible links. The health page reported a configured
+  Supabase URL; this alone does not establish database connectivity.
+- Exercises, Profile and Admin redirected the signed-out visitor to Login.
+- Garden (`/`) and Progress (`/progress`) instead displayed "Your latest progress
+  could not be loaded" with Retry loading. These entry points need to redirect
+  signed-out visitors to Login. Local code throws the `getUser()` error before
+  checking for a missing user. The local fix handles Supabase's missing-session
+  error as a login redirect, while retaining Retry for other authentication
+  failures. Fresh signed-out browser tests reproduce the missing-session case.
+- No uncaught page errors were observed. The login page had no document-level
+  horizontal overflow at 390px or 1440px viewport widths. This was a browser
+  smoke check, not a physical-phone or accessibility assessment.
+
+Evidence: ignored `test-results/deployed-public-report.json` and
+`test-results/deployed-login-{390,1440}.png`. The deployed commit was not
+established by these checks. No login, signup, camera session or data write was
+performed in this public-page check. The deployed navigation finding remains
+open until the local fix is deployed and checked on the public URL.
+
+### Signed-out navigation fix: local verification
+
+Verified on 2026-09-06: production build, TypeScript check and all 209 unit tests
+passed; lint reported zero errors and the existing 43 warnings. Focused browser
+regressions passed against the local production build in Chromium, WebKit and
+Firefox. On both Garden and Progress, a missing session redirects to Login,
+whereas an authentication service outage keeps Retry visible and successfully
+loads the page after the service recovers. Database/auth responses in these
+regressions are mocked. No deployment was performed.
+
+The regression lives in `tests/e2e/signed-out-navigation.cjs`, runs as part of
+`npm run test:e2e` and `npm run test:release`, and can be run against a local
+server with `node tests/e2e/signed-out-navigation.cjs` (`E2E_BASE_URL` selects
+the server). The full browser suite was not rerun for this focused fix.
+
 ## Staging database verification
+
+The live contract verifier passed on 2026-09-06 against the app's existing demo
+database. The user confirmed it has no real users and selected it for these
+checks instead of a separate staging project. The `.env.staging.local` filename
+and `test:staging` command still name the verification configuration and runner.
+Evidence is in ignored `test-results/staging-report.json`. The run left one test
+session, two repetition rows and one additional star in the primary test account.
+Account isolation, offline/lost-response retries, immutable completion,
+concurrent/idempotent awards and denial of direct ledger writes all passed.
+This verifies the database contract; real-camera browser save/retry remains pending.
 
 1. Select an approved staging project and compare its deployed migrations with
    `supabase/README.md`. This verifier does not apply migrations.
@@ -128,7 +184,9 @@ against the same staging deployment to verify those parts together.
 Use the staging app over HTTPS. A phone visiting a desktop's plain HTTP LAN URL
 is not equivalent to localhost and is unsuitable for this camera check.
 For each device, record model, OS version, browser version, app revision, date,
-tester, outcome and issue/evidence link. All rows below are currently **pending**.
+tester, outcome and issue/evidence link. All rows below are currently **skipped
+at the user's request (not verified)**. They remain requirements for full release
+readiness if that scope is resumed.
 
 | Device / mode | Required checks |
 | --- | --- |

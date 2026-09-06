@@ -1,6 +1,7 @@
 'use client';
 
 import Link from 'next/link';
+import { isAuthSessionMissingError } from '@supabase/supabase-js';
 import ProgressTabs from '@/components/ProgressTabs';
 import { useRouter } from 'next/navigation';
 import { loadProgressSnapshot } from '@/lib/progressSync';
@@ -41,9 +42,10 @@ export default function ProgressPage() {
       try {
         const supabase = createClient();
         const { data: { user }, error } = await supabase.auth.getUser();
+        if (cancelled) return;
+        if (isAuthSessionMissingError(error)) { router.replace('/login'); return; }
         if (error) throw error;
         if (!user) { router.replace('/login'); return; }
-        if (cancelled) return;
         setProgressUid(user.id);
         setProgress(getProgress());
         const { profile, completedDates } = await loadProgressSnapshot(supabase, user.id);

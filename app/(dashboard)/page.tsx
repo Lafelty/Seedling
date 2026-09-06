@@ -1,6 +1,7 @@
 'use client';
 
 import Link from 'next/link';
+import { isAuthSessionMissingError } from '@supabase/supabase-js';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { createClient } from '@/lib/supabase/client';
@@ -75,9 +76,10 @@ export default function DashboardPage() {
       try {
         const supabase = createClient();
         const { data: { user }, error } = await supabase.auth.getUser();
+        if (cancelled) return;
+        if (isAuthSessionMissingError(error)) { router.replace('/login'); return; }
         if (error) throw error;
         if (!user) { router.replace('/login'); return; }
-        if (cancelled) return;
         setUser(user);
         setProgressUid(user.id);
         setProgress(getProgress());

@@ -3,6 +3,7 @@ const { chromium, webkit, firefox, expect } = require('@playwright/test');
 const AxeBuilder = require('@axe-core/playwright').default;
 const { mkdir, writeFile } = require('node:fs/promises');
 const { makeContext, fakeTracking, baseURL, result, pendingKey, group } = require('./fixtures.cjs');
+const { checkSignedOutNavigation } = require('./signed-out-navigation.cjs');
 const browserName = process.env.E2E_BROWSER || 'chromium';
 const browserType = { chromium, webkit, firefox }[browserName];
 if (!browserType) throw new Error('E2E_BROWSER must be chromium, webkit, or firefox');
@@ -25,6 +26,7 @@ async function checkLayout(page, name) {
   const browser = await browserType.launch({headless:true,...(browserName === 'chromium' ? {args:['--use-fake-device-for-media-stream','--use-fake-ui-for-media-stream']} : {})});
   console.log(`Browser: ${browserName}`);
   try {
+    await checkSignedOutNavigation(browser);
     const {context,page,state} = await makeContext(browser,320);
     for (const width of [320,390,768,1440]) {
       await page.setViewportSize({width,height:900});

@@ -2,7 +2,7 @@
 
 Status: local implementation and live database contract verification complete.
 Public checks of the existing demo deployment found a signed-out navigation bug
-on Garden and Progress; the local fix is verified and awaits deployment.
+on Garden and Progress; the fix is merged and its behavior is verified live.
 Real-camera save/retry and physical-device/accessibility
 checks were skipped at the user's request; therapist sign-off remains pending.
 This is not a release approval. No deployment or migration was performed during
@@ -41,7 +41,7 @@ the accompanying commit contains the tested dialog and browser suite.
 | `npm run test:release` | Passed all supported checks in Chromium, WebKit and Firefox; Windows WebKit camera lifecycle explicitly unsupported |
 | `npm run test:staging -- --check-config` | Passed after configuring the user-authorized demo database |
 | Live database contract | Passed against the existing demo database, authorized by the user; two non-admin test accounts |
-| Deployed public pages / navigation | Signed-out redirect bug fixed and verified locally; deployment pending |
+| Deployed public pages / navigation | Signed-out redirects and login/signup navigation passed live on 2026-09-06 |
 | Real-camera save/retry | Skipped at the user's request; not verified |
 | Physical phones / assistive technology | Skipped at the user's request; not verified |
 | Therapist review | Pending per-exercise sign-off below |
@@ -111,8 +111,14 @@ browser against the deployed app, without mocked responses or form submissions.
 Evidence: ignored `test-results/deployed-public-report.json` and
 `test-results/deployed-login-{390,1440}.png`. The deployed commit was not
 established by these checks. No login, signup, camera session or data write was
-performed in this public-page check. The deployed navigation finding remains
-open until the local fix is deployed and checked on the public URL.
+performed in this public-page check. A follow-up on 2026-09-06 after merging
+`b5842d5` confirmed Garden and Progress redirect to Login on the public URL.
+Exercises, Profile and Admin also redirected correctly, and Login to Signup and
+back worked. Each protected route used a fresh signed-out Chromium context,
+with no mocked responses, credentials or form submissions. No uncaught page
+errors were observed on those routes. Evidence is in ignored
+`test-results/phase-four-live-report.json`. This closes the observed navigation
+finding; the deployment's commit identity was not independently established.
 
 ### Signed-out navigation fix: local verification
 

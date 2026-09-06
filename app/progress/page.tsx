@@ -127,8 +127,7 @@ export default function ProgressPage() {
   return (
     <>
     <main
-      className="min-h-screen max-w-4xl mx-auto px-4 py-8 pb-24"
-      style={{ background: 'linear-gradient(180deg, rgba(74, 107, 90, 0.07), rgba(107, 143, 122, 0.03) 240px, transparent 480px)' }}
+      className="journal-page min-h-screen max-w-4xl mx-auto px-4 py-8 pb-24"
     >
       <header className="patient-heading">
         <h1>Progress</h1>
@@ -145,8 +144,9 @@ export default function ProgressPage() {
       </dl>
 
       {/* Calendar */}
+      <div className="journal-body">
       <div
-        className="card mb-8"
+        className="journal-calendar card mb-8"
         style={{
           background: 'linear-gradient(180deg, rgba(107, 143, 122, 0.08), var(--surface) 55%)',
           borderColor: 'rgba(74, 107, 90, 0.20)',
@@ -248,7 +248,6 @@ export default function ProgressPage() {
                     fontSize: 'var(--text-xs)',
                     fontWeight: isToday ? 700 : 600,
                     color: isToday ? 'var(--primary)' : 'var(--muted)',
-                    opacity: isFuture ? 0.5 : 1,
                   }}
                 >
                   {format(day, 'd')}
@@ -312,8 +311,9 @@ export default function ProgressPage() {
       </div>
 
       {/* Day Detail */}
+      <div className="journal-side">
       <div
-        className="card mb-8 animate-fadeIn"
+        className="journal-day card mb-8"
         style={{
           background: 'linear-gradient(180deg, rgba(107, 143, 122, 0.08), var(--surface) 55%)',
           borderColor: 'rgba(74, 107, 90, 0.20)',
@@ -413,6 +413,8 @@ export default function ProgressPage() {
 
       {/* Milestones — the journey to a real tree */}
       <MilestoneJourney totalStars={progress.totalStars} />
+      </div>
+      </div>
     </main>
 
 

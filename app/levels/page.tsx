@@ -302,11 +302,11 @@ export default function LevelsPage() {
 
       {/* The wash spans the viewport; the path itself stays a column, so the
           tint must not be pinned to the column's width. */}
-      <div style={{ background: 'linear-gradient(180deg, rgba(140, 194, 82, 0.16), rgba(84, 178, 150, 0.10) 180px, transparent 380px)' }}>
+      <div className="exercise-library">
       <main className="min-h-screen max-w-2xl mx-auto px-4 py-8 pb-24">
         {/* Header. Progress rides in the sentence and the rail rather than its
             own slab, and says nothing about which box to pick. */}
-        <div className="mb-8 animate-fadeIn">
+        <div className="exercise-library-heading mb-8">
           <h1 style={{ color: 'var(--primary)' }}>Exercises</h1>
           <p style={{ color: 'var(--muted)', marginTop: 'var(--space-1)' }}>
             {visibleBoxes.length === 0

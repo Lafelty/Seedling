@@ -73,6 +73,8 @@ export default function EditExercisePage({ params }: { params: Promise<{ id: str
   const testRepCounterRef = useRef<RepCounter | null>(null)
 
   const [loading, setLoading] = useState(true)
+  const [saveAction, setSaveAction] = useState<'save' | 'publish' | null>(null)
+  const [saveNotice, setSaveNotice] = useState<{ error: boolean; text: string } | null>(null)
   const [exercise, setExercise] = useState<Exercise | null>(null)
   // Display-only: recordings are mode-specific, so the mode is fixed at creation.
   const mode: TrackingMode = exercise?.tracking_mode ?? 'body'
@@ -739,65 +741,20 @@ export default function EditExercisePage({ params }: { params: Promise<{ id: str
     setDemoImages((prev) => prev.map((u, i) => (i === slot ? null : u)))
   }
 
-  const saveRefinedCriteria = async () => {
-    if (!exercise) return
+  const persistExercise = async (publish: boolean) => {
+    if (!exercise || saveAction) return
     if (!exerciseName.trim()) {
-      alert('Exercise name cannot be empty')
+      setSaveNotice({ error: true, text: 'Exercise name cannot be empty.' })
       return
     }
-
-    const refinedCriteria = {
-      targetBodyParts,
-      criteria: angleCriteria,
-      levelingRules,
-      toleranceMultiplier,
-      angleSpace,
-    }
-
-    const supabase = createClient()
-    const { error } = await supabase
-      .from('exercises')
-      .update({
-        name: exerciseName.trim(),
-        description: exerciseDescription.trim() || null,
-        exercise_type: exerciseType,
-        difficulty,
-        demo_images: demoImages.filter((u): u is string => !!u),
-        pose_criteria: refinedCriteria as PoseCriteria,
-        feedback_messages: feedbackMessages,
-        target_reps: targetReps,
-        hold_duration_ms: holdDuration,
-        updated_at: new Date().toISOString(),
-      })
-      .eq('id', exercise.id)
-
-    if (error) {
-      alert('Failed to save: ' + error.message)
-    } else {
-      alert('Exercise criteria saved!')
-    }
-  }
-
-  const publishExercise = async () => {
-    if (!exercise) return
-    if (!exerciseName.trim()) {
-      alert('Exercise name cannot be empty')
+    if (publish && angleCriteria.length === 0 && levelingRules.length === 0) {
+      setSaveNotice({ error: true, text: 'Add at least one angle criterion or leveling rule before publishing.' })
       return
     }
-
-    // Never publish an unconfigured exercise — the session engine can't validate
-    // reps without at least one angle criterion or leveling rule.
-    if (angleCriteria.length === 0 && levelingRules.length === 0) {
-      alert('Add at least one angle criterion or leveling rule before publishing.')
-      return
-    }
-
-    const supabase = createClient()
-    // Commit the current refinements alongside the publish so what appears in
-    // sessions matches what's shown here (not a stale earlier save).
-    const { error } = await supabase
-      .from('exercises')
-      .update({
+    setSaveAction(publish ? 'publish' : 'save')
+    setSaveNotice(null)
+    try {
+      const { error } = await createClient().from('exercises').update({
         name: exerciseName.trim(),
         description: exerciseDescription.trim() || null,
         exercise_type: exerciseType,
@@ -807,16 +764,16 @@ export default function EditExercisePage({ params }: { params: Promise<{ id: str
         feedback_messages: feedbackMessages,
         target_reps: targetReps,
         hold_duration_ms: holdDuration,
-        is_active: true,
+        ...(publish ? { is_active: true } : {}),
         updated_at: new Date().toISOString(),
-      })
-      .eq('id', exercise.id)
-
-    if (error) {
-      alert('Failed to publish: ' + error.message)
-    } else {
-      alert('Exercise published! It will now appear in therapy sessions.')
-      router.push('/admin')
+      }).eq('id', exercise.id)
+      if (error) throw error
+      setSaveNotice({ error: false, text: publish ? 'Exercise published.' : 'Changes saved.' })
+      if (publish) router.push('/admin')
+    } catch {
+      setSaveNotice({ error: true, text: publish ? 'The exercise could not be published. Please try again.' : 'Changes could not be saved. Please try again.' })
+    } finally {
+      setSaveAction(null)
     }
   }
 
@@ -835,53 +792,58 @@ export default function EditExercisePage({ params }: { params: Promise<{ id: str
   const currentDemo = exercise.recorded_paths[selectedDemo]
 
   return (
-    <div className="min-h-screen bg-[#F7F4EF] p-6">
+    <div className="editor-page min-h-screen bg-[var(--bg)] p-6">
       <div className="max-w-7xl mx-auto">
         {/* Header */}
         <div className="flex items-center justify-between mb-6">
           <div>
             <Link
               href="/admin"
-              className="text-sm text-[#5C635D] hover:text-[#C4612F] mb-2 inline-block"
+              className="text-sm text-[var(--muted)] hover:text-[var(--primary)] mb-2 inline-block"
             >
               ← Back to Admin
             </Link>
-            <h1 className="text-3xl font-serif text-[#1F2421]">
-              Refine <em className="text-[#C4612F]">{exerciseName || exercise.name}</em>
+            <h1 className="text-3xl font-bold text-[var(--ink)]">
+              Refine <em className="text-[var(--primary)]">{exerciseName || exercise.name}</em>
             </h1>
-            <p className="text-sm text-[#5C635D] mt-1">
+            <p className="text-sm text-[var(--muted)] mt-1">
               {exercise.is_active ? '✓ Published' : 'Draft'}
-              <span className="ml-2 px-2 py-0.5 rounded-full text-xs font-medium bg-[#F2E3D6] text-[#C4612F]">
+              <span className="ml-2 px-2 py-0.5 rounded-full text-xs font-medium bg-[var(--patient-wash)] text-[var(--primary)]">
                 {mode === 'hand' ? 'Hand tracking' : 'Body tracking'}
               </span>
             </p>
           </div>
           <div className="flex gap-3">
             <button
-              onClick={saveRefinedCriteria}
-              className="px-6 py-2 bg-[#C4612F] hover:bg-[#A94E22] text-white rounded-full font-medium transition-colors"
+              onClick={() => void persistExercise(false)}
+              disabled={saveAction !== null}
+              aria-busy={saveAction === 'save'}
+              className="px-6 py-2 bg-[var(--primary)] hover:bg-[var(--primary-hover)] text-white rounded-full font-medium transition-colors"
             >
-              Save Changes
+              {saveAction === 'save' ? 'Saving…' : 'Save Changes'}
             </button>
             {!exercise.is_active && (
               <button
-                onClick={publishExercise}
-                className="px-6 py-2 bg-[#10b981] hover:bg-[#059669] text-white rounded-full font-medium transition-colors"
+                onClick={() => void persistExercise(true)}
+                disabled={saveAction !== null}
+                aria-busy={saveAction === 'publish'}
+                className="px-6 py-2 bg-[var(--primary)] hover:bg-[var(--primary-hover)] text-white rounded-full font-medium transition-colors"
               >
-                Publish Exercise
+                {saveAction === 'publish' ? 'Publishing…' : 'Publish Exercise'}
               </button>
             )}
           </div>
         </div>
 
+        {saveNotice && <p role={saveNotice.error ? 'alert' : 'status'} className={saveNotice.error ? 'editor-notice editor-notice-error' : 'editor-notice'}>{saveNotice.text}</p>}
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
           {/* Left: Skeleton Viewer */}
           <div className="space-y-4">
-            <div className="bg-white rounded-2xl p-6 border border-[#E7E1D7]">
-              <h2 className="text-xl font-serif text-[#1F2421] mb-4">Motion Path</h2>
+            <div className="bg-white rounded-2xl p-6 border border-[var(--border)]">
+              <h2 className="text-xl font-bold text-[var(--ink)] mb-4">Motion Path</h2>
 
               {/* Canvas */}
-              <div className="relative aspect-video bg-[#1F2421] rounded-xl overflow-hidden mb-4">
+              <div className="relative aspect-video bg-[var(--ink)] rounded-xl overflow-hidden mb-4">
                 {/* object-contain: the canvas is sized to the demo's own
                     coordinate box, which is not always the panel's 16:9 */}
                 <canvas
@@ -902,8 +864,8 @@ export default function EditExercisePage({ params }: { params: Promise<{ id: str
                     }}
                     className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
                       selectedDemo === i
-                        ? 'bg-[#C4612F] text-white'
-                        : 'bg-[#F7F4EF] text-[#1F2421] hover:bg-[#E7E1D7]'
+                        ? 'bg-[var(--primary)] text-white'
+                        : 'bg-[var(--bg)] text-[var(--ink)] hover:bg-[var(--border)]'
                     }`}
                   >
                     Demo {i + 1}
@@ -916,7 +878,7 @@ export default function EditExercisePage({ params }: { params: Promise<{ id: str
                 <div className="flex items-center gap-3">
                   <button
                     onClick={() => setIsPlaying(!isPlaying)}
-                    className="px-4 py-2 bg-[#C4612F] hover:bg-[#A94E22] text-white rounded-lg text-sm font-medium transition-colors"
+                    className="px-4 py-2 bg-[var(--primary)] hover:bg-[var(--primary-hover)] text-white rounded-lg text-sm font-medium transition-colors"
                   >
                     {isPlaying ? 'Pause' : 'Play'}
                   </button>
@@ -925,11 +887,11 @@ export default function EditExercisePage({ params }: { params: Promise<{ id: str
                       setCurrentFrame(0)
                       setIsPlaying(false)
                     }}
-                    className="px-4 py-2 bg-[#F7F4EF] hover:bg-[#E7E1D7] text-[#1F2421] rounded-lg text-sm font-medium transition-colors"
+                    className="px-4 py-2 bg-[var(--bg)] hover:bg-[var(--border)] text-[var(--ink)] rounded-lg text-sm font-medium transition-colors"
                   >
                     Reset
                   </button>
-                  <span className="text-sm text-[#5C635D]">
+                  <span className="text-sm text-[var(--muted)]">
                     Frame {currentFrame + 1} / {currentDemo?.frames.length || 0}
                   </span>
                 </div>
@@ -939,7 +901,8 @@ export default function EditExercisePage({ params }: { params: Promise<{ id: str
                   type="range"
                   min="0"
                   max={(currentDemo?.frames.length || 1) - 1}
-                  value={currentFrame}
+                  aria-label="Playback frame"
+                    value={currentFrame}
                   onChange={(e) => {
                     setCurrentFrame(parseInt(e.target.value))
                     setIsPlaying(false)
@@ -951,14 +914,15 @@ export default function EditExercisePage({ params }: { params: Promise<{ id: str
 
             {/* Angle timeline: criterion angle across the demo, band shaded */}
             {chartCriterion && chartData.length > 0 && (
-              <div className="bg-white rounded-2xl p-6 border border-[#E7E1D7]">
+              <div className="bg-white rounded-2xl p-6 border border-[var(--border)]">
                 <div className="flex items-center justify-between mb-2">
-                  <h3 className="text-lg font-serif text-[#1F2421]">Angle Timeline</h3>
+                  <h3 className="text-lg font-bold text-[var(--ink)]">Angle Timeline</h3>
                   {angleCriteria.length > 1 && (
                     <select
-                      value={Math.min(chartCriterionIdx, angleCriteria.length - 1)}
+                      aria-label="Angle to chart"
+                    value={Math.min(chartCriterionIdx, angleCriteria.length - 1)}
                       onChange={(e) => setChartCriterionIdx(parseInt(e.target.value, 10))}
-                      className="px-2 py-1 text-sm border border-[#E7E1D7] rounded bg-white focus:outline-none focus:ring-1 focus:ring-[#C4612F]"
+                      className="px-2 py-1 text-sm border border-[var(--border)] rounded bg-white focus:outline-none focus:ring-1 focus:ring-[var(--primary)]"
                     >
                       {angleCriteria.map((c, i) => (
                         <option key={i} value={i}>
@@ -968,7 +932,7 @@ export default function EditExercisePage({ params }: { params: Promise<{ id: str
                     </select>
                   )}
                 </div>
-                <p className="text-xs text-[#5C635D] mb-3">
+                <p className="text-xs text-[var(--muted)] mb-3">
                   {formatJointName(chartCriterion.joint)} angle across Demo {selectedDemo + 1}.
                   Green band = accepted range{typeof chartCriterion.restAngle === 'number' ? ', dashed line = rest' : ''}. Click the chart to jump the
                   playback to that frame.
@@ -1035,9 +999,9 @@ export default function EditExercisePage({ params }: { params: Promise<{ id: str
             )}
 
             {/* Difficulty: one dial that scales every tolerance band */}
-            <div className="bg-white rounded-2xl p-6 border border-[#E7E1D7]">
-              <h3 className="text-lg font-serif text-[#1F2421] mb-2">Difficulty</h3>
-              <p className="text-xs text-[#5C635D] mb-3">
+            <div className="bg-white rounded-2xl p-6 border border-[var(--border)]">
+              <h3 className="text-lg font-bold text-[var(--ink)] mb-2">Difficulty</h3>
+              <p className="text-xs text-[var(--muted)] mb-3">
                 Scales every angle and leveling tolerance at once — match it to the
                 patient&apos;s mobility without editing individual angles.
               </p>
@@ -1052,14 +1016,14 @@ export default function EditExercisePage({ params }: { params: Promise<{ id: str
                     onClick={() => setToleranceMultiplier(opt.value)}
                     className={`px-3 py-2 rounded-lg text-sm font-medium border transition-colors ${
                       toleranceMultiplier === opt.value
-                        ? 'bg-[#C4612F] text-white border-[#C4612F]'
-                        : 'bg-white text-[#1F2421] border-[#E7E1D7] hover:border-[#C4612F]'
+                        ? 'bg-[var(--primary)] text-white border-[var(--primary)]'
+                        : 'bg-white text-[var(--ink)] border-[var(--border)] hover:border-[var(--primary)]'
                     }`}
                   >
                     <span className="block">{opt.label}</span>
                     <span
                       className={`block text-[11px] font-normal ${
-                        toleranceMultiplier === opt.value ? 'text-white/80' : 'text-[#5C635D]'
+                        toleranceMultiplier === opt.value ? 'text-white/80' : 'text-[var(--muted)]'
                       }`}
                     >
                       {opt.hint}
@@ -1070,21 +1034,21 @@ export default function EditExercisePage({ params }: { params: Promise<{ id: str
             </div>
 
             {/* Test mode: run the real session validation against current edits */}
-            <div className="bg-white rounded-2xl p-6 border border-[#E7E1D7]">
+            <div className="bg-white rounded-2xl p-6 border border-[var(--border)]">
               <div className="flex items-center justify-between mb-2">
-                <h3 className="text-lg font-serif text-[#1F2421]">Test This Exercise</h3>
+                <h3 className="text-lg font-bold text-[var(--ink)]">Test This Exercise</h3>
                 <button
                   onClick={() => (testMode ? stopTest() : startTest())}
                   className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors text-white ${
                     testMode
                       ? 'bg-red-600 hover:bg-red-700'
-                      : 'bg-[#C4612F] hover:bg-[#A94E22]'
+                      : 'bg-[var(--primary)] hover:bg-[var(--primary-hover)]'
                   }`}
                 >
                   {testMode ? 'Stop Test' : 'Start Test'}
                 </button>
               </div>
-              <p className="text-xs text-[#5C635D] mb-3">
+              <p className="text-xs text-[var(--muted)] mb-3">
                 Do the exercise in front of the camera. This runs exactly the validation
                 patients get, using the criteria as currently edited — no save needed.
               </p>
@@ -1095,7 +1059,7 @@ export default function EditExercisePage({ params }: { params: Promise<{ id: str
 
               {testMode && (
                 <div className="space-y-3">
-                  <div className="relative aspect-video bg-[#1F2421] rounded-xl overflow-hidden">
+                  <div className="relative aspect-video bg-[var(--ink)] rounded-xl overflow-hidden">
                     <video
                       ref={testVideoRef}
                       className="absolute inset-0 w-full h-full object-cover scale-x-[-1]"
@@ -1110,7 +1074,7 @@ export default function EditExercisePage({ params }: { params: Promise<{ id: str
                       <div
                         className={`absolute top-3 left-3 right-3 px-3 py-2 rounded-lg text-sm font-medium text-white ${
                           testFeedback.feedback === 'good'
-                            ? 'bg-[#10b981]/90'
+                            ? 'bg-[var(--primary)]/90'
                             : testFeedback.feedback === 'adjust'
                               ? 'bg-red-600/90'
                               : 'bg-black/60'
@@ -1121,11 +1085,11 @@ export default function EditExercisePage({ params }: { params: Promise<{ id: str
                     )}
                   </div>
                   <div className="flex items-center gap-3">
-                    <span className="text-sm font-medium text-[#1F2421]">
+                    <span className="text-sm font-medium text-[var(--ink)]">
                       Reps: {testReps}
                     </span>
                     {testPhase && (
-                      <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-[#F2E3D6] text-[#C4612F]">
+                      <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-[var(--patient-wash)] text-[var(--primary)]">
                         {
                           { rest: 'Ready', lifting: 'Move', holding: 'Hold', lowering: 'Return' }[
                             testPhase
@@ -1133,9 +1097,9 @@ export default function EditExercisePage({ params }: { params: Promise<{ id: str
                         }
                       </span>
                     )}
-                    <div className="flex-1 h-2 bg-[#E7E1D7] rounded-full overflow-hidden">
+                    <div className="flex-1 h-2 bg-[var(--border)] rounded-full overflow-hidden">
                       <div
-                        className="h-full bg-[#10b981] transition-[width]"
+                        className="h-full bg-[var(--primary)] transition-[width]"
                         style={{ width: `${Math.round(testHoldProgress * 100)}%` }}
                       />
                     </div>
@@ -1143,14 +1107,14 @@ export default function EditExercisePage({ params }: { params: Promise<{ id: str
 
                   {/* Per-criterion pass rate — spots the one that's too tight */}
                   {testPassRates.length > 0 && (
-                    <div className="border-t border-[#E7E1D7] pt-3 space-y-2">
-                      <p className="text-xs font-medium text-[#1F2421]">
+                    <div className="border-t border-[var(--border)] pt-3 space-y-2">
+                      <p className="text-xs font-medium text-[var(--ink)]">
                         Criteria pass rate (share of frames passing while you test)
                       </p>
                       {testPassRates.map((r) => (
                         <div key={r.key} className="flex items-center gap-2">
-                          <span className="text-xs text-[#5C635D] w-40 truncate">{r.label}</span>
-                          <div className="flex-1 h-2 bg-[#E7E1D7] rounded-full overflow-hidden">
+                          <span className="text-xs text-[var(--muted)] w-40 truncate">{r.label}</span>
+                          <div className="flex-1 h-2 bg-[var(--border)] rounded-full overflow-hidden">
                             <div
                               className="h-full transition-[width]"
                               style={{
@@ -1183,9 +1147,9 @@ export default function EditExercisePage({ params }: { params: Promise<{ id: str
             </div>
 
             {/* Detected Moving Parts */}
-            <div className="bg-white rounded-2xl p-6 border border-[#E7E1D7]">
-              <h3 className="text-lg font-serif text-[#1F2421] mb-3">Target Body Parts</h3>
-              <p className="text-xs text-[#5C635D] mb-3">
+            <div className="bg-white rounded-2xl p-6 border border-[var(--border)]">
+              <h3 className="text-lg font-bold text-[var(--ink)] mb-3">Target Body Parts</h3>
+              <p className="text-xs text-[var(--muted)] mb-3">
                 Auto-detected from your recordings. These parts will be tracked during exercises.
               </p>
               <div className="flex flex-wrap gap-2">
@@ -1193,13 +1157,13 @@ export default function EditExercisePage({ params }: { params: Promise<{ id: str
                   targetBodyParts.map((part) => (
                     <span
                       key={part}
-                      className="px-3 py-1 bg-[#F2E3D6] text-[#C4612F] text-sm rounded-full font-medium"
+                      className="px-3 py-1 bg-[var(--patient-wash)] text-[var(--primary)] text-sm rounded-full font-medium"
                     >
                       {part}
                     </span>
                   ))
                 ) : (
-                  <p className="text-sm text-[#5C635D]">No body parts detected yet</p>
+                  <p className="text-sm text-[var(--muted)]">No body parts detected yet</p>
                 )}
               </div>
             </div>
@@ -1208,60 +1172,64 @@ export default function EditExercisePage({ params }: { params: Promise<{ id: str
           {/* Right: Criteria Editor */}
           <div className="space-y-4">
             {/* Exercise Details — editable metadata, saved with Save Changes / Publish */}
-            <div className="bg-white rounded-2xl p-6 border border-[#E7E1D7]">
-              <h3 className="text-lg font-serif text-[#1F2421] mb-4">Exercise Details</h3>
+            <div className="bg-white rounded-2xl p-6 border border-[var(--border)]">
+              <h3 className="text-lg font-bold text-[var(--ink)] mb-4">Exercise Details</h3>
 
               <div className="space-y-4">
                 <div>
-                  <label className="block text-sm font-medium text-[#1F2421] mb-1">
+                  <label className="block text-sm font-medium text-[var(--ink)] mb-1">
                     Exercise Name *
                   </label>
                   <SmoothInput
                     type="text"
+                    aria-label="Exercise name"
                     value={exerciseName}
                     onChange={(e) => setExerciseName(e.target.value)}
                     placeholder="e.g. Shoulder Raise"
-                    className="w-full px-3 py-2 border border-[#E7E1D7] rounded-lg focus:outline-none focus:ring-2 focus:ring-[#C4612F]"
+                    className="w-full px-3 py-2 border border-[var(--border)] rounded-lg focus:outline-none focus:ring-2 focus:ring-[var(--primary)]"
                   />
                 </div>
 
                 <div>
-                  <label className="block text-sm font-medium text-[#1F2421] mb-1">
+                  <label className="block text-sm font-medium text-[var(--ink)] mb-1">
                     Description
                   </label>
                   <SmoothTextarea
+                    aria-label="Description"
                     value={exerciseDescription}
                     onChange={(e) => setExerciseDescription(e.target.value)}
                     placeholder="Brief description of the exercise"
                     rows={2}
-                    className="w-full px-3 py-2 border border-[#E7E1D7] rounded-lg focus:outline-none focus:ring-2 focus:ring-[#C4612F]"
+                    className="w-full px-3 py-2 border border-[var(--border)] rounded-lg focus:outline-none focus:ring-2 focus:ring-[var(--primary)]"
                   />
                 </div>
 
                 <div className="grid grid-cols-2 gap-3">
                   <div>
-                    <label className="block text-sm font-medium text-[#1F2421] mb-1">
+                    <label className="block text-sm font-medium text-[var(--ink)] mb-1">
                       Exercise Type
                     </label>
                     <select
-                      value={exerciseType}
+                      aria-label="Exercise type"
+                    value={exerciseType}
                       onChange={(e) => setExerciseType(e.target.value as 'static' | 'dynamic')}
-                      className="w-full px-3 py-2 border border-[#E7E1D7] rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-[#C4612F]"
+                      className="w-full px-3 py-2 border border-[var(--border)] rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-[var(--primary)]"
                     >
                       <option value="dynamic">Dynamic (with movement)</option>
                       <option value="static">Static (hold position)</option>
                     </select>
                   </div>
                   <div>
-                    <label className="block text-sm font-medium text-[#1F2421] mb-1">
+                    <label className="block text-sm font-medium text-[var(--ink)] mb-1">
                       Difficulty
                     </label>
                     <select
-                      value={difficulty}
+                      aria-label="Difficulty"
+                    value={difficulty}
                       onChange={(e) =>
                         setDifficulty(e.target.value as 'beginner' | 'intermediate' | 'advanced')
                       }
-                      className="w-full px-3 py-2 border border-[#E7E1D7] rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-[#C4612F]"
+                      className="w-full px-3 py-2 border border-[var(--border)] rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-[var(--primary)]"
                     >
                       <option value="beginner">Beginner</option>
                       <option value="intermediate">Intermediate</option>
@@ -1271,10 +1239,10 @@ export default function EditExercisePage({ params }: { params: Promise<{ id: str
                 </div>
 
                 <div>
-                  <label className="block text-sm font-medium text-[#1F2421] mb-1">
+                  <label className="block text-sm font-medium text-[var(--ink)] mb-1">
                     Demo Pictures
                   </label>
-                  <p className="text-xs text-[#5C635D] mb-2">
+                  <p className="text-xs text-[var(--muted)] mb-2">
                     Two photos of the movement (e.g. start and end position) — patients see
                     them alternating on the &quot;Ready?&quot; screen before the exercise starts.
                   </p>
@@ -1282,7 +1250,7 @@ export default function EditExercisePage({ params }: { params: Promise<{ id: str
                     {[0, 1].map((slot) => (
                       <div key={slot}>
                         {demoImages[slot] ? (
-                          <div className="relative aspect-[4/3] rounded-lg overflow-hidden border border-[#E7E1D7] group">
+                          <div className="relative aspect-[4/3] rounded-lg overflow-hidden border border-[var(--border)] group">
                             {/* eslint-disable-next-line @next/next/no-img-element */}
                             <img
                               src={demoImages[slot] as string}
@@ -1298,7 +1266,7 @@ export default function EditExercisePage({ params }: { params: Promise<{ id: str
                           </div>
                         ) : (
                           <label
-                            className={`flex flex-col items-center justify-center aspect-[4/3] rounded-lg border-2 border-dashed border-[#E7E1D7] text-[#5C635D] text-sm cursor-pointer hover:border-[#C4612F] hover:text-[#C4612F] transition-colors ${
+                            className={`flex flex-col items-center justify-center aspect-[4/3] rounded-lg border-2 border-dashed border-[var(--border)] text-[var(--muted)] text-sm cursor-pointer hover:border-[var(--primary)] hover:text-[var(--primary)] transition-colors ${
                               uploadingSlot === slot ? 'opacity-60 pointer-events-none' : ''
                             }`}
                           >
@@ -1323,20 +1291,20 @@ export default function EditExercisePage({ params }: { params: Promise<{ id: str
             </div>
 
             {/* Angle Criteria */}
-            <div className="bg-white rounded-2xl p-6 border border-[#E7E1D7]">
+            <div className="bg-white rounded-2xl p-6 border border-[var(--border)]">
               <div className="flex items-center justify-between mb-4">
-                <h3 className="text-lg font-serif text-[#1F2421]">Angle Criteria</h3>
+                <h3 className="text-lg font-bold text-[var(--ink)]">Angle Criteria</h3>
                 <div className="flex items-center gap-4">
                   <button
                     onClick={autoFillFromRecording}
-                    className="text-sm text-[#C4612F] hover:text-[#A94E22] font-medium"
+                    className="text-sm text-[var(--primary)] hover:text-[var(--primary-hover)] font-medium"
                     title="Compute target angles and tolerances from the recorded demo"
                   >
                     ↻ Auto-fill from recording
                   </button>
                   <button
                     onClick={addAngleCriterion}
-                    className="text-sm text-[#C4612F] hover:text-[#A94E22] font-medium"
+                    className="text-sm text-[var(--primary)] hover:text-[var(--primary-hover)] font-medium"
                   >
                     + Add Angle
                   </button>
@@ -1344,7 +1312,7 @@ export default function EditExercisePage({ params }: { params: Promise<{ id: str
               </div>
 
               {autoFilled && (
-                <div className="mb-4 px-3 py-2 bg-[#F2E3D6] text-[#8A4A1F] text-xs rounded-lg">
+                <div className="mb-4 px-3 py-2 bg-[var(--patient-wash)] text-[#8A4A1F] text-xs rounded-lg">
                   Criteria were auto-derived from the recording — review the values, adjust if
                   needed, then save.
                 </div>
@@ -1359,9 +1327,9 @@ export default function EditExercisePage({ params }: { params: Promise<{ id: str
                     frameAngle <= criterion.maxAngle
 
                   return (
-                    <div key={i} className="p-4 bg-[#F7F4EF] rounded-lg space-y-3">
+                    <div key={i} className="p-4 bg-[var(--bg)] rounded-lg space-y-3">
                       <div className="flex items-center justify-between">
-                        <span className="text-sm font-medium text-[#1F2421]">Angle {i + 1}</span>
+                        <span className="text-sm font-medium text-[var(--ink)]">Angle {i + 1}</span>
                         <button
                           onClick={() => removeAngleCriterion(i)}
                           className="text-xs text-red-600 hover:text-red-700"
@@ -1370,20 +1338,21 @@ export default function EditExercisePage({ params }: { params: Promise<{ id: str
                         </button>
                       </div>
 
-                      <p className="text-xs italic text-[#5C635D]">
+                      <p className="text-xs italic text-[var(--muted)]">
                         {typeof criterion.restAngle === 'number'
                           ? `${formatJointName(criterion.joint)} starts near ${criterion.restAngle}°, moves to about ${criterion.targetAngle}° (accepted ${criterion.minAngle}°–${criterion.maxAngle}°), holds, then returns to finish the rep.`
                           : `${formatJointName(criterion.joint)} at about ${criterion.targetAngle}°, accepted between ${criterion.minAngle}° and ${criterion.maxAngle}° — shown as the orange arc on the skeleton.`}
                       </p>
 
                       <div>
-                        <label className="block text-xs text-[#5C635D] mb-1">
+                        <label className="block text-xs text-[var(--muted)] mb-1">
                           Joint (angle is measured here)
                         </label>
                         <select
-                          value={criterion.joint}
+                          aria-label="Joint"
+                    value={criterion.joint}
                           onChange={(e) => updateAngleCriterion(i, 'joint', e.target.value)}
-                          className="w-full px-2 py-1 text-sm border border-[#E7E1D7] rounded bg-white focus:outline-none focus:ring-1 focus:ring-[#C4612F]"
+                          className="w-full px-2 py-1 text-sm border border-[var(--border)] rounded bg-white focus:outline-none focus:ring-1 focus:ring-[var(--primary)]"
                         >
                           {keypointNamesForMode(mode).map((name) => (
                             <option key={name} value={name}>
@@ -1394,19 +1363,20 @@ export default function EditExercisePage({ params }: { params: Promise<{ id: str
                       </div>
 
                       <div>
-                        <label className="block text-xs text-[#5C635D] mb-1">
+                        <label className="block text-xs text-[var(--muted)] mb-1">
                           Between these two points
                         </label>
                         <div className="grid grid-cols-2 gap-3">
                           <select
-                            value={criterion.relativeTo[0]}
+                            aria-label="First reference joint"
+                    value={criterion.relativeTo[0]}
                             onChange={(e) =>
                               updateAngleCriterion(i, 'relativeTo', [
                                 e.target.value,
                                 criterion.relativeTo[1],
                               ])
                             }
-                            className="w-full px-2 py-1 text-sm border border-[#E7E1D7] rounded bg-white focus:outline-none focus:ring-1 focus:ring-[#C4612F]"
+                            className="w-full px-2 py-1 text-sm border border-[var(--border)] rounded bg-white focus:outline-none focus:ring-1 focus:ring-[var(--primary)]"
                           >
                             {keypointNamesForMode(mode).map((name) => (
                               <option key={name} value={name}>
@@ -1415,14 +1385,15 @@ export default function EditExercisePage({ params }: { params: Promise<{ id: str
                             ))}
                           </select>
                           <select
-                            value={criterion.relativeTo[1]}
+                            aria-label="Second reference joint"
+                    value={criterion.relativeTo[1]}
                             onChange={(e) =>
                               updateAngleCriterion(i, 'relativeTo', [
                                 criterion.relativeTo[0],
                                 e.target.value,
                               ])
                             }
-                            className="w-full px-2 py-1 text-sm border border-[#E7E1D7] rounded bg-white focus:outline-none focus:ring-1 focus:ring-[#C4612F]"
+                            className="w-full px-2 py-1 text-sm border border-[var(--border)] rounded bg-white focus:outline-none focus:ring-1 focus:ring-[var(--primary)]"
                           >
                             {keypointNamesForMode(mode).map((name) => (
                               <option key={name} value={name}>
@@ -1431,46 +1402,50 @@ export default function EditExercisePage({ params }: { params: Promise<{ id: str
                             ))}
                           </select>
                         </div>
-                        <p className="text-[11px] text-[#5C635D] mt-1">
+                        <p className="text-[11px] text-[var(--muted)] mt-1">
                           The angle is formed at the joint by the lines to these two points.
                         </p>
                       </div>
 
                       <div className="grid grid-cols-4 gap-3">
                         <div>
-                          <label className="block text-xs text-[#5C635D] mb-1">Rest (°)</label>
+                          <label className="block text-xs text-[var(--muted)] mb-1">Rest (°)</label>
                           <NumberField
                             nullable
-                            value={criterion.restAngle}
+                            aria-label="Rest angle"
+                    value={criterion.restAngle}
                             placeholder="—"
                             onValueChange={(value) =>
                               updateAngleCriterion(i, 'restAngle', value ?? undefined)
                             }
-                            className="w-full px-2 py-1 text-sm border border-[#E7E1D7] rounded focus:outline-none focus:ring-1 focus:ring-[#C4612F]"
+                            className="w-full px-2 py-1 text-sm border border-[var(--border)] rounded focus:outline-none focus:ring-1 focus:ring-[var(--primary)]"
                           />
                         </div>
                         <div>
-                          <label className="block text-xs text-[#5C635D] mb-1">Target (°)</label>
+                          <label className="block text-xs text-[var(--muted)] mb-1">Target (°)</label>
                           <NumberField
-                            value={criterion.targetAngle}
+                            aria-label="Target angle"
+                    value={criterion.targetAngle}
                             onValueChange={(value) => updateAngleCriterion(i, 'targetAngle', value ?? 0)}
-                            className="w-full px-2 py-1 text-sm border border-[#E7E1D7] rounded focus:outline-none focus:ring-1 focus:ring-[#C4612F]"
+                            className="w-full px-2 py-1 text-sm border border-[var(--border)] rounded focus:outline-none focus:ring-1 focus:ring-[var(--primary)]"
                           />
                         </div>
                         <div>
-                          <label className="block text-xs text-[#5C635D] mb-1">Min (°)</label>
+                          <label className="block text-xs text-[var(--muted)] mb-1">Min (°)</label>
                           <NumberField
-                            value={criterion.minAngle}
+                            aria-label="Minimum angle"
+                    value={criterion.minAngle}
                             onValueChange={(value) => updateAngleCriterion(i, 'minAngle', value ?? 0)}
-                            className="w-full px-2 py-1 text-sm border border-[#E7E1D7] rounded focus:outline-none focus:ring-1 focus:ring-[#C4612F]"
+                            className="w-full px-2 py-1 text-sm border border-[var(--border)] rounded focus:outline-none focus:ring-1 focus:ring-[var(--primary)]"
                           />
                         </div>
                         <div>
-                          <label className="block text-xs text-[#5C635D] mb-1">Max (°)</label>
+                          <label className="block text-xs text-[var(--muted)] mb-1">Max (°)</label>
                           <NumberField
-                            value={criterion.maxAngle}
+                            aria-label="Maximum angle"
+                    value={criterion.maxAngle}
                             onValueChange={(value) => updateAngleCriterion(i, 'maxAngle', value ?? 0)}
-                            className="w-full px-2 py-1 text-sm border border-[#E7E1D7] rounded focus:outline-none focus:ring-1 focus:ring-[#C4612F]"
+                            className="w-full px-2 py-1 text-sm border border-[var(--border)] rounded focus:outline-none focus:ring-1 focus:ring-[var(--primary)]"
                           />
                         </div>
                       </div>
@@ -1478,7 +1453,7 @@ export default function EditExercisePage({ params }: { params: Promise<{ id: str
                       <div
                         className={`flex items-center justify-between px-3 py-2 rounded text-xs font-medium ${
                           frameAngle === null
-                            ? 'bg-[#E7E1D7] text-[#5C635D]'
+                            ? 'bg-[var(--border)] text-[var(--muted)]'
                             : inRange
                               ? 'bg-green-100 text-green-700'
                               : 'bg-red-100 text-red-700'
@@ -1496,7 +1471,7 @@ export default function EditExercisePage({ params }: { params: Promise<{ id: str
                 })}
 
                 {angleCriteria.length === 0 && (
-                  <p className="text-sm text-[#5C635D] text-center py-4">
+                  <p className="text-sm text-[var(--muted)] text-center py-4">
                     No angle criteria yet. Auto-fill them from the recording or add one manually.
                   </p>
                 )}
@@ -1504,19 +1479,19 @@ export default function EditExercisePage({ params }: { params: Promise<{ id: str
             </div>
 
             {/* Leveling Rules */}
-            <div className="bg-white rounded-2xl p-6 border border-[#E7E1D7]">
+            <div className="bg-white rounded-2xl p-6 border border-[var(--border)]">
               <div className="flex items-center justify-between mb-4">
-                <h3 className="text-lg font-serif text-[#1F2421]">Leveling Rules</h3>
+                <h3 className="text-lg font-bold text-[var(--ink)]">Leveling Rules</h3>
                 <button
                   onClick={addLevelingRule}
-                  className="text-sm text-[#C4612F] hover:text-[#A94E22] font-medium"
+                  className="text-sm text-[var(--primary)] hover:text-[var(--primary-hover)] font-medium"
                 >
                   + Add Rule
                 </button>
               </div>
 
               {mode === 'hand' && (
-                <p className="text-xs text-[#5C635D] mb-3">
+                <p className="text-xs text-[var(--muted)] mb-3">
                   Leveling compares vertical pixel positions — rarely useful for hand
                   exercises, where finger angles do the work.
                 </p>
@@ -1528,9 +1503,9 @@ export default function EditExercisePage({ params }: { params: Promise<{ id: str
                   const isLevel = frameDiff !== null && frameDiff <= rule.maxDifference
 
                   return (
-                    <div key={i} className="p-3 bg-[#F7F4EF] rounded-lg space-y-2">
+                    <div key={i} className="p-3 bg-[var(--bg)] rounded-lg space-y-2">
                       <div className="flex items-center justify-between">
-                        <span className="text-sm font-medium text-[#1F2421]">Rule {i + 1}</span>
+                        <span className="text-sm font-medium text-[var(--ink)]">Rule {i + 1}</span>
                         <button
                           onClick={() => removeLevelingRule(i)}
                           className="text-xs text-red-600 hover:text-red-700"
@@ -1540,16 +1515,17 @@ export default function EditExercisePage({ params }: { params: Promise<{ id: str
                       </div>
 
                       <div>
-                        <label className="block text-xs text-[#5C635D] mb-1">
+                        <label className="block text-xs text-[var(--muted)] mb-1">
                           Keep these two joints level
                         </label>
                         <div className="grid grid-cols-2 gap-3">
                           <select
-                            value={rule.joints[0]}
+                            aria-label="First level joint"
+                    value={rule.joints[0]}
                             onChange={(e) =>
                               updateLevelingRule(i, 'joints', [e.target.value, rule.joints[1]])
                             }
-                            className="w-full px-2 py-1 text-sm border border-[#E7E1D7] rounded bg-white focus:outline-none focus:ring-1 focus:ring-[#C4612F]"
+                            className="w-full px-2 py-1 text-sm border border-[var(--border)] rounded bg-white focus:outline-none focus:ring-1 focus:ring-[var(--primary)]"
                           >
                             {keypointNamesForMode(mode).map((name) => (
                               <option key={name} value={name}>
@@ -1558,11 +1534,12 @@ export default function EditExercisePage({ params }: { params: Promise<{ id: str
                             ))}
                           </select>
                           <select
-                            value={rule.joints[1]}
+                            aria-label="Second level joint"
+                    value={rule.joints[1]}
                             onChange={(e) =>
                               updateLevelingRule(i, 'joints', [rule.joints[0], e.target.value])
                             }
-                            className="w-full px-2 py-1 text-sm border border-[#E7E1D7] rounded bg-white focus:outline-none focus:ring-1 focus:ring-[#C4612F]"
+                            className="w-full px-2 py-1 text-sm border border-[var(--border)] rounded bg-white focus:outline-none focus:ring-1 focus:ring-[var(--primary)]"
                           >
                             {keypointNamesForMode(mode).map((name) => (
                               <option key={name} value={name}>
@@ -1574,30 +1551,32 @@ export default function EditExercisePage({ params }: { params: Promise<{ id: str
                       </div>
 
                       <div>
-                        <label className="block text-xs text-[#5C635D] mb-1">
+                        <label className="block text-xs text-[var(--muted)] mb-1">
                           Max Height Difference (px)
                         </label>
                         <NumberField
-                          value={rule.maxDifference}
+                          aria-label="Maximum difference"
+                    value={rule.maxDifference}
                           onValueChange={(value) => updateLevelingRule(i, 'maxDifference', value ?? 0)}
-                          className="w-full px-2 py-1 text-sm border border-[#E7E1D7] rounded focus:outline-none focus:ring-1 focus:ring-[#C4612F]"
+                          className="w-full px-2 py-1 text-sm border border-[var(--border)] rounded focus:outline-none focus:ring-1 focus:ring-[var(--primary)]"
                         />
                       </div>
 
                       <div>
-                        <label className="block text-xs text-[#5C635D] mb-1">Message</label>
+                        <label className="block text-xs text-[var(--muted)] mb-1">Message</label>
                         <SmoothInput
                           type="text"
-                          value={rule.message}
+                          aria-label="Feedback message"
+                    value={rule.message}
                           onChange={(e) => updateLevelingRule(i, 'message', e.target.value)}
-                          className="w-full px-2 py-1 text-sm border border-[#E7E1D7] rounded focus:outline-none focus:ring-1 focus:ring-[#C4612F]"
+                          className="w-full px-2 py-1 text-sm border border-[var(--border)] rounded focus:outline-none focus:ring-1 focus:ring-[var(--primary)]"
                         />
                       </div>
 
                       <div
                         className={`flex items-center justify-between px-3 py-2 rounded text-xs font-medium ${
                           frameDiff === null
-                            ? 'bg-[#E7E1D7] text-[#5C635D]'
+                            ? 'bg-[var(--border)] text-[var(--muted)]'
                             : isLevel
                               ? 'bg-green-100 text-green-700'
                               : 'bg-red-100 text-red-700'
@@ -1615,7 +1594,7 @@ export default function EditExercisePage({ params }: { params: Promise<{ id: str
                 })}
 
                 {levelingRules.length === 0 && (
-                  <p className="text-sm text-[#5C635D] text-center py-4">
+                  <p className="text-sm text-[var(--muted)] text-center py-4">
                     No leveling rules yet. Add one to enforce symmetry.
                   </p>
                 )}
@@ -1623,44 +1602,46 @@ export default function EditExercisePage({ params }: { params: Promise<{ id: str
             </div>
 
             {/* Exercise Settings */}
-            <div className="bg-white rounded-2xl p-6 border border-[#E7E1D7]">
-              <h3 className="text-lg font-serif text-[#1F2421] mb-4">Exercise Settings</h3>
+            <div className="bg-white rounded-2xl p-6 border border-[var(--border)]">
+              <h3 className="text-lg font-bold text-[var(--ink)] mb-4">Exercise Settings</h3>
 
               <div className="space-y-4">
                 <div>
-                  <label className="block text-sm font-medium text-[#1F2421] mb-1">
+                  <label className="block text-sm font-medium text-[var(--ink)] mb-1">
                     Target Reps
                   </label>
                   <NumberField
                     min={1}
+                    aria-label="Target reps"
                     value={targetReps}
                     onValueChange={(value) => setTargetReps(value ?? 1)}
-                    className="w-full px-3 py-2 border border-[#E7E1D7] rounded-lg focus:outline-none focus:ring-2 focus:ring-[#C4612F]"
+                    className="w-full px-3 py-2 border border-[var(--border)] rounded-lg focus:outline-none focus:ring-2 focus:ring-[var(--primary)]"
                   />
                 </div>
 
                 <div>
-                  <label className="block text-sm font-medium text-[#1F2421] mb-1">
+                  <label className="block text-sm font-medium text-[var(--ink)] mb-1">
                     Hold Duration (ms)
                   </label>
                   <NumberField
                     min={0}
+                    aria-label="Hold duration in milliseconds"
                     value={holdDuration}
                     onValueChange={(value) => setHoldDuration(value ?? 0)}
-                    className="w-full px-3 py-2 border border-[#E7E1D7] rounded-lg focus:outline-none focus:ring-2 focus:ring-[#C4612F]"
+                    className="w-full px-3 py-2 border border-[var(--border)] rounded-lg focus:outline-none focus:ring-2 focus:ring-[var(--primary)]"
                   />
                 </div>
               </div>
             </div>
 
             {/* Feedback Messages */}
-            <div className="bg-white rounded-2xl p-6 border border-[#E7E1D7]">
-              <h3 className="text-lg font-serif text-[#1F2421] mb-4">Feedback Messages</h3>
+            <div className="bg-white rounded-2xl p-6 border border-[var(--border)]">
+              <h3 className="text-lg font-bold text-[var(--ink)] mb-4">Feedback Messages</h3>
 
               <div className="space-y-3">
                 {Object.entries(feedbackMessages).map(([key, value]) => (
                   <div key={key}>
-                    <label className="block text-xs text-[#5C635D] mb-1 capitalize">
+                    <label className="block text-xs text-[var(--muted)] mb-1 capitalize">
                       {key.replace(/([A-Z])/g, ' $1')}
                     </label>
                     <SmoothInput
@@ -1669,7 +1650,7 @@ export default function EditExercisePage({ params }: { params: Promise<{ id: str
                       onChange={(e) =>
                         setFeedbackMessages({ ...feedbackMessages, [key]: e.target.value })
                       }
-                      className="w-full px-2 py-1 text-sm border border-[#E7E1D7] rounded focus:outline-none focus:ring-1 focus:ring-[#C4612F]"
+                      className="w-full px-2 py-1 text-sm border border-[var(--border)] rounded focus:outline-none focus:ring-1 focus:ring-[var(--primary)]"
                     />
                   </div>
                 ))}

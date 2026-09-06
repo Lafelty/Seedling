@@ -3,6 +3,7 @@
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
+import AuthLayout from '@/components/AuthLayout'
 import { createClient } from '@/lib/supabase/client'
 import { SmoothInput } from '@/components/SmoothInput'
 
@@ -55,23 +56,7 @@ export default function SignupPage() {
   }
 
   return (
-    <div style={{
-      minHeight: '100vh',
-      display: 'flex',
-      alignItems: 'center',
-      justifyContent: 'center',
-      background: 'var(--background)',
-      padding: 'var(--space-4)',
-    }}>
-      <div style={{
-        width: '100%',
-        maxWidth: '400px',
-        background: 'var(--surface)',
-        borderRadius: 'var(--radius-xl)',
-        padding: 'var(--space-8)',
-        border: '1px solid var(--border)',
-        boxShadow: '0 4px 12px rgba(0, 0, 0, 0.08)',
-      }}>
+    <AuthLayout>
         <h1 style={{
           fontSize: 'var(--text-2xl)',
           fontWeight: 600,
@@ -199,6 +184,8 @@ export default function SignupPage() {
               />
               <button
                 type="button"
+                aria-label={showPassword ? 'Hide password' : 'Show password'}
+                aria-pressed={showPassword}
                 onClick={() => setShowPassword(!showPassword)}
                 style={{
                   position: 'absolute',
@@ -296,7 +283,6 @@ export default function SignupPage() {
             Sign in
           </Link>
         </p>
-      </div>
-    </div>
+    </AuthLayout>
   )
 }

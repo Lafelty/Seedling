@@ -605,19 +605,19 @@ export default function NewExercisePage() {
   }
 
   return (
-    <div className="min-h-screen bg-[#F7F4EF] p-6">
+    <div className="editor-page min-h-screen bg-[var(--bg)] p-6">
       <div className="max-w-6xl mx-auto">
         {/* Header */}
         <div className="flex items-center justify-between mb-6">
           <div>
             <Link
               href="/admin"
-              className="text-sm text-[#5C635D] hover:text-[#C4612F] mb-2 inline-block"
+              className="text-sm text-[var(--muted)] hover:text-[var(--primary)] mb-2 inline-block"
             >
               ← Back to Admin
             </Link>
-            <h1 className="text-3xl font-serif text-[#1F2421]">
-              Record New <em className="text-[#C4612F]">Exercise</em>
+            <h1 className="text-3xl font-bold text-[var(--ink)]">
+              Record New <em className="text-[var(--primary)]">Exercise</em>
             </h1>
           </div>
         </div>
@@ -625,8 +625,8 @@ export default function NewExercisePage() {
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
           {/* Camera + Skeleton View */}
           <div className="lg:col-span-2">
-            <div className="bg-white rounded-2xl p-6 border border-[#E7E1D7]">
-              <div className="relative aspect-video bg-[#1F2421] rounded-xl overflow-hidden">
+            <div className="bg-white rounded-2xl p-6 border border-[var(--border)]">
+              <div className="relative aspect-video bg-[var(--ink)] rounded-xl overflow-hidden">
                 {cameraError ? (
                   <div className="absolute inset-0 flex items-center justify-center text-white">
                     <p>{cameraError}</p>
@@ -689,7 +689,7 @@ export default function NewExercisePage() {
                     {/* Uploaded-video processing view — mounted always so the ref
                         exists before processing starts, shown only while active */}
                     <div
-                      className={`absolute inset-0 z-10 bg-[#1F2421] ${
+                      className={`absolute inset-0 z-10 bg-[var(--ink)] ${
                         recordingState === 'processing' ? '' : 'hidden'
                       }`}
                     >
@@ -721,7 +721,7 @@ export default function NewExercisePage() {
                         </div>
                         <div className="h-1.5 rounded-full bg-white/20 overflow-hidden">
                           <div
-                            className="h-full bg-[#10b981] transition-[width] duration-150"
+                            className="h-full bg-[var(--primary)] transition-[width] duration-150"
                             style={{ width: `${processProgress * 100}%` }}
                           />
                         </div>
@@ -759,14 +759,14 @@ export default function NewExercisePage() {
                   <>
                     <button
                       onClick={startRecording}
-                      className="px-6 py-3 bg-[#C4612F] hover:bg-[#A94E22] text-white rounded-full font-medium transition-colors"
+                      className="px-6 py-3 bg-[var(--primary)] hover:bg-[var(--primary-hover)] text-white rounded-full font-medium transition-colors"
                     >
                       Start Recording Demo
                     </button>
                     <button
                       onClick={() => fileInputRef.current?.click()}
                       disabled={!modelReady}
-                      className="px-6 py-3 bg-white text-[#C4612F] border border-[#C4612F] hover:bg-[#F2E3D6] rounded-full font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                      className="px-6 py-3 bg-white text-[var(--primary)] border border-[var(--primary)] hover:bg-[var(--patient-wash)] rounded-full font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                     >
                       Upload Video Instead
                     </button>
@@ -785,28 +785,28 @@ export default function NewExercisePage() {
                 {recordingState === 'reviewing' && (
                   <>
                     {recordings.length < 2 && (
-                      <p className="w-full text-sm text-[#C4612F] font-medium">
+                      <p className="w-full text-sm text-[var(--primary)] font-medium">
                         Tip: record 2–3 demos — tolerances are derived from your own
                         variation between takes, so validation fits real movement better.
                       </p>
                     )}
                     <button
                       onClick={() => setRecordingState('setup')}
-                      className="px-6 py-3 bg-[#C4612F] hover:bg-[#A94E22] text-white rounded-full font-medium transition-colors"
+                      className="px-6 py-3 bg-[var(--primary)] hover:bg-[var(--primary-hover)] text-white rounded-full font-medium transition-colors"
                     >
                       Record Another Demo
                     </button>
                     <button
                       onClick={() => fileInputRef.current?.click()}
                       disabled={!modelReady}
-                      className="px-6 py-3 bg-white text-[#C4612F] border border-[#C4612F] hover:bg-[#F2E3D6] rounded-full font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                      className="px-6 py-3 bg-white text-[var(--primary)] border border-[var(--primary)] hover:bg-[var(--patient-wash)] rounded-full font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                     >
                       Upload Video
                     </button>
                     <button
                       onClick={saveExercise}
                       disabled={recordings.length === 0}
-                      className="px-6 py-3 bg-[#10b981] hover:bg-[#059669] text-white rounded-full font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                      className="px-6 py-3 bg-[var(--primary)] hover:bg-[var(--primary-hover)] text-white rounded-full font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                     >
                       Save Exercise ({recordings.length} demo{recordings.length !== 1 ? 's' : ''})
                     </button>
@@ -814,7 +814,7 @@ export default function NewExercisePage() {
                 )}
 
                 {recordingState === 'saving' && (
-                  <div className="px-6 py-3 text-[#5C635D]">Saving...</div>
+                  <div className="px-6 py-3 text-[var(--muted)]">Saving...</div>
                 )}
               </div>
             </div>
@@ -822,12 +822,12 @@ export default function NewExercisePage() {
 
           {/* Exercise Metadata Form */}
           <div className="space-y-4">
-            <div className="bg-white rounded-2xl p-6 border border-[#E7E1D7]">
-              <h2 className="text-xl font-serif text-[#1F2421] mb-4">Exercise Details</h2>
+            <div className="bg-white rounded-2xl p-6 border border-[var(--border)]">
+              <h2 className="text-xl font-bold text-[var(--ink)] mb-4">Exercise Details</h2>
 
               <div className="space-y-4">
                 <div>
-                  <label className="block text-sm font-medium text-[#1F2421] mb-1">
+                  <label className="block text-sm font-medium text-[var(--ink)] mb-1">
                     Tracking Mode
                   </label>
                   <div className="grid grid-cols-2 gap-2">
@@ -842,8 +842,8 @@ export default function NewExercisePage() {
                         disabled={recordings.length > 0 || recordingState === 'processing'}
                         className={`px-3 py-2 rounded-lg text-sm font-medium border transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${
                           trackingMode === opt.value
-                            ? 'bg-[#C4612F] text-white border-[#C4612F]'
-                            : 'bg-white text-[#1F2421] border-[#E7E1D7] hover:border-[#C4612F]'
+                            ? 'bg-[var(--primary)] text-white border-[var(--primary)]'
+                            : 'bg-white text-[var(--ink)] border-[var(--border)] hover:border-[var(--primary)]'
                         }`}
                       >
                         {opt.label}
@@ -851,46 +851,49 @@ export default function NewExercisePage() {
                     ))}
                   </div>
                   {recordings.length > 0 && (
-                    <p className="text-[11px] text-[#5C635D] mt-1">
+                    <p className="text-[11px] text-[var(--muted)] mt-1">
                       Delete all demos to change the tracking mode.
                     </p>
                   )}
                 </div>
 
                 <div>
-                  <label className="block text-sm font-medium text-[#1F2421] mb-1">
+                  <label className="block text-sm font-medium text-[var(--ink)] mb-1">
                     Exercise Name *
                   </label>
                   <SmoothInput
                     type="text"
+                    aria-label="Exercise name"
                     value={exerciseName}
                     onChange={(e) => setExerciseName(e.target.value)}
                     placeholder="e.g. Shoulder Raise"
-                    className="w-full px-3 py-2 border border-[#E7E1D7] rounded-lg focus:outline-none focus:ring-2 focus:ring-[#C4612F]"
+                    className="w-full px-3 py-2 border border-[var(--border)] rounded-lg focus:outline-none focus:ring-2 focus:ring-[var(--primary)]"
                   />
                 </div>
 
                 <div>
-                  <label className="block text-sm font-medium text-[#1F2421] mb-1">
+                  <label className="block text-sm font-medium text-[var(--ink)] mb-1">
                     Description
                   </label>
                   <SmoothTextarea
+                    aria-label="Description"
                     value={exerciseDescription}
                     onChange={(e) => setExerciseDescription(e.target.value)}
                     placeholder="Brief description of the exercise"
                     rows={3}
-                    className="w-full px-3 py-2 border border-[#E7E1D7] rounded-lg focus:outline-none focus:ring-2 focus:ring-[#C4612F]"
+                    className="w-full px-3 py-2 border border-[var(--border)] rounded-lg focus:outline-none focus:ring-2 focus:ring-[var(--primary)]"
                   />
                 </div>
 
                 <div>
-                  <label className="block text-sm font-medium text-[#1F2421] mb-1">
+                  <label className="block text-sm font-medium text-[var(--ink)] mb-1">
                     Exercise Type
                   </label>
                   <select
+                    aria-label="Exercise type"
                     value={exerciseType}
                     onChange={(e) => setExerciseType(e.target.value as 'static' | 'dynamic')}
-                    className="w-full px-3 py-2 border border-[#E7E1D7] rounded-lg focus:outline-none focus:ring-2 focus:ring-[#C4612F]"
+                    className="w-full px-3 py-2 border border-[var(--border)] rounded-lg focus:outline-none focus:ring-2 focus:ring-[var(--primary)]"
                   >
                     <option value="dynamic">Dynamic (with movement)</option>
                     <option value="static">Static (hold position)</option>
@@ -898,15 +901,16 @@ export default function NewExercisePage() {
                 </div>
 
                 <div>
-                  <label className="block text-sm font-medium text-[#1F2421] mb-1">
+                  <label className="block text-sm font-medium text-[var(--ink)] mb-1">
                     Difficulty
                   </label>
                   <select
+                    aria-label="Difficulty"
                     value={difficulty}
                     onChange={(e) =>
                       setDifficulty(e.target.value as 'beginner' | 'intermediate' | 'advanced')
                     }
-                    className="w-full px-3 py-2 border border-[#E7E1D7] rounded-lg focus:outline-none focus:ring-2 focus:ring-[#C4612F]"
+                    className="w-full px-3 py-2 border border-[var(--border)] rounded-lg focus:outline-none focus:ring-2 focus:ring-[var(--primary)]"
                   >
                     <option value="beginner">Beginner</option>
                     <option value="intermediate">Intermediate</option>
@@ -918,26 +922,26 @@ export default function NewExercisePage() {
 
             {/* Recorded Demos List */}
             {recordings.length > 0 && (
-              <div className="bg-white rounded-2xl p-6 border border-[#E7E1D7]">
-                <h2 className="text-xl font-serif text-[#1F2421] mb-4">
+              <div className="bg-white rounded-2xl p-6 border border-[var(--border)]">
+                <h2 className="text-xl font-bold text-[var(--ink)] mb-4">
                   Recorded Demos ({recordings.length})
                 </h2>
                 <div className="space-y-2">
                   {recordings.map((demo, i) => (
                     <div
                       key={demo.id}
-                      className="flex items-center justify-between p-3 bg-[#F7F4EF] rounded-lg"
+                      className="flex items-center justify-between p-3 bg-[var(--bg)] rounded-lg"
                     >
                       <div>
-                        <p className="text-sm font-medium text-[#1F2421]">
+                        <p className="text-sm font-medium text-[var(--ink)]">
                           Demo {i + 1}
                           {demo.source === 'upload' && (
-                            <span className="ml-2 text-[10px] font-normal uppercase tracking-wide text-[#5C635D] bg-white border border-[#E7E1D7] rounded-full px-2 py-0.5">
+                            <span className="ml-2 text-[10px] font-normal uppercase tracking-wide text-[var(--muted)] bg-white border border-[var(--border)] rounded-full px-2 py-0.5">
                               from video
                             </span>
                           )}
                         </p>
-                        <p className="text-xs text-[#5C635D]">
+                        <p className="text-xs text-[var(--muted)]">
                           {(demo.duration / 1000).toFixed(1)}s • {demo.frames.length} frames
                         </p>
                       </div>
@@ -954,9 +958,9 @@ export default function NewExercisePage() {
             )}
 
             {/* Instructions */}
-            <div className="bg-[#F2E3D6] rounded-2xl p-4 border border-[#E7E1D7]">
-              <h3 className="text-sm font-medium text-[#1F2421] mb-2">Instructions</h3>
-              <ol className="text-xs text-[#5C635D] space-y-1 list-decimal list-inside">
+            <div className="bg-[var(--patient-wash)] rounded-2xl p-4 border border-[var(--border)]">
+              <h3 className="text-sm font-medium text-[var(--ink)] mb-2">Instructions</h3>
+              <ol className="text-xs text-[var(--muted)] space-y-1 list-decimal list-inside">
                 <li>Fill in exercise details</li>
                 <li>Record 2-3 demonstrations — or upload a video of the movement</li>
                 <li>System derives target angles and tolerances from your movement</li>

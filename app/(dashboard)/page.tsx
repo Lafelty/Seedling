@@ -196,9 +196,9 @@ export default function DashboardPage() {
 
   return (
     <>
-      <main className="min-h-screen pb-24">
+      <main className="garden-home min-h-screen pb-24">
         {/* Header */}
-        <header className="px-6 pt-8 pb-4 animate-fadeIn">
+        <header className="garden-heading px-6 pt-8 pb-4">
           <div className="max-w-2xl mx-auto">
             {/* Top row: greeting + star badge */}
             <div className="flex items-start justify-between gap-3">
@@ -222,7 +222,7 @@ export default function DashboardPage() {
 
         {/* Growth view: tree or garden */}
         {(loadError || pending.length > 0) && (
-          <section className="max-w-2xl mx-auto px-6 space-y-4">
+          <section className="garden-recovery max-w-2xl mx-auto px-6 space-y-4">
             {loadError && <div className="card"><p role="alert">{loadError}</p><button className="btn mt-3" onClick={() => setRefreshKey(k => k + 1)}>Retry loading</button></div>}
             {pending.map(result => (
               <div className="card" key={result.sessionId}>
@@ -233,7 +233,7 @@ export default function DashboardPage() {
             ))}
           </section>
         )}
-        <section className="px-6 py-12 animate-fadeInUp" style={{ animationDelay: '150ms' }}>
+        <section className="garden-scene">
           <div className="max-w-2xl mx-auto text-center">
             {homeView === 'tree' ? (
               <>
@@ -264,14 +264,14 @@ export default function DashboardPage() {
         </section>
 
         {/* Tree / Garden view toggle */}
-        <section className="px-6 pb-2 animate-fadeInUp" style={{ animationDelay: '250ms' }}>
+        <section className="garden-view-switch">
           <div className="max-w-2xl mx-auto flex justify-center">
             <ViewToggle view={homeView} onChange={switchView} />
           </div>
         </section>
 
         {/* This Week */}
-        <section className="px-6 py-4 animate-fadeInUp" style={{ animationDelay: '300ms' }}>
+        <section className="garden-week">
           <div className="max-w-2xl mx-auto">
             <div
               className="bg-[var(--surface)] rounded-2xl p-6"
@@ -362,6 +362,8 @@ export default function DashboardPage() {
               </div>
             </div>
           </div>
+          <p className="garden-week-note">Every session is a little progress. Your garden will be here whenever you’re ready.</p>
+          <Link href="/progress" className="pill-btn pill-btn-outline mt-5">See your progress <span aria-hidden="true">↗</span></Link>
         </section>
 
       </main>

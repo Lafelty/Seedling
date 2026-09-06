@@ -1,21 +1,16 @@
 import type { Metadata } from "next";
-import { Inter, DM_Serif_Display } from "next/font/google";
+import { Manrope } from "next/font/google";
 import "./globals.css";
 import "./patient.css";
+import "./visual-system.css";
 import PatientNavigation from "@/components/PatientNavigation";
+import SiteFrame from "@/components/SiteFrame";
 
-const inter = Inter({
+const manrope = Manrope({
   subsets: ["latin"],
-  variable: "--font-body",
+  variable: "--font-ui",
   display: "swap",
-  weight: ["300", "400", "500", "600", "700"],
-});
-
-const dmSerif = DM_Serif_Display({
-  subsets: ["latin"],
-  variable: "--font-display",
-  display: "swap",
-  weight: ["400"],
+  weight: ["400", "500", "600", "700", "800"],
 });
 
 export const metadata: Metadata = {
@@ -29,8 +24,8 @@ export default function RootLayout({
   children: React.ReactNode;
 }) {
   return (
-    <html lang="en" className={`${inter.variable} ${dmSerif.variable}`}>
-      <body>{children}<PatientNavigation /></body>
+    <html lang="en" className={manrope.variable}>
+      <body><SiteFrame>{children}</SiteFrame><PatientNavigation /></body>
     </html>
   );
 }

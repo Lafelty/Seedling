@@ -4,13 +4,14 @@ import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { createClient } from '@/lib/supabase/client'
+import { MagnifyingGlass, X } from '@phosphor-icons/react'
 import type { ExerciseRow as Exercise, ProfileSummary as Profile } from '@/lib/supabase/types'
 
 export const dynamic = 'force-dynamic'
 
 const DIFFICULTY_STYLES: Record<string, { bg: string; fg: string }> = {
   beginner: { bg: '#E8F5E9', fg: '#2E7D32' },
-  intermediate: { bg: '#FFF3E0', fg: '#EF6C00' },
+  intermediate: { bg: '#FFF3E0', fg: '#914100' },
   advanced: { bg: '#FFEBEE', fg: '#C62828' },
 }
 
@@ -20,6 +21,14 @@ export default function AdminDashboard() {
   const [isAdmin, setIsAdmin] = useState(false)
   const [exercises, setExercises] = useState<Exercise[]>([])
   const [profiles, setProfiles] = useState<Profile[]>([])
+  const [query, setQuery] = useState('')
+  const [statusFilter, setStatusFilter] = useState('all')
+  const [pendingId, setPendingId] = useState<string | null>(null)
+  const [actionError, setActionError] = useState<string | null>(null)
+  const visibleExercises = exercises.filter(exercise =>
+    `${exercise.name} ${exercise.description ?? ''}`.toLowerCase().includes(query.trim().toLowerCase()) &&
+    (statusFilter === 'all' || exercise.is_active === (statusFilter === 'active'))
+  )
 
   useEffect(() => {
     checkAdminAndLoadExercises()
@@ -73,35 +82,38 @@ export default function AdminDashboard() {
   }
 
   async function toggleExerciseStatus(id: string, currentStatus: boolean) {
+    if (pendingId) return
+    setPendingId(id)
+    setActionError(null)
     const supabase = createClient()
-    const { error } = await supabase
-      .from('exercises')
-      .update({ is_active: !currentStatus })
-      .eq('id', id)
-
-    if (!error) {
-      setExercises(exercises.map(ex =>
+    try {
+      const { error } = await supabase.from('exercises').update({ is_active: !currentStatus }).eq('id', id)
+      if (error) throw error
+      setExercises(current => current.map(ex =>
         ex.id === id ? { ...ex, is_active: !currentStatus } : ex
       ))
+    } catch {
+      setActionError('The exercise status could not be saved. Please try again.')
+    } finally {
+      setPendingId(null)
     }
   }
 
   async function deleteExercise(id: string, name: string) {
+    if (pendingId) return
     if (!window.confirm(`Delete "${name}"? This cannot be undone.`)) return
-
+    setPendingId(`delete:${id}`)
+    setActionError(null)
     const supabase = createClient()
-    const { error } = await supabase
-      .from('exercises')
-      .delete()
-      .eq('id', id)
-
-    if (error) {
-      console.error('Error deleting exercise:', error)
-      window.alert(`Could not delete exercise: ${error.message}`)
-      return
+    try {
+      const { error } = await supabase.from('exercises').delete().eq('id', id)
+      if (error) throw error
+      setExercises(current => current.filter(ex => ex.id !== id))
+    } catch {
+      setActionError('The exercise could not be deleted. Please try again.')
+    } finally {
+      setPendingId(null)
     }
-
-    setExercises(exercises.filter(ex => ex.id !== id))
   }
 
   if (loading) {
@@ -163,7 +175,7 @@ export default function AdminDashboard() {
             marginBottom: 'var(--space-8)',
           }}>
             <div>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-2)', marginBottom: 'var(--space-2)' }}>
+              <div className="admin-workspace-title" style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-2)', marginBottom: 'var(--space-2)' }}>
                 <div style={{
                   width: '44px',
                   height: '44px',
@@ -219,12 +231,7 @@ export default function AdminDashboard() {
           </div>
 
           {/* Stats Cards */}
-          <div style={{
-            display: 'grid',
-            gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))',
-            gap: 'var(--space-4)',
-            marginBottom: 'var(--space-8)',
-          }}>
+          <div className="admin-summary-grid">
             <div className="card animate-scaleIn stagger-1" style={{
               background: 'linear-gradient(160deg, rgba(74, 107, 90, 0.14), var(--surface) 70%)',
               borderColor: 'rgba(74, 107, 90, 0.25)',
@@ -333,7 +340,7 @@ export default function AdminDashboard() {
                     color: '#8A7A4E',
                     lineHeight: 1.1,
                   }}>
-                    {profiles.length}
+                    {profiles.filter(profile => !profile.is_admin).length}
                   </p>
                 </div>
               </div>
@@ -381,10 +388,17 @@ export default function AdminDashboard() {
               </span>
             </div>
 
+            <div className="library-toolbar">
+              <div className="library-search"><MagnifyingGlass size={19} aria-hidden="true" /><input aria-label="Search exercises" placeholder="Find an exercise…" value={query} onChange={event => setQuery(event.target.value)} />{query && <button className="icon-button" aria-label="Clear exercise search" onClick={() => setQuery('')}><X size={16} /></button>}</div>
+              <select aria-label="Filter exercise status" value={statusFilter} onChange={event => setStatusFilter(event.target.value)}><option value="all">All statuses</option><option value="active">Active</option><option value="inactive">Inactive</option></select>
+            </div>
+            {actionError && <p className="library-error" role="alert">{actionError}</p>}
             {exercises.length === 0 ? (
               <p style={{ color: 'var(--muted)', textAlign: 'center', padding: 'var(--space-12)' }}>
                 No exercises yet. Create your first one!
               </p>
+            ) : visibleExercises.length === 0 ? (
+              <div className="library-empty"><h3>No matching exercises</h3><p>Try a different name or status.</p><button className="pill-btn pill-btn-outline" onClick={() => { setQuery(''); setStatusFilter('all') }}>Clear filters</button></div>
             ) : (
               <div style={{ overflowX: 'auto' }}>
                 <table style={{ width: '100%', borderCollapse: 'collapse' }}>
@@ -406,7 +420,7 @@ export default function AdminDashboard() {
                     </tr>
                   </thead>
                   <tbody>
-                    {exercises.map((exercise) => {
+                    {visibleExercises.map((exercise) => {
                       const diffStyle = DIFFICULTY_STYLES[exercise.difficulty ?? 'beginner'] ?? DIFFICULTY_STYLES.beginner
                       return (
                         <tr key={exercise.id} style={{ borderTop: '1px solid var(--border)' }}>
@@ -436,6 +450,11 @@ export default function AdminDashboard() {
                           </td>
                           <td style={{ padding: 'var(--space-3) var(--space-4)' }}>
                             <button
+                              className="admin-table-status"
+                              disabled={pendingId !== null}
+                              aria-busy={pendingId === exercise.id}
+                              aria-label={`${exercise.is_active ? 'Deactivate' : 'Activate'} ${exercise.name}`}
+                              aria-pressed={exercise.is_active}
                               onClick={() => toggleExerciseStatus(exercise.id, exercise.is_active)}
                               style={{
                                 display: 'inline-flex',
@@ -448,7 +467,7 @@ export default function AdminDashboard() {
                                 border: 'none',
                                 cursor: 'pointer',
                                 background: exercise.is_active ? '#E8F5E9' : '#EEEEEE',
-                                color: exercise.is_active ? '#2E7D32' : '#757575',
+                                color: exercise.is_active ? '#2E7D32' : '#5e5e5e',
                               }}
                             >
                               <span style={{
@@ -458,12 +477,14 @@ export default function AdminDashboard() {
                                 background: exercise.is_active ? '#2E7D32' : '#9E9E9E',
                                 display: 'inline-block',
                               }} />
-                              {exercise.is_active ? 'Active' : 'Inactive'}
+                              {pendingId === exercise.id ? 'Saving…' : exercise.is_active ? 'Active' : 'Inactive'}
                             </button>
                           </td>
                           <td style={{ padding: 'var(--space-3) var(--space-4)' }}>
                             <div style={{ display: 'inline-flex', alignItems: 'center', gap: 'var(--space-2)' }}>
                               <Link
+                                className="admin-row-action"
+                                aria-label={`Edit ${exercise.name}`}
                                 href={`/admin/exercises/${exercise.id}/edit`}
                                 style={{
                                   display: 'inline-flex',
@@ -485,6 +506,10 @@ export default function AdminDashboard() {
                                 Edit
                               </Link>
                               <button
+                                className="admin-row-action"
+                                disabled={pendingId !== null}
+                                aria-busy={pendingId === `delete:${exercise.id}`}
+                                aria-label={`Delete ${exercise.name}`}
                                 onClick={() => deleteExercise(exercise.id, exercise.name)}
                                 style={{
                                   display: 'inline-flex',
@@ -505,7 +530,7 @@ export default function AdminDashboard() {
                                   <path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
                                   <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
                                 </svg>
-                                Delete
+                                {pendingId === `delete:${exercise.id}` ? 'Deleting…' : 'Delete'}
                               </button>
                             </div>
                           </td>

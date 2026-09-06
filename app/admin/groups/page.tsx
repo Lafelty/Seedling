@@ -716,7 +716,6 @@ export default function AdminGroupsPage() {
                   overflow: 'hidden',
                   marginBottom: 'var(--space-4)',
                   borderColor: open ? 'rgba(74, 107, 90, 0.35)' : 'var(--border)',
-                  opacity: group.is_active ? 1 : 0.72,
                 }}
               >
                 {/* Collapsed header — the calm summary */}
@@ -787,7 +786,7 @@ export default function AdminGroupsPage() {
                       letterSpacing: '0.04em',
                       borderRadius: 'var(--radius-full)',
                       background: '#EEEEEE',
-                      color: '#757575',
+                      color: '#5e5e5e',
                     }}>
                       hidden
                     </span>
